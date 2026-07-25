@@ -1,0 +1,36 @@
+{
+  "name": "stacktrack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Accuracy-first asset tracking foundation for Goodwill",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "npm run check --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "local": "npm run local --workspace @stacktrack/api",
+    "dev": "concurrently -k -n API,ADMIN,MOBILE -c blue,cyan,green \"npm:dev:api\" \"npm:dev:admin\" \"npm:dev:mobile\"",
+    "dev:api": "npm run dev --workspace @stacktrack/api",
+    "dev:admin": "npm run dev --workspace @stacktrack/admin",
+    "dev:mobile": "npm run web --workspace @stacktrack/mobile",
+    "db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure/postgres/start-local.ps1",
+    "db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure/postgres/stop-local.ps1",
+    "db:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure/postgres/verify-local.ps1",
+    "db:seed": "npm run seed:postgres --workspace @stacktrack/api",
+    "build:admin": "npm run build --workspace @stacktrack/admin",
+    "build:mobile": "npm run export:web --workspace @stacktrack/mobile"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2"
+  }
+}

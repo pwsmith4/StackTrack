@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "StackTrack",
+    "slug": "stacktrack-local",
+    "version": "0.2.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F3F6F8",
+    "primaryColor": "#00539F",
+    "android": {
+      "package": "org.goodwill.stacktrack.local",
+      "adaptiveIcon": {
+        "backgroundColor": "#003A6F"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "name": "StackTrack Mobile"
+    }
+  }
+}
