@@ -1,0 +1,10 @@
+node_modules/
+.git/
+.local-data/
+.artifacts/
+dist/
+coverage/
+.expo/
+*.log
+.env
+.env.*

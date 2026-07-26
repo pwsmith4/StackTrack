@@ -1,6 +1,15 @@
 @echo off
 cd /d "%~dp0"
+echo Starting the isolated StackTrack PostgreSQL database...
+call npm.cmd run db:start
+if errorlevel 1 (
+  echo.
+  echo StackTrack could not start its database.
+  pause
+  exit /b 1
+)
+echo.
 echo Starting StackTrack API, admin website, and mobile preview...
 echo Leave this window open while testing. The first mobile start can take a minute.
 echo.
-npm.cmd run dev
+call npm.cmd run dev

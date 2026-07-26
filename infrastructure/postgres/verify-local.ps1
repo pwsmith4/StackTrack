@@ -6,7 +6,7 @@ $pgIsReady = Join-Path $postgresBin "pg_isready.exe"
 $port = if ($env:STACKTRACK_POSTGRES_PORT) {
   [int]$env:STACKTRACK_POSTGRES_PORT
 } else {
-  5432
+  5433
 }
 $tenantA = "90000000-0000-4000-8000-000000000001"
 $tenantB = "90000000-0000-4000-8000-000000000002"

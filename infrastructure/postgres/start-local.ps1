@@ -13,7 +13,7 @@ $migrationPath = Join-Path $PSScriptRoot "migrations\001_accuracy_foundation.sql
 $port = if ($env:STACKTRACK_POSTGRES_PORT) {
   [int]$env:STACKTRACK_POSTGRES_PORT
 } else {
-  5432
+  5433
 }
 $adminPassword = "stacktrack"
 
@@ -43,7 +43,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $dataDirectory "PG_VERSION"))) {
   }
 }
 
-& $pgIsReady -h 127.0.0.1 -p $port | Out-Null
+& $pgCtl status --pgdata=$dataDirectory | Out-Null
 if ($LASTEXITCODE -ne 0) {
   Write-Host "Starting StackTrack PostgreSQL on 127.0.0.1:$port..."
   & $pgCtl `

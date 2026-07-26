@@ -8,12 +8,15 @@ npm.cmd run db:seed
 npm.cmd run db:verify
 ```
 
-The cluster listens only on `127.0.0.1:5432`. Its files stay under this directory's ignored `.local-data` folder and do not use or modify the disabled Windows PostgreSQL service.
+The cluster listens only on `127.0.0.1:5433`. Port 5433 intentionally avoids
+the installer-created Windows PostgreSQL service on port 5432. Its files stay
+under this directory's ignored `.local-data` folder and do not modify the
+Windows service.
 
 Development connection:
 
 ```text
-postgres://stacktrack:stacktrack@127.0.0.1:5432/stacktrack
+postgres://stacktrack:stacktrack@127.0.0.1:5433/stacktrack
 ```
 
 Stop it with:
@@ -31,7 +34,7 @@ in-transit loads, warnings, and review cases. Both user interfaces read these
 records through the Fastify API. New mobile observations are inserted into the
 same PostgreSQL tables.
 
-To inspect the records in pgAdmin, register/connect to `127.0.0.1:5432` with
+To inspect the records in pgAdmin, register/connect to `127.0.0.1:5433` with
 database `stacktrack`, username `postgres`, and the development password
 `stacktrack`. Open **Databases → stacktrack → Schemas → public → Tables**,
 right-click a table such as `asset_events`, and choose **View/Edit Data → All

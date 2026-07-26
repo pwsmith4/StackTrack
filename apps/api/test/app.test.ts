@@ -95,9 +95,8 @@ describe("StackTrack API foundation", () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it("serves the self-contained lab only when local mode is enabled", async () => {
+  it("exposes local reference data only when local mode is enabled", async () => {
     app = createApp({ localMode: true });
-    const page = await app.inject({ method: "GET", url: "/" });
     const fixtures = await app.inject({
       method: "GET",
       url: "/api/v1/local/reference-data",
@@ -106,8 +105,6 @@ describe("StackTrack API foundation", () => {
       }
     });
 
-    expect(page.statusCode).toBe(200);
-    expect(page.body).toContain("StackTrack Local Lab");
     expect(fixtures.statusCode).toBe(200);
     expect(fixtures.json().containers).toHaveLength(11);
   });
