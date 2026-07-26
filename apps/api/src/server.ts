@@ -1,6 +1,7 @@
 import pg from "pg";
 import { createApp } from "./app.js";
 import { PostgresEventLedger } from "./postgres-ledger.js";
+import { PostgresDeviceAdministration } from "./device-administration.js";
 
 const { Pool } = pg;
 
@@ -20,7 +21,8 @@ const app = createApp({
   // The current interfaces use development headers and local inspection routes.
   // Never enable this outside the synthetic Azure test environment.
   localMode: testMode,
-  referenceData: (tenantId) => ledger.referenceData(tenantId)
+  referenceData: (tenantId) => ledger.referenceData(tenantId),
+  deviceAdministration: new PostgresDeviceAdministration(pool)
 });
 app.addHook("onClose", () => pool.end());
 

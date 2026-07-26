@@ -34,7 +34,9 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import {
   API_URL,
   loadOperationsData,
+  updateDevice,
   type Container,
+  type Device,
   type Fixtures,
   type Location,
   type Projection,
@@ -327,7 +329,7 @@ export function App() {
           <Mark compact />
           <div className="topbar__right">
             <span className={`connection ${error ? "connection--error" : ""}`}>
-              <i /> {error ? "API disconnected" : "Local API connected"}
+              <i /> {error ? "API disconnected" : API_URL.includes("127.0.0.1") || API_URL.includes("localhost") ? "Local API connected" : "Azure test API connected"}
             </span>
             <button className="icon-button" onClick={() => void refresh()} aria-label="Refresh data">
               <RefreshCw size={18} className={loading ? "spin" : ""} />
@@ -366,7 +368,7 @@ export function App() {
           {error && (
             <div className="api-error">
               <Cloud size={22} />
-              <span><strong>Start the local API to use live data.</strong> Expected at {API_URL}. The interface remains available for review.</span>
+              <span><strong>The test API could not be reached.</strong> Expected at {API_URL}. The interface remains available for review.</span>
               <button onClick={() => void refresh()}>Try again</button>
             </div>
           )}
@@ -374,11 +376,11 @@ export function App() {
           {loading && !data ? (
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
-            <PageContent page={page} data={data} query={query} setPage={setPage} openDetail={setDetail} />
+            <PageContent page={page} data={data} query={query} setPage={setPage} openDetail={setDetail} refresh={refresh} />
           ) : null}
         </div>
         <footer>
-          <span><ShieldCheck size={15} /> Local prototype • append-only audit foundation</span>
+          <span><ShieldCheck size={15} /> Pilot test environment • append-only audit foundation</span>
           <span>Last refreshed {lastRefresh.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
         </footer>
       </main>
@@ -392,13 +394,15 @@ function PageContent({
   data,
   query,
   setPage,
-  openDetail
+  openDetail,
+  refresh
 }: {
   page: Page;
   data: OperationsData;
   query: string;
   setPage: (page: Page) => void;
   openDetail: OpenDetail;
+  refresh: () => Promise<void>;
 }) {
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} />;
@@ -406,7 +410,7 @@ function PageContent({
   if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "devices") return <DevicesPage data={data} openDetail={openDetail} />;
+  if (page === "devices") return <DevicesPage data={data} openDetail={openDetail} refresh={refresh} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
   return <SettingsPage openDetail={openDetail} />;
 }
@@ -734,26 +738,77 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
 }
 
 function LocationsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
-  return <div className="location-grid">{data.fixtures.locations.map((location) => {
-    const projected = Object.values(data.projections).filter((item) => item?.locationId === location.locationId);
-    const loaded = projected.filter((item) => item?.loadState === "loaded").length;
-    const Icon = location.type === "warehouse" ? Building2 : location.type === "in_transit" ? Truck : Boxes;
-    return <article className="location-card" key={location.locationId}>
-      <div className="location-card__head"><span><Icon size={22} /></span><Pill tone="good">Active</Pill></div>
-      <span className="eyebrow">{location.type.replaceAll("_", " ")}</span><h2>{location.name}</h2>
-      <div className="location-stats"><div><strong>{projected.length}</strong><span>Observed here</span></div><div><strong>{loaded}</strong><span>Loaded</span></div></div>
-      <button onClick={() => openDetail({
-        eyebrow: location.type.replaceAll("_", " "),
-        title: location.name,
-        body: <><DetailFacts items={[
-          ["Containers observed here", projected.length],
-          ["Currently loaded", loaded],
-          ["Devices assigned", data.fixtures.devices.filter((device) => device.assignedLocationId === location.locationId).length],
-          ["Location UUID", location.locationId]
-        ]}/><h3 className="detail-section-title">Containers at this location</h3><div className="detail-chip-list">{projected.slice(0, 30).map((projection) => <span key={projection!.containerId}>{data.fixtures.containers.find((item) => item.containerId === projection!.containerId)?.label}</span>)}{projected.length === 0 && <small>No current observations at this location.</small>}</div></>
-      })}>Open location <ArrowRight size={16} /></button>
-    </article>;
-  })}</div>;
+  const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
+  const [selectedLocationId, setSelectedLocationId] = useState(physicalLocations[0]?.locationId ?? "");
+  const selected = physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0];
+  if (!selected) return <EmptyState>No pilot locations are available.</EmptyState>;
+
+  const transitId = data.fixtures.locations.find((location) => location.type === "in_transit")?.locationId;
+  const container = (id: string) => data.fixtures.containers.find((item) => item.containerId === id);
+  const eventsFor = (containerId: string) => data.events
+    .filter((event) => event.containerId === containerId)
+    .sort((left, right) => Date.parse(right.effectiveAt) - Date.parse(left.effectiveAt));
+  const routeFor = (projection: Projection) => {
+    const events = eventsFor(projection.containerId);
+    const departure = events.find((event) => event.eventType === "batch_out");
+    const destinationId = departure?.payload.destinationLocationId;
+    const destination = typeof destinationId === "string" ? data.fixtures.locations.find((item) => item.locationId === destinationId) : undefined;
+    const originEvent = departure ? events.find((event) => event.eventId !== departure.eventId && event.locationId !== transitId) : undefined;
+    const origin = originEvent ? data.fixtures.locations.find((item) => item.locationId === originEvent.locationId) : undefined;
+    return { destination, origin, departure };
+  };
+  const projections = Object.values(data.projections).filter(Boolean) as Projection[];
+  const current = projections.filter((projection) => projection.locationId === selected.locationId);
+  const moving = projections.filter((projection) => projection.locationId === transitId);
+  const arriving = moving.filter((projection) => routeFor(projection).destination?.locationId === selected.locationId);
+  const leaving = moving.filter((projection) => routeFor(projection).origin?.locationId === selected.locationId);
+  const openContainer = (projection: Projection) => openDetail({
+    eyebrow: "Pilot route container",
+    title: container(projection.containerId)?.label ?? "Tracked container",
+    body: <><DetailFacts items={[
+      ["Current state", projection.loadState],
+      ["Official location", data.fixtures.locations.find((item) => item.locationId === projection.locationId)?.name ?? "Not observed"],
+      ["History health", projection.health],
+      ["Last observed", relativeTime(projection.lastObservedAt)]
+    ]}/><h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={eventsFor(projection.containerId)} data={data}/></>
+  });
+
+  return <>
+    <section className="location-selector panel">
+      <PanelTitle title="Pilot locations" subtitle="Choose one operating location to see its current and planned container involvement." />
+      <div className="location-selector__list">{physicalLocations.map((location) => {
+        const count = projections.filter((projection) => projection.locationId === location.locationId).length;
+        const Icon = location.type === "warehouse" ? Building2 : Boxes;
+        return <button key={location.locationId} className={location.locationId === selected.locationId ? "active" : ""} onClick={() => setSelectedLocationId(location.locationId)}><Icon size={18} /><span><b>{location.name}</b><small>{count} currently here</small></span><ChevronRight size={17} /></button>;
+      })}</div>
+    </section>
+
+    <section className="location-workspace panel">
+      <div className="location-workspace__head">
+        <div><span className="eyebrow">Selected operating location</span><h2>{selected.name}</h2><p>One place to review containers physically here, inbound, and outbound without mixing simultaneous routes together.</p></div>
+        <div className="location-workspace__counts"><span><b>{current.length}</b> here</span><span><b>{arriving.length}</b> arriving</span><span><b>{leaving.length}</b> leaving</span></div>
+      </div>
+      <div className="workflow-lanes">
+        <LocationWorkflowLane title="Containers at this location" subtitle="Official current state is this location" tone="here" items={current} data={data} onOpen={openContainer} />
+        <LocationWorkflowLane title="Containers arriving" subtitle="In transit with this location as the recorded destination" tone="arriving" items={arriving} data={data} onOpen={openContainer} />
+        <LocationWorkflowLane title="Containers leaving" subtitle="In transit after departing this location" tone="leaving" items={leaving} data={data} onOpen={openContainer} />
+      </div>
+    </section>
+  </>;
+}
+
+function LocationWorkflowLane({ title, subtitle, tone, items, data, onOpen }: { title: string; subtitle: string; tone: "here" | "arriving" | "leaving"; items: Projection[]; data: OperationsData; onOpen: (projection: Projection) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? items : items.slice(0, 8);
+  const locationName = (id: string | null) => data.fixtures.locations.find((location) => location.locationId === id)?.name ?? "Unconfirmed";
+  return <section className={`workflow-lane workflow-lane--${tone}`}>
+    <header><span>{tone === "here" ? <Boxes size={18} /> : tone === "arriving" ? <ArrowRight size={18} /> : <Truck size={18} />}</span><div><h3>{title}</h3><p>{subtitle}</p></div><b>{items.length}</b></header>
+    <div className="workflow-lane__items">{visible.length ? visible.map((projection) => {
+      const record = data.fixtures.containers.find((container) => container.containerId === projection.containerId);
+      return <button key={projection.containerId} onClick={() => onOpen(projection)}><span><strong>{record?.label ?? "Unknown"}</strong><small>{record?.type} · {projection.loadState} · {locationName(projection.locationId)}</small></span><Pill tone={projection.health === "needs_review" ? "warn" : projection.loadState === "loaded" ? "blue" : "good"}>{projection.health === "needs_review" ? "Review" : projection.loadState}</Pill><ChevronRight size={16} /></button>;
+    }) : <div className="workflow-lane__empty">No containers in this workflow lane.</div>}</div>
+    {items.length > 8 && <button className="workflow-lane__more" onClick={() => setExpanded((value) => !value)}>{expanded ? "Show fewer" : `Show all ${items.length}`}</button>}
+  </section>;
 }
 
 function ExceptionsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
@@ -815,26 +870,52 @@ function ActivityPage({ data, query, openDetail }: { data: OperationsData; query
   ))}</div></section>;
 }
 
-function DevicesPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
-  return <div className="device-grid">{data.fixtures.devices.map((device) => {
-    const location = data.fixtures.locations.find((item) => item.locationId === device.assignedLocationId);
-    const events = data.events.filter((item) => item.deviceId === device.deviceId);
-    return <article className="device-card" key={device.deviceId}>
-      <div className="phone-icon"><Smartphone /></div><div className="device-card__status"><i /> ONLINE</div>
-      <h2>{device.label}</h2><p><MapPin size={15} /> Locked to {location?.name}</p>
-      <dl><div><dt>Last sync</dt><dd>Just now</dd></div><div><dt>Queued scans</dt><dd>0</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>App version</dt><dd>0.2 local</dd></div></dl>
-      <button className="secondary" onClick={() => openDetail({
-        eyebrow: "Shared scanner",
-        title: device.label,
-        body: <><DetailFacts items={[
-          ["Assigned location", location?.name ?? "Unknown"],
-          ["Observations", events.length],
-          ["Installation UUID", device.installationId],
-          ["Device UUID", device.deviceId]
-        ]}/><h3 className="detail-section-title">Latest scanner activity</h3><EventEvidence events={events.slice(0, 12)} data={data}/></>
-      })}>Device details <ChevronRight size={16} /></button>
-    </article>;
-  })}</div>;
+function DevicesPage({ data, openDetail, refresh }: { data: OperationsData; openDetail: OpenDetail; refresh: () => Promise<void> }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
+  const save = async (device: Device, update: { assignedLocationId?: string; isActive?: boolean }) => {
+    setBusyId(device.deviceId);
+    setNotice(null);
+    try {
+      await updateDevice(device.deviceId, update);
+      await refresh();
+      setNotice(`${device.label} was updated and the change was recorded in the audit log.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Device update failed.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return <>
+    <div className="device-guidance"><ShieldCheck size={20} /><span><strong>Availability is an admin control, not a connectivity guess.</strong> Disabling a scanner prevents new scans; a future heartbeat will report whether an enabled device is actually online.</span></div>
+    {notice && <div className="device-notice">{notice}</div>}
+    <div className="device-grid">{data.fixtures.devices.map((device) => {
+      const location = data.fixtures.locations.find((item) => item.locationId === device.assignedLocationId);
+      const events = data.events.filter((item) => item.deviceId === device.deviceId);
+      const busy = busyId === device.deviceId;
+      return <article className="device-card" key={device.deviceId}>
+        <div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div>
+        <h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name}</p>
+        <dl><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>Queued scans</dt><dd>0</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>App version</dt><dd>0.2 test</dd></div></dl>
+        <label className="device-location-control"><span>Assigned location</span><select defaultValue={device.assignedLocationId} disabled={busy} onChange={(event) => { if (event.target.value !== device.assignedLocationId) void save(device, { assignedLocationId: event.target.value }); }}>
+          {operatingLocations.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}
+        </select></label>
+        <div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void save(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={() => openDetail({
+          eyebrow: "Shared scanner",
+          title: device.label,
+          body: <><DetailFacts items={[
+            ["Assigned location", location?.name ?? "Unknown"],
+            ["Scanning enabled", device.isActive ? "Yes" : "No"],
+            ["Observations", events.length],
+            ["Installation UUID", device.installationId],
+            ["Device UUID", device.deviceId]
+          ]}/><h3 className="detail-section-title">Latest scanner activity</h3><EventEvidence events={events.slice(0, 12)} data={data}/></>
+        })}>Details <ChevronRight size={16} /></button></div>
+      </article>;
+    })}</div>
+  </>;
 }
 
 function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {

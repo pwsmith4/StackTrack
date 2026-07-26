@@ -13,6 +13,8 @@ export interface LocalDevice {
   readonly installationId: string;
   readonly label: string;
   readonly assignedLocationId: string;
+  readonly isActive: boolean;
+  readonly deactivatedAt: string | null;
 }
 
 export interface LocalContainer {
@@ -65,13 +67,17 @@ export const localFixtures = {
       deviceId: "30000000-0000-4000-8000-000000000001",
       installationId: "31000000-0000-4000-8000-000000000001",
       label: "Scanner A — Midtown",
-      assignedLocationId: "20000000-0000-4000-8000-000000000002"
+      assignedLocationId: "20000000-0000-4000-8000-000000000002",
+      isActive: true,
+      deactivatedAt: null
     },
     {
       deviceId: "30000000-0000-4000-8000-000000000002",
       installationId: "31000000-0000-4000-8000-000000000002",
       label: "Scanner B — Warehouse",
-      assignedLocationId: "20000000-0000-4000-8000-000000000003"
+      assignedLocationId: "20000000-0000-4000-8000-000000000003",
+      isActive: true,
+      deactivatedAt: null
     }
   ] satisfies readonly LocalDevice[],
   containers: [

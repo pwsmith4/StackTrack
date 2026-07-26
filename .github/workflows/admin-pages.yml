@@ -3,7 +3,7 @@ name: Deploy StackTrack admin to GitHub Pages
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: ["main", "test"]
     paths:
       - "apps/admin/**"
       - "packages/**"
@@ -24,22 +24,57 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: github-pages
-    env:
-      VITE_API_URL: ${{ vars.STACKTRACK_API_URL }}
-      VITE_BASE_PATH: /${{ github.event.repository.name }}/
     steps:
-      - uses: actions/checkout@v4
+      # Pages has one site per repository. Build both branches into that one
+      # artifact so main stays at / and test is always available at /testing/.
+      - name: Check out production branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: production
+      - name: Check out preview branch
+        uses: actions/checkout@v4
+        with:
+          ref: test
+          path: preview
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run check --workspace @stacktrack/admin
-      - run: npm run build:admin
+          cache-dependency-path: |
+            production/package-lock.json
+            preview/package-lock.json
+      - name: Install production dependencies
+        working-directory: production
+        run: npm ci
+      - name: Build production admin
+        working-directory: production
+        env:
+          VITE_API_URL: ${{ vars.STACKTRACK_API_URL }}
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+        run: |
+          npm run check --workspace @stacktrack/admin
+          npm run build:admin
+      - name: Install preview dependencies
+        working-directory: preview
+        run: npm ci
+      - name: Build testing admin
+        working-directory: preview
+        env:
+          VITE_API_URL: ${{ vars.STACKTRACK_API_URL }}
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/testing/
+        run: |
+          npm run check --workspace @stacktrack/admin
+          npm run build:admin
+      - name: Combine production and preview sites
+        run: |
+          mkdir -p site/testing
+          cp -R production/apps/admin/dist/. site/
+          cp -R preview/apps/admin/dist/. site/testing/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: apps/admin/dist
+          path: site
 
   deploy:
     environment:

@@ -300,11 +300,13 @@ export class PostgresEventLedger implements EventLedger {
           `SELECT d.device_id AS "deviceId",
                   di.installation_id AS "installationId",
                   d.device_label AS label,
-                  d.assigned_location_id AS "assignedLocationId"
+                  d.assigned_location_id AS "assignedLocationId",
+                  d.is_active AS "isActive",
+                  d.deactivated_at AS "deactivatedAt"
              FROM devices d
              JOIN device_installations di
                ON di.tenant_id = d.tenant_id AND di.device_id = d.device_id
-            WHERE d.tenant_id = $1 AND d.is_active AND di.is_active
+            WHERE d.tenant_id = $1 AND di.is_active
             ORDER BY d.device_label`,
           [tenantId]
         ),

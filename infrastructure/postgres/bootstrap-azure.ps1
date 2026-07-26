@@ -67,6 +67,7 @@ ALTER ROLE stacktrack_app WITH LOGIN PASSWORD :'app_password';
 GRANT CONNECT ON DATABASE stacktrack TO stacktrack_app;
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
+GRANT UPDATE (assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
 "@ | & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --set="app_password=$appPassword"
   if ($LASTEXITCODE -ne 0) { throw "Azure application-login setup failed." }
