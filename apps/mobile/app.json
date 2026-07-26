@@ -9,9 +9,9 @@
     "primaryColor": "#00539F",
     "icon": "./assets/stacktrack-app-icon.png",
     "splash": {
-      "image": "./assets/stacktrack-logo.png",
+      "image": "./assets/stacktrack-logo-tight.png",
       "resizeMode": "contain",
-      "backgroundColor": "#00294F"
+      "backgroundColor": "#F3F6F8"
     },
     "android": {
       "package": "org.goodwill.stacktrack.local",
@@ -19,6 +19,11 @@
         "foregroundImage": "./assets/stacktrack-app-icon.png",
         "backgroundColor": "#00294F"
       }
+    },
+    "androidStatusBar": {
+      "backgroundColor": "#FFFFFF",
+      "barStyle": "dark-content",
+      "translucent": false
     },
     "web": {
       "bundler": "metro",

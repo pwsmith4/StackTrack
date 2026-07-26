@@ -40,7 +40,7 @@ import {
   type Projection,
   type StoredEvent
 } from "./api";
-import stacktrackLogo from "./assets/stacktrack-logo.png";
+import stacktrackLogo from "./assets/stacktrack-logo-tight.png";
 
 type Page =
   | "dashboard"
