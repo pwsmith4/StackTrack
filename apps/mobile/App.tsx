@@ -1,6 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { StatusBar } from "expo-status-bar";
 import {
   ActivityIndicator,
   Alert,
@@ -9,6 +8,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -123,7 +123,7 @@ function actionLabel(action: ActionType) {
 function Mark() {
   return (
     <View style={styles.mark}>
-      <Image source={require("./assets/stacktrack-logo.png")} style={styles.markLogo} resizeMode="contain" accessibilityLabel="StackTrack" accessibilityIgnoresInvertColors />
+      <Image source={require("./assets/stacktrack-logo-tight.png")} style={styles.markLogo} resizeMode="contain" accessibilityLabel="StackTrack" accessibilityIgnoresInvertColors />
     </View>
   );
 }
@@ -345,11 +345,11 @@ function AppContent() {
     return (
       <View style={styles.launchScreen}>
         <Image
-          source={require("./assets/stacktrack-logo.png")}
+          source={require("./assets/stacktrack-logo-tight.png")}
           style={styles.launchLogo}
           resizeMode="contain"
         />
-        <ActivityIndicator size="small" color="#FFFFFF" style={styles.launchSpinner} />
+        <ActivityIndicator size="small" color={colors.blue} style={styles.launchSpinner} />
         <Text style={styles.launchLoadingText}>Preparing scanner…</Text>
       </View>
     );
@@ -357,7 +357,7 @@ function AppContent() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <StatusBar style="dark" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} hidden={false} />
       <View style={[styles.app, isWide && styles.appWide]}>
         {isWide && <WideNav tab={tab} setTab={setTab} pending={pending} />}
         <View style={styles.main}>
@@ -629,12 +629,12 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.navy,
+    backgroundColor: colors.canvas,
     padding: 32
   },
-  launchLogo: { width: 320, height: 150, marginBottom: 18 },
-  launchSpinner: { marginTop: 36 },
-  launchLoadingText: { color: "#C6D8E7", marginTop: 12, fontSize: 13 },
+  launchLogo: { width: 300, height: 78, marginBottom: 18 },
+  launchSpinner: { marginTop: 24 },
+  launchLoadingText: { color: colors.muted, marginTop: 12, fontSize: 13 },
   header: { height: 68, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.line, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   mark: { flexDirection: "row", alignItems: "center" },
   markLogo: { width: 156, height: 42 },
