@@ -40,7 +40,7 @@ import {
   type Projection,
   type StoredEvent
 } from "./api";
-import goodwillLogo from "./assets/goodwill-logo.png";
+import stacktrackLogo from "./assets/stacktrack-logo.png";
 
 type Page =
   | "dashboard"
@@ -135,12 +135,8 @@ function pageFromHash(): Page {
 
 function Mark({ compact = false }: { compact?: boolean }) {
   return (
-    <div className={`mark ${compact ? "mark--compact" : ""}`} aria-label="StackTrack by Goodwill">
-      <img className="mark__logo" src={goodwillLogo} alt="" aria-hidden="true" />
-      <div>
-        <strong>StackTrack</strong>
-        {!compact && <small>GOODWILL OPERATIONS</small>}
-      </div>
+    <div className={`mark ${compact ? "mark--compact" : ""}`}>
+      <img className="mark__logo" src={stacktrackLogo} alt="StackTrack" />
     </div>
   );
 }

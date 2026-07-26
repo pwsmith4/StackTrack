@@ -120,14 +120,10 @@ function actionLabel(action: ActionType) {
   }[action];
 }
 
-function Mark({ inverse = false }: { inverse?: boolean }) {
+function Mark() {
   return (
     <View style={styles.mark}>
-      <Image source={require("./assets/goodwill-logo.png")} style={styles.markLogo} resizeMode="contain" accessibilityIgnoresInvertColors />
-      <View>
-        <Text style={[styles.markName, inverse && styles.markNameInverse]}>StackTrack</Text>
-        <Text style={[styles.markSub, inverse && styles.markSubInverse]}>GOODWILL OPERATIONS</Text>
-      </View>
+      <Image source={require("./assets/stacktrack-logo.png")} style={styles.markLogo} resizeMode="contain" accessibilityLabel="StackTrack" accessibilityIgnoresInvertColors />
     </View>
   );
 }
@@ -346,7 +342,17 @@ function AppContent() {
   };
 
   if (loading) {
-    return <View style={styles.center}><ActivityIndicator size="large" color={colors.blue} /><Text style={styles.loadingText}>Preparing scanner…</Text></View>;
+    return (
+      <View style={styles.launchScreen}>
+        <Image
+          source={require("./assets/stacktrack-logo.png")}
+          style={styles.launchLogo}
+          resizeMode="contain"
+        />
+        <ActivityIndicator size="small" color="#FFFFFF" style={styles.launchSpinner} />
+        <Text style={styles.launchLoadingText}>Preparing scanner…</Text>
+      </View>
+    );
   }
 
   return (
@@ -597,7 +603,7 @@ function SuccessStep({ workflow, online, onDone, onAnother }: { workflow: Workfl
 }
 
 function WideNav({ tab, setTab, pending }: { tab: Tab; setTab: (tab: Tab) => void; pending: number }) {
-  return <View style={styles.wideNav}><Mark inverse /><View style={styles.wideNavLocation}><Text style={styles.overline}>ASSIGNED LOCATION</Text><Text style={styles.wideNavLocationName}>Midtown Store</Text></View><View style={styles.wideNavItems}><NavItem icon="home-outline" activeIcon="home" label="Home" active={tab === "home"} onPress={() => setTab("home")} /><NavItem icon="time-outline" activeIcon="time" label="Activity" active={tab === "activity"} onPress={() => setTab("activity")} badge={pending} /><NavItem icon="settings-outline" activeIcon="settings" label="Settings" active={tab === "settings"} onPress={() => setTab("settings")} /></View><View style={styles.wideNavFoot}><Icon name="shield-checkmark-outline" color="#87B9D2" /><Text>Accuracy-first local build</Text></View></View>;
+  return <View style={styles.wideNav}><Mark /><View style={styles.wideNavLocation}><Text style={styles.overline}>ASSIGNED LOCATION</Text><Text style={styles.wideNavLocationName}>Midtown Store</Text></View><View style={styles.wideNavItems}><NavItem icon="home-outline" activeIcon="home" label="Home" active={tab === "home"} onPress={() => setTab("home")} /><NavItem icon="time-outline" activeIcon="time" label="Activity" active={tab === "activity"} onPress={() => setTab("activity")} badge={pending} /><NavItem icon="settings-outline" activeIcon="settings" label="Settings" active={tab === "settings"} onPress={() => setTab("settings")} /></View><View style={styles.wideNavFoot}><Icon name="shield-checkmark-outline" color="#87B9D2" /><Text>Accuracy-first local build</Text></View></View>;
 }
 
 function BottomNav({ tab, setTab, pending }: { tab: Tab; setTab: (tab: Tab) => void; pending: number }) {
@@ -619,13 +625,19 @@ const styles = StyleSheet.create({
   main: { flex: 1, minWidth: 0 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.canvas },
   loadingText: { color: colors.muted, marginTop: 12, fontSize: 13 },
+  launchScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.navy,
+    padding: 32
+  },
+  launchLogo: { width: 320, height: 150, marginBottom: 18 },
+  launchSpinner: { marginTop: 36 },
+  launchLoadingText: { color: "#C6D8E7", marginTop: 12, fontSize: 13 },
   header: { height: 68, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.line, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  mark: { flexDirection: "row", alignItems: "center", gap: 9 },
-  markLogo: { width: 29, height: 42 },
-  markName: { color: colors.navy, fontSize: 17, fontWeight: "800", letterSpacing: -0.4 },
-  markNameInverse: { color: "white" },
-  markSub: { color: colors.blue, fontSize: 7, fontWeight: "800", letterSpacing: 1.2, marginTop: 1 },
-  markSubInverse: { color: "#78B7D2" },
+  mark: { flexDirection: "row", alignItems: "center" },
+  markLogo: { width: 156, height: 42 },
   headerStatus: { flexDirection: "row", alignItems: "center", backgroundColor: "#F0F4F6", borderRadius: 12, paddingHorizontal: 9, paddingVertical: 5 },
   statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green, marginRight: 5 },
   statusDotOffline: { backgroundColor: colors.orange },

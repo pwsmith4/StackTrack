@@ -26,13 +26,11 @@ button { cursor: pointer; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 258px 1fr; }
 .sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--blue-950); color: white; padding: 27px 18px 20px; display: flex; flex-direction: column; z-index: 20; }
-.mark { display: flex; align-items: center; gap: 13px; padding: 0 8px; min-height: 58px; }
-.mark__logo { display: block; width: 42px; height: auto; flex: 0 0 auto; }
-.mark strong { display: block; font-family: Manrope, sans-serif; font-size: 18px; letter-spacing: -.4px; }
-.mark small { display: block; color: #81cbe7; font-size: 8px; letter-spacing: 1.6px; margin-top: 2px; }
+.mark { display: flex; align-items: center; padding: 0 8px; min-height: 58px; }
+.mark__logo { display: block; width: 184px; height: auto; max-height: 50px; object-fit: contain; }
 .mark--compact { display: none; color: var(--blue-950); padding: 0; }
-.mark--compact .mark__logo { width: 25px; }
-.mark--compact { min-height: 38px; gap: 9px; }
+.mark--compact .mark__logo { width: 130px; max-height: 34px; }
+.mark--compact { min-height: 38px; }
 .sidebar__site { border-top: 1px solid rgba(255,255,255,.12); border-bottom: 1px solid rgba(255,255,255,.12); margin: 28px 0 22px; padding: 17px 5px; }
 .sidebar__site > span, .nav-label { color: #8ba9c2; font-size: 9px; letter-spacing: 1.4px; font-weight: 700; display: block; margin: 0 7px 9px; }
 .sidebar__site button { width: 100%; padding: 8px 6px; background: transparent; border: 0; color: white; display: flex; align-items: center; gap: 9px; text-align: left; }
@@ -298,7 +296,6 @@ footer span { display: flex; align-items: center; gap: 5px; }
   .topbar { padding: 0 16px; }
   .menu-button { display: grid; margin-right: 12px; }
   .mark--compact { display: flex; }
-  .mark--compact small { display: none; }
   .connection { display: none; }
   .content { padding: 24px 16px 38px; }
   .page-heading { align-items: stretch; flex-direction: column; gap: 18px; }

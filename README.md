@@ -62,6 +62,13 @@ simulation. If PostgreSQL is unavailable, the API logs a warning and retains the
 small JSON ledger as a fallback. Connection and shutdown instructions are in
 `infrastructure/postgres/README.md`.
 
+### Launch the Android cloud test after a restart
+
+Double-click `start-cloud-mobile.cmd` in the repository root. It starts the
+Expo Android app with the Azure test API selected. Keep its terminal window open
+while testing in the emulator; no local API or local PostgreSQL process is
+needed for this cloud-mobile workflow.
+
 ### Bootstrap the Azure test database
 
 After creating an Azure Database for PostgreSQL Flexible Server and allowing
