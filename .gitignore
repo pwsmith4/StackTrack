@@ -10,3 +10,4 @@ coverage/
 .expo/
 apps/*/dist/
 .artifacts/
+Expo-Go-*.apk
