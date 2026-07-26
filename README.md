@@ -62,6 +62,20 @@ simulation. If PostgreSQL is unavailable, the API logs a warning and retains the
 small JSON ledger as a fallback. Connection and shutdown instructions are in
 `infrastructure/postgres/README.md`.
 
+### Bootstrap the Azure test database
+
+After creating an Azure Database for PostgreSQL Flexible Server and allowing
+your current client IP in its Networking page, initialize its isolated test
+database with:
+
+```powershell
+npm.cmd run db:azure:bootstrap -- -ServerName "your-server.postgres.database.azure.com" -AdminLogin "your-azure-admin-login"
+```
+
+The command prompts for both passwords, applies the schema, creates the
+non-admin `stacktrack_app` API login, and loads synthetic test data. It does
+not save passwords in the repository.
+
 ## First API slice
 
 Submit an immutable observation:

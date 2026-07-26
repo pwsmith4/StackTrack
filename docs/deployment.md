@@ -39,3 +39,32 @@ or Android application. A production-like test deployment therefore needs:
 
 The API must allow the final website origin through CORS. Authentication must be
 implemented before exposing operational or non-synthetic data publicly.
+
+## Azure synthetic-test environment
+
+The first Azure deployment is deliberately limited to synthetic data while
+Goodwill identity and production-integration decisions are outstanding.
+
+1. Create one Azure Database for PostgreSQL Flexible Server at the smallest
+   eligible Burstable/32 GiB configuration, add only the developer's current IP
+   in Networking, and allowlist `pgcrypto` in Server parameters.
+2. Bootstrap it locally without saving credentials to the repository:
+
+   ```powershell
+   npm.cmd run db:azure:bootstrap -- -ServerName "<server>.postgres.database.azure.com" -AdminLogin "<admin-login>"
+   ```
+
+3. Build the API image from this repository's root `Dockerfile`. The container
+   requires `DATABASE_URL` and listens on `PORT` (default 3000).
+   The repository includes the `Build StackTrack API test image` GitHub Action,
+   which publishes `ghcr.io/<GitHub-owner>/stacktrack-api:main` without Docker
+   being installed on the developer PC. After its first successful run, set the
+   resulting GitHub Container Registry package to Public so Azure Container Apps
+   can pull the test image without storing GitHub credentials.
+4. For this temporary synthetic test only, set `STACKTRACK_TEST_MODE=true` in
+   the container app. This enables the development header protocol and local
+   inspection routes used by the current admin and mobile prototypes. Never use
+   it with Goodwill data.
+5. Do not deploy real operational data until Microsoft Entra authentication,
+   role-based access, app-secret storage, restricted CORS, monitoring, backup,
+   and incident procedures are implemented.

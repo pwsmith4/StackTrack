@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import {
   InMemoryEventLedger,
@@ -26,13 +24,6 @@ interface ResettableLedger extends EventLedger {
 
 function isResettable(ledger: EventLedger): ledger is ResettableLedger {
   return "reset" in ledger && typeof ledger.reset === "function";
-}
-
-function readPublicAsset(name: "index.html" | "app.js" | "styles.css"): string {
-  return readFileSync(
-    fileURLToPath(new URL(`../public/${name}`, import.meta.url)),
-    "utf8"
-  );
 }
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
@@ -167,18 +158,6 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
   });
 
   if (localMode) {
-    app.get("/", async (_request, reply) =>
-      reply.type("text/html; charset=utf-8").send(readPublicAsset("index.html"))
-    );
-    app.get("/app.js", async (_request, reply) =>
-      reply
-        .type("application/javascript; charset=utf-8")
-        .send(readPublicAsset("app.js"))
-    );
-    app.get("/styles.css", async (_request, reply) =>
-      reply.type("text/css; charset=utf-8").send(readPublicAsset("styles.css"))
-    );
-
     app.get("/api/v1/local/reference-data", async (request, reply) => {
       const tenantId = readTenantId(request);
       if (!tenantId) {

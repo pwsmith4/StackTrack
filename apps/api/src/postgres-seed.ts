@@ -6,10 +6,10 @@ const { Pool } = pg;
 const TENANT_ID = "10000000-0000-4000-8000-000000000001";
 const APP_DATABASE_URL =
   process.env.DATABASE_URL ??
-  "postgres://stacktrack:stacktrack@127.0.0.1:5432/stacktrack";
+  "postgres://stacktrack:stacktrack@127.0.0.1:5433/stacktrack";
 const ADMIN_DATABASE_URL =
   process.env.DATABASE_ADMIN_URL ??
-  "postgres://postgres:stacktrack@127.0.0.1:5432/stacktrack";
+  "postgres://postgres:stacktrack@127.0.0.1:5433/stacktrack";
 
 function id(prefix: string, index: number): string {
   return `${prefix}000000-0000-4000-8000-${String(index).padStart(12, "0")}`;

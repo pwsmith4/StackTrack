@@ -14,7 +14,7 @@ const dataPath =
   process.env.LOCAL_DATA_PATH ?? resolve(process.cwd(), ".local-data", "ledger.json");
 const databaseUrl =
   process.env.DATABASE_URL ??
-  "postgres://stacktrack:stacktrack@127.0.0.1:5432/stacktrack";
+  "postgres://stacktrack:stacktrack@127.0.0.1:5433/stacktrack";
 
 let ledger: EventLedger;
 let referenceData:
@@ -34,7 +34,7 @@ try {
   ledger = postgresLedger;
   referenceData = (tenantId) => postgresLedger.referenceData(tenantId);
   closeDatabase = () => pool.end();
-  dataDescription = "PostgreSQL at 127.0.0.1:5432/stacktrack";
+  dataDescription = "PostgreSQL at 127.0.0.1:5433/stacktrack";
 } catch (error) {
   console.warn(
     `PostgreSQL is unavailable; using the JSON fallback. ${error instanceof Error ? error.message : String(error)}`
@@ -59,7 +59,7 @@ if (closeDatabase) {
 
 try {
   await app.listen({ port, host });
-  console.log(`StackTrack Local Lab: http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+  console.log(`StackTrack API: http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
   console.log(`Local data: ${dataDescription}`);
 } catch (error) {
   app.log.error(error);
