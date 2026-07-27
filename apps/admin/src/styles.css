@@ -171,6 +171,9 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .location-card__head > span { width: 42px; height: 42px; display: grid; place-items: center; background: #e7f2f9; color: var(--blue-800); }
 .location-card h2, .device-card h2, .report-card h2 { font: 800 17px/1.2 Manrope, sans-serif; margin: 5px 0 16px; }
 .location-selector { margin-bottom: 18px; }
+.location-selector__heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-right: 18px; }
+.location-search { display: flex; align-items: center; gap: 7px; height: 37px; min-width: 220px; padding: 0 10px; border: 1px solid var(--line); background: #fff; color: #778895; }
+.location-search input { width: 100%; border: 0; outline: 0; color: var(--ink); font: inherit; font-size: 11px; }
 .location-selector__list { display: flex; gap: 9px; padding: 0 18px 18px; overflow-x: auto; }
 .location-selector__list button { min-width: 215px; display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); background: white; color: #516170; text-align: left; }
 .location-selector__list button:hover, .location-selector__list button.active { border-color: #95cbe4; background: #eef8fc; color: var(--blue-900); }
@@ -178,6 +181,12 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .location-selector__list b, .location-selector__list small { display: block; }
 .location-selector__list b { font-size: 11px; }
 .location-selector__list small { color: #82909b; margin-top: 3px; font-size: 9px; }
+.location-selector__empty { padding: 14px; color: #75818b; font-size: 11px; }
+.location-type-icon, .location-title-icon { width: 34px; height: 34px; display: inline-grid; place-items: center; background: #e8f4fb; color: var(--blue); flex: 0 0 auto; }
+.location-type-icon--warehouse, .location-title-icon--warehouse { background: #eef0f8; color: #4a5f97; }
+.location-type-icon--donation_express, .location-title-icon--donation_express { background: #fff0e5; color: #b85b1d; }
+.location-workspace__head h2 { display: flex; align-items: center; gap: 9px; }
+.location-title-icon { width: 30px; height: 30px; }
 .location-workspace { padding: 22px; }
 .location-workspace__head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 21px; border-bottom: 1px solid var(--line); }
 .location-workspace__head .eyebrow { margin-bottom: 7px; }
@@ -254,6 +263,18 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .device-location-control { display: block; margin: 13px 0; }
 .device-location-control span { display: block; margin-bottom: 5px; color: #75818b; font-size: 9px; font-weight: 700; }
 .device-location-control select { width: 100%; height: 36px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: white; color: #34414d; font-size: 10px; }
+.device-location-control textarea, .device-version-input input { width: 100%; min-height: 58px; box-sizing: border-box; padding: 8px; border: 1px solid var(--line); border-radius: 4px; resize: vertical; color: #34414d; font: inherit; font-size: 10px; }
+.device-version-input { display: flex; gap: 7px; }
+.device-version-input input { min-height: 36px; height: 36px; padding: 0 8px; }
+.device-version-input button { min-width: 66px; justify-content: center; }
+.device-save-assignment { width: 100%; justify-content: center; margin: -3px 0 9px; }
+.device-update-warning { display: flex; align-items: flex-start; gap: 6px; margin: 12px 0 -3px; padding: 9px; background: #fff0e5; color: #9a4b15; font-size: 9px; font-weight: 700; line-height: 1.35; }
+.assignment-history { border: 1px solid var(--line); }
+.assignment-history article { display: grid; gap: 4px; padding: 11px; border-bottom: 1px solid var(--line); }
+.assignment-history article:last-child { border-bottom: 0; }
+.assignment-history time, .assignment-history small { color: #778895; font-size: 9px; }
+.assignment-history strong { display: flex; align-items: center; gap: 5px; color: #30404d; font-size: 11px; }
+.assignment-history span { color: #5e6d78; font-size: 10px; }
 .device-card__actions { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
 .device-card__actions button { justify-content: center; padding: 0 10px; }
 .report-grid { grid-template-columns: repeat(4, 1fr); margin-bottom: 18px; }

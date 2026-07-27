@@ -12,6 +12,7 @@ import {
 } from "@stacktrack/domain";
 import type {
   LocalContainer,
+  LocalDeviceAssignment,
   LocalDevice,
   LocalFixtures,
   LocalLocation
@@ -288,7 +289,7 @@ export class PostgresEventLedger implements EventLedger {
       );
       if (!tenant.rows[0]) return null;
 
-      const [locations, devices, containers, goodsTypes] = await Promise.all([
+      const [locations, devices, deviceAssignments, containers, goodsTypes] = await Promise.all([
         client.query<LocalLocation>(
           `SELECT location_id AS "locationId", location_name AS name,
                   location_type AS type
@@ -302,12 +303,28 @@ export class PostgresEventLedger implements EventLedger {
                   d.device_label AS label,
                   d.assigned_location_id AS "assignedLocationId",
                   d.is_active AS "isActive",
-                  d.deactivated_at AS "deactivatedAt"
+                  d.deactivated_at AS "deactivatedAt",
+                  di.pending_offline_scan_count AS "pendingOfflineScanCount",
+                  di.reported_app_version AS "reportedAppVersion",
+                  d.required_app_version AS "requiredAppVersion",
+                  di.last_reported_at AS "lastReportedAt"
              FROM devices d
              JOIN device_installations di
                ON di.tenant_id = d.tenant_id AND di.device_id = d.device_id
             WHERE d.tenant_id = $1 AND di.is_active
             ORDER BY d.device_label`,
+          [tenantId]
+        ),
+        client.query<LocalDeviceAssignment>(
+          `SELECT assignment_history_id AS "assignmentHistoryId",
+                  device_id AS "deviceId",
+                  previous_location_id AS "previousLocationId",
+                  assigned_location_id AS "assignedLocationId",
+                  reason,
+                  occurred_at AS "occurredAt"
+             FROM device_assignment_history
+            WHERE tenant_id = $1
+            ORDER BY occurred_at DESC`,
           [tenantId]
         ),
         client.query<LocalContainer>(
@@ -346,6 +363,7 @@ export class PostgresEventLedger implements EventLedger {
         },
         locations: locations.rows,
         devices: devices.rows,
+        deviceAssignments: deviceAssignments.rows,
         containers: containers.rows,
         goodsTypes: goodsTypes.rows
       };

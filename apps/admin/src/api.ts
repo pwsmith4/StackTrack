@@ -16,6 +16,19 @@ export interface Device {
   assignedLocationId: string;
   isActive: boolean;
   deactivatedAt: string | null;
+  pendingOfflineScanCount: number;
+  reportedAppVersion: string | null;
+  requiredAppVersion: string;
+  lastReportedAt: string | null;
+}
+
+export interface DeviceAssignment {
+  assignmentHistoryId: string;
+  deviceId: string;
+  previousLocationId: string | null;
+  assignedLocationId: string;
+  reason: string;
+  occurredAt: string;
 }
 
 export interface Container {
@@ -28,6 +41,7 @@ export interface Fixtures {
   tenant: { tenantId: string; name: string };
   locations: Location[];
   devices: Device[];
+  deviceAssignments: DeviceAssignment[];
   containers: Container[];
   goodsTypes: { name: string; secondaryLabel: string; options: string[] }[];
 }
@@ -84,7 +98,12 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
 
 export async function updateDevice(
   deviceId: string,
-  update: { assignedLocationId?: string; isActive?: boolean }
+  update: {
+    assignedLocationId?: string;
+    isActive?: boolean;
+    requiredAppVersion?: string;
+    assignmentReason?: string;
+  }
 ): Promise<Device> {
   const response = await patchJson<{ device: Device }>(`/api/v1/local/devices/${deviceId}`, update);
   return response.device;
