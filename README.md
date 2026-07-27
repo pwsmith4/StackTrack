@@ -69,6 +69,16 @@ Expo Android app with the Azure test API selected. Keep its terminal window open
 while testing in the emulator; no local API or local PostgreSQL process is
 needed for this cloud-mobile workflow.
 
+For an Android emulator test against the local PostgreSQL/API environment,
+double-click `start-local.cmd`, then use `build-local-android.cmd` once to
+install the native debug app. It uses Android's `10.0.2.2` host bridge so the
+emulator reports its telemetry to the local Devices page. After that first
+build, use `start-local-native-metro.cmd` to reload the installed app during
+ordinary emulator testing. Keep both the local stack and Metro windows open.
+
+Use the native debug app rather than Expo Go: it includes StackTrack's native
+storage dependency and works with the project's current Expo SDK.
+
 ### Version every mobile update
 
 The field app reports its installed semantic version to the admin site whenever
