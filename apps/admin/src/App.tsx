@@ -183,7 +183,8 @@ function LocationTypeIcon({ location, size = 18 }: { location: Location; size?: 
   return <Icon size={size} aria-hidden="true" />;
 }
 
-function versionIsOlder(version: string | null, required: string) {
+function versionIsOlder(version: string | null, required?: string | null) {
+  if (!required) return false;
   if (!version) return true;
   const parse = (value: string) => value.replace(/^v/i, "").split(".").map((item) => Number.parseInt(item, 10) || 0);
   const actual = parse(version);
@@ -914,20 +915,22 @@ function deviceDetail(device: Device, data: OperationsData): DetailView {
   const locationName = (id: string | null) => data.fixtures.locations.find((location) => location.locationId === id)?.name ?? "Unassigned";
   const events = data.events.filter((item) => item.deviceId === device.deviceId);
   const history = data.fixtures.deviceAssignments.filter((item) => item.deviceId === device.deviceId);
-  const updateNeeded = versionIsOlder(device.reportedAppVersion, device.requiredAppVersion);
-  return { eyebrow: "Shared scanner", title: device.label, body: <><DetailFacts items={[["Assigned location", locationName(device.assignedLocationId)], ["Scanning enabled", device.isActive ? "Yes" : "No"], ["Pending offline scans", device.pendingOfflineScanCount], ["Installed / required", `${device.reportedAppVersion ?? "Not reported"} / ${device.requiredAppVersion}${updateNeeded ? " — update required" : ""}`], ["Last app report", relativeTime(device.lastReportedAt)], ["Installation UUID", device.installationId]]}/><h3 className="detail-section-title">Assignment history</h3>{history.length ? <div className="assignment-history">{history.map((entry: DeviceAssignment) => <article key={entry.assignmentHistoryId}><time>{new Date(entry.occurredAt).toLocaleString()}</time><strong>{locationName(entry.previousLocationId)} <ArrowRight size={14} /> {locationName(entry.assignedLocationId)}</strong><span>{entry.reason}</span><small>Preserved in the device audit history</small></article>)}</div> : <EmptyState>No location reassignment has been recorded yet.</EmptyState>}<h3 className="detail-section-title">Latest scanner activity</h3><EventEvidence events={events.slice(0, 12)} data={data}/></> };
+  const requiredAppVersion = device.requiredAppVersion ?? "";
+  const updateNeeded = versionIsOlder(device.reportedAppVersion, requiredAppVersion);
+  return { eyebrow: "Shared scanner", title: device.label, body: <><DetailFacts items={[["Assigned location", locationName(device.assignedLocationId)], ["Scanning enabled", device.isActive ? "Yes" : "No"], ["Pending offline scans", device.pendingOfflineScanCount], ["Installed / required", `${device.reportedAppVersion ?? "Not reported"} / ${requiredAppVersion || "Not set"}${updateNeeded ? " — update required" : ""}`], ["Last app report", relativeTime(device.lastReportedAt)], ["Installation UUID", device.installationId]]}/><h3 className="detail-section-title">Assignment history</h3>{history.length ? <div className="assignment-history">{history.map((entry: DeviceAssignment) => <article key={entry.assignmentHistoryId}><time>{new Date(entry.occurredAt).toLocaleString()}</time><strong>{locationName(entry.previousLocationId)} <ArrowRight size={14} /> {locationName(entry.assignedLocationId)}</strong><span>{entry.reason}</span><small>Preserved in the device audit history</small></article>)}</div> : <EmptyState>No location reassignment has been recorded yet.</EmptyState>}<h3 className="detail-section-title">Latest scanner activity</h3><EventEvidence events={events.slice(0, 12)} data={data}/></> };
 }
 
 function DeviceCard({ device, data, operatingLocations, busy, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; onSave: (device: Device, update: { assignedLocationId?: string; isActive?: boolean; requiredAppVersion?: string; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
   const [assignedLocationId, setAssignedLocationId] = useState(device.assignedLocationId);
   const [reason, setReason] = useState("");
-  const [requiredVersion, setRequiredVersion] = useState(device.requiredAppVersion);
-  useEffect(() => { setAssignedLocationId(device.assignedLocationId); setRequiredVersion(device.requiredAppVersion); }, [device.assignedLocationId, device.requiredAppVersion]);
+  const requiredAppVersion = device.requiredAppVersion ?? "";
+  const [requiredVersion, setRequiredVersion] = useState(requiredAppVersion);
+  useEffect(() => { setAssignedLocationId(device.assignedLocationId); setRequiredVersion(device.requiredAppVersion ?? ""); }, [device.assignedLocationId, device.requiredAppVersion]);
   const location = data.fixtures.locations.find((item) => item.locationId === device.assignedLocationId);
   const events = data.events.filter((item) => item.deviceId === device.deviceId);
   const assignmentChanged = assignedLocationId !== device.assignedLocationId;
-  const versionChanged = requiredVersion.trim() !== device.requiredAppVersion;
-  const updateNeeded = versionIsOlder(device.reportedAppVersion, device.requiredAppVersion);
+  const versionChanged = requiredVersion.trim() !== requiredAppVersion;
+  const updateNeeded = versionIsOlder(device.reportedAppVersion, requiredAppVersion);
   return <article className="device-card"><div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div><h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name}</p>{updateNeeded && <div className="device-update-warning"><AlertTriangle size={16} /><span>Update required: {device.reportedAppVersion ?? "not reported"} → {device.requiredAppVersion}</span></div>}<dl><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>Queued scans</dt><dd>{device.pendingOfflineScanCount}</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>Last app report</dt><dd>{relativeTime(device.lastReportedAt)}</dd></div></dl><label className="device-location-control"><span>Move scanner to</span><select value={assignedLocationId} disabled={busy} onChange={(event) => setAssignedLocationId(event.target.value)}>{operatingLocations.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}</select></label>{assignmentChanged && <label className="device-location-control"><span>Required reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Scanner moved with the Midtown store team." disabled={busy} /></label>}{assignmentChanged && <button className="primary device-save-assignment" disabled={busy || reason.trim().length < 5} onClick={() => void onSave(device, { assignedLocationId, assignmentReason: reason.trim() })}>{busy ? "Saving…" : "Record scanner move"}</button>}<label className="device-location-control"><span>Required app version</span><div className="device-version-input"><input value={requiredVersion} onChange={(event) => setRequiredVersion(event.target.value)} disabled={busy} /><button className="secondary" disabled={busy || !versionChanged || !requiredVersion.trim()} onClick={() => void onSave(device, { requiredAppVersion: requiredVersion.trim() })}>Require</button></div></label><div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={onDetails}>Details <ChevronRight size={16} /></button></div></article>;
 }
 
