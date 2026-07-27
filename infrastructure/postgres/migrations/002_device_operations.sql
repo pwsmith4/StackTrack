@@ -1,7 +1,7 @@
 BEGIN;
 
 ALTER TABLE devices
-  ADD COLUMN IF NOT EXISTS required_app_version TEXT NOT NULL DEFAULT '0.2.0';
+  ADD COLUMN IF NOT EXISTS required_app_version TEXT NOT NULL DEFAULT '0.3.0';
 
 ALTER TABLE device_installations
   ADD COLUMN IF NOT EXISTS last_reported_at TIMESTAMPTZ,

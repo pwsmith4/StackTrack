@@ -94,14 +94,14 @@ export async function seedPostgres(
             deviceId(number),
             `Shared scanner ${number} — ${locationName}`,
             locationId(assignedLocation),
-            number === 2 ? "0.3.0" : "0.2.0"
+            number === 2 ? "0.4.0" : "0.3.0"
           ]
         );
         await client.query(
           `INSERT INTO device_installations
              (tenant_id, device_id, installation_id, last_authenticated_at, last_reported_at, reported_app_version, pending_offline_scan_count)
            VALUES ($1,$2,$3,clock_timestamp(),clock_timestamp() - ($4 || ' minutes')::interval,$5,$6)`,
-          [TENANT_ID, deviceId(number), installationId(number), number * 3, number === 2 ? "0.2.0" : "0.2.0", number === 2 ? 3 : number === 4 ? 1 : 0]
+          [TENANT_ID, deviceId(number), installationId(number), number * 3, "0.3.0", number === 2 ? 3 : number === 4 ? 1 : 0]
         );
       }
 

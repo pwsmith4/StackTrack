@@ -1,0 +1,39 @@
+name: Build versioned StackTrack mobile preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "test"]
+    paths:
+      - "apps/mobile/**"
+      - "packages/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/mobile-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-mobile-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Define automatic build identifier
+        run: echo "EXPO_PUBLIC_BUILD_ID=gh.${GITHUB_RUN_NUMBER}.${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - name: Verify mobile app
+        run: npm run check --workspace @stacktrack/mobile
+      - name: Export versioned mobile web preview
+        run: npm run build:mobile
+      - name: Upload mobile preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stacktrack-mobile-${{ github.run_number }}
+          path: apps/mobile/dist
+          if-no-files-found: error

@@ -69,6 +69,31 @@ Expo Android app with the Azure test API selected. Keep its terminal window open
 while testing in the emulator; no local API or local PostgreSQL process is
 needed for this cloud-mobile workflow.
 
+### Version every mobile update
+
+The field app reports its installed semantic version to the admin site whenever
+it can reach the API. Before creating a new app build or publishing a mobile
+update, run one of these commands from the repository root:
+
+```powershell
+npm.cmd run release:mobile:patch  # 0.3.1 → 0.3.2
+npm.cmd run release:mobile:minor  # 0.3.1 → 0.4.0
+npm.cmd run release:mobile:major  # 0.3.1 → 1.0.0
+```
+
+The command updates the Expo manifest, Android build number, package metadata,
+and the version bundled into the app together. Commit those changes with the
+release. The Devices page shows each scanner's reported installed version,
+required version, and any required-update warning.
+
+GitHub Actions also creates a versioned mobile preview on every qualifying push
+to `main` or `test`. It adds the GitHub run number and short commit hash, such
+as `0.3.1+gh.42.a1b2c3d`, so an administrator can identify the exact source
+build on a scanner. The resulting web preview is available in that Actions
+run's artifacts. A physical Android scanner receives the new version only when
+that build is installed or delivered through the future managed app-update
+process.
+
 ### Bootstrap the Azure test database
 
 After creating an Azure Database for PostgreSQL Flexible Server and allowing

@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { APP_RELEASE, APP_REPORTED_VERSION, APP_VERSION } from "./src/release";
 
 const colors = {
   navy: "#00294F",
@@ -44,7 +45,6 @@ const INSTALLATION_ID = "31000000-0000-4000-8000-000000000001";
 const LOCATION_ID = "20000000-0000-4000-8000-000000000002";
 const QUEUE_KEY = "stacktrack.local.queue.v2";
 const SEQUENCE_KEY = "stacktrack.local.sequence.v2";
-const APP_VERSION = "0.2.0";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 type Tab = "home" | "activity" | "settings";
@@ -223,7 +223,7 @@ function AppContent() {
     void fetch(`${API_URL}/api/v1/local/devices/${DEVICE_ID}/telemetry`, {
       method: "PATCH",
       headers: { "content-type": "application/json", "x-stacktrack-tenant-id": TENANT_ID },
-      body: JSON.stringify({ installationId: INSTALLATION_ID, appVersion: APP_VERSION, pendingOfflineScanCount: pending })
+      body: JSON.stringify({ installationId: INSTALLATION_ID, appVersion: APP_REPORTED_VERSION, pendingOfflineScanCount: pending })
     }).catch(() => undefined);
   }, [effectiveOnline, pending]);
 
@@ -497,7 +497,7 @@ function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, upda
       <View style={styles.settingsCard}>
         <SettingRow icon="location-outline" title="Assigned location" subtitle="Midtown Store" trailing={<Tag tone="green">LOCKED</Tag>} />
         <SettingRow icon="phone-portrait-outline" title="Device" subtitle="Scanner A — Midtown" />
-        <SettingRow icon={updateRequired ? "alert-circle-outline" : "checkmark-circle-outline"} title="StackTrack version" subtitle={`${APP_VERSION}${updateRequired ? ` — update to ${requiredAppVersion} required` : " — current"}`} trailing={<Tag tone={updateRequired ? "orange" : "green"}>{updateRequired ? "UPDATE" : "CURRENT"}</Tag>} />
+        <SettingRow icon={updateRequired ? "alert-circle-outline" : "checkmark-circle-outline"} title="StackTrack version" subtitle={`${APP_RELEASE}${updateRequired ? ` — update to ${requiredAppVersion} required` : " — current"}`} trailing={<Tag tone={updateRequired ? "orange" : "green"}>{updateRequired ? "UPDATE" : "CURRENT"}</Tag>} />
         <SettingRow icon="person-outline" title="Session" subtitle="Shared device mode" />
       </View>
       <Text style={styles.sectionTitle}>TESTING</Text>
