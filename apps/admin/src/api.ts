@@ -14,6 +14,8 @@ export interface Device {
   installationId: string;
   label: string;
   assignedLocationId: string;
+  isActive: boolean;
+  deactivatedAt: string | null;
 }
 
 export interface Container {
@@ -65,6 +67,27 @@ async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, { headers });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json() as Promise<T>;
+}
+
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "PATCH",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? `${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function updateDevice(
+  deviceId: string,
+  update: { assignedLocationId?: string; isActive?: boolean }
+): Promise<Device> {
+  const response = await patchJson<{ device: Device }>(`/api/v1/local/devices/${deviceId}`, update);
+  return response.device;
 }
 
 export async function loadOperationsData() {

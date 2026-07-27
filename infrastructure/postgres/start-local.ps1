@@ -106,6 +106,7 @@ $grantSql = @"
 GRANT CONNECT ON DATABASE stacktrack TO stacktrack;
 GRANT USAGE ON SCHEMA public TO stacktrack;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack;
+GRANT UPDATE (assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack;
 "@
 

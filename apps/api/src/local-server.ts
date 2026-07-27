@@ -5,6 +5,7 @@ import { createApp } from "./app.js";
 import { LocalFileEventLedger } from "./file-ledger.js";
 import { localFixtures, seedLocalLedger } from "./local-fixtures.js";
 import { PostgresEventLedger } from "./postgres-ledger.js";
+import { PostgresDeviceAdministration, type DeviceAdministration } from "./device-administration.js";
 import { seedPostgres } from "./postgres-seed.js";
 
 const { Pool } = pg;
@@ -21,6 +22,7 @@ let referenceData:
   | ((tenantId: string) => ReturnType<PostgresEventLedger["referenceData"]>)
   | undefined;
 let closeDatabase: (() => Promise<void>) | undefined;
+let deviceAdministration: DeviceAdministration | undefined;
 let dataDescription: string;
 
 try {
@@ -33,6 +35,7 @@ try {
   const postgresLedger = new PostgresEventLedger(pool);
   ledger = postgresLedger;
   referenceData = (tenantId) => postgresLedger.referenceData(tenantId);
+  deviceAdministration = new PostgresDeviceAdministration(pool);
   closeDatabase = () => pool.end();
   dataDescription = "PostgreSQL at 127.0.0.1:5433/stacktrack";
 } catch (error) {
@@ -51,7 +54,8 @@ try {
 const app = createApp({
   ledger,
   localMode: true,
-  ...(referenceData ? { referenceData } : {})
+  ...(referenceData ? { referenceData } : {}),
+  ...(deviceAdministration ? { deviceAdministration } : {})
 });
 if (closeDatabase) {
   app.addHook("onClose", closeDatabase);

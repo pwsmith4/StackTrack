@@ -8,6 +8,7 @@ import {
   type StoredEvent
 } from "@stacktrack/domain";
 import { localFixtures, type LocalFixtures } from "./local-fixtures.js";
+import type { DeviceAdministration, DeviceControlUpdate } from "./device-administration.js";
 
 export interface AppDependencies {
   readonly ledger?: EventLedger;
@@ -16,6 +17,7 @@ export interface AppDependencies {
   readonly referenceData?: (
     tenantId: string
   ) => LocalFixtures | null | Promise<LocalFixtures | null>;
+  readonly deviceAdministration?: DeviceAdministration;
 }
 
 interface ResettableLedger extends EventLedger {
@@ -62,7 +64,7 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
         "access-control-allow-headers",
         "content-type,x-stacktrack-tenant-id,x-stacktrack-device-id"
       );
-      reply.header("access-control-allow-methods", "GET,POST,OPTIONS");
+      reply.header("access-control-allow-methods", "GET,POST,PATCH,OPTIONS");
     }
     return payload;
   });
@@ -199,6 +201,40 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       await ledger.reset();
       return reply.send({ reset: true });
     });
+
+    app.patch<{ Params: { deviceId: string }; Body: DeviceControlUpdate }>(
+      "/api/v1/local/devices/:deviceId",
+      async (request, reply) => {
+        const tenantId = readTenantId(request);
+        if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
+        if (!dependencies.deviceAdministration) {
+          return reply.code(501).send({ error: "DeviceAdministrationUnavailable" });
+        }
+        const update = request.body;
+        if (
+          !update ||
+          (update.assignedLocationId === undefined && update.isActive === undefined) ||
+          (update.assignedLocationId !== undefined && typeof update.assignedLocationId !== "string") ||
+          (update.isActive !== undefined && typeof update.isActive !== "boolean")
+        ) {
+          return reply.code(400).send({ error: "InvalidDeviceUpdate" });
+        }
+        try {
+          const device = await dependencies.deviceAdministration.update(
+            tenantId,
+            request.params.deviceId,
+            update
+          );
+          if (!device) return reply.code(404).send({ error: "NotFound" });
+          return reply.send({ device });
+        } catch (error) {
+          return reply.code(400).send({
+            error: "DeviceUpdateRejected",
+            message: error instanceof Error ? error.message : "Device update rejected."
+          });
+        }
+      }
+    );
   }
 
   return app;

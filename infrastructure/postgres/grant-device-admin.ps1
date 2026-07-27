@@ -1,0 +1,36 @@
+[CmdletBinding()]
+param(
+  [Parameter(Mandatory = $true)]
+  [string]$ServerName,
+
+  [Parameter(Mandatory = $true)]
+  [ValidatePattern("^[a-zA-Z0-9_]+$")]
+  [string]$AdminLogin
+)
+
+$ErrorActionPreference = "Stop"
+$postgresBin = @(
+  "C:\Program Files\PostgreSQL\18\bin",
+  "C:\Program Files\PostgreSQL\16\bin"
+) | Where-Object { Test-Path (Join-Path $_ "psql.exe") } | Select-Object -First 1
+
+if (-not $postgresBin) {
+  throw "psql.exe was not found in PostgreSQL 18 or 16."
+}
+
+$psql = Join-Path $postgresBin "psql.exe"
+$securePassword = Read-Host -AsSecureString "Azure PostgreSQL administrator password"
+$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+try {
+  $env:PGPASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+  $env:PGSSLMODE = "require"
+  @"
+GRANT UPDATE (assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack_app;
+"@ | & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1
+  if ($LASTEXITCODE -ne 0) { throw "Granting StackTrack device administration permission failed." }
+  Write-Host "The StackTrack API can now update device assignment and scanning availability."
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+  Remove-Item Env:PGSSLMODE -ErrorAction SilentlyContinue
+}
