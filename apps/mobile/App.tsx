@@ -42,6 +42,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://127.0.0.1:3000";
 const TENANT_ID = "10000000-0000-4000-8000-000000000001";
 const DEVICE_ID = "30000000-0000-4000-8000-000000000001";
 const INSTALLATION_ID = "31000000-0000-4000-8000-000000000001";
+const SCANNER_ID = "00001";
 const LOCATION_ID = "20000000-0000-4000-8000-000000000002";
 const QUEUE_KEY = "stacktrack.local.queue.v2";
 const SEQUENCE_KEY = "stacktrack.local.sequence.v2";
@@ -540,6 +541,7 @@ function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, upda
       <View style={styles.settingsCard}>
         <SettingRow icon="location-outline" title="Assigned location" subtitle={deviceLocationName} trailing={<Tag tone="green">LOCKED</Tag>} />
         <SettingRow icon="phone-portrait-outline" title="Device" subtitle={deviceLabel} />
+        <SettingRow icon="finger-print-outline" title="Scanner ID" subtitle={SCANNER_ID} trailing={<Tag tone="blue">MATCH THIS</Tag>} />
         <SettingRow icon={scannerEnabled ? "play-circle-outline" : "pause-circle-outline"} title="Scanner availability" subtitle={scannerEnabled ? "Enabled by administrator" : "Disabled by administrator"} trailing={<Tag tone={scannerEnabled ? "green" : "orange"}>{scannerEnabled ? "ENABLED" : "DISABLED"}</Tag>} />
         <SettingRow icon={updateRequired ? "alert-circle-outline" : "checkmark-circle-outline"} title="StackTrack version" subtitle={`${APP_RELEASE}${updateRequired ? ` — update to ${requiredAppVersion} required` : " — current"}`} trailing={<Tag tone={updateRequired ? "orange" : "green"}>{updateRequired ? "UPDATE" : "CURRENT"}</Tag>} />
         <SettingRow icon={online ? "cloud-done-outline" : "cloud-offline-outline"} title="Data service" subtitle={API_URL.includes("azurecontainerapps.io") ? "Azure test environment" : "Local development environment"} trailing={<Tag tone={online ? "green" : "orange"}>{online ? "CONNECTED" : "OFFLINE"}</Tag>} />

@@ -257,6 +257,7 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .device-card dl div { display: flex; justify-content: space-between; padding: 6px 0; font-size: 9.5px; }
 .device-card dt { color: #89939c; }
 .device-card dd { color: #34414d; font-weight: 700; margin: 0; }
+.device-card dd.device-id { max-width: 180px; overflow-wrap: anywhere; text-align: right; font-family: Consolas, monospace; font-size: 8px; color: #657583; }
 .device-guidance, .device-notice { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; padding: 13px 15px; border-left: 3px solid var(--cyan); background: #eef8fc; color: #526d7d; font-size: 10px; line-height: 1.55; }
 .device-guidance svg { flex: none; color: var(--blue-800); }
 .device-notice { border-color: #36a676; background: #effaf4; color: #316d53; }
