@@ -62,7 +62,7 @@ interface Fixtures {
   containers: ContainerReference[];
   locations: { locationId: string; name: string; type: string }[];
   goodsTypes: { name: string; secondaryLabel: string; options: string[] }[];
-  devices?: { deviceId: string; requiredAppVersion?: string }[];
+  devices?: { deviceId: string; requiredAppVersion?: string; isActive?: boolean }[];
 }
 
 interface LocalObservation {
@@ -174,6 +174,7 @@ function AppContent() {
   const [workflow, setWorkflow] = useState<WorkflowState>(initialWorkflow);
   const [submitting, setSubmitting] = useState(false);
   const [requiredAppVersion, setRequiredAppVersion] = useState(APP_VERSION);
+  const [scannerEnabled, setScannerEnabled] = useState(true);
 
   const loadLocal = useCallback(async () => {
     const cached = await AsyncStorage.getItem(QUEUE_KEY);
@@ -185,7 +186,9 @@ function AppContent() {
       if (!response.ok) throw new Error("API unavailable");
       const loaded = await response.json() as Fixtures;
       setFixtures(loaded);
-      setRequiredAppVersion(loaded.devices?.find((device) => device.deviceId === DEVICE_ID)?.requiredAppVersion ?? APP_VERSION);
+      const registeredDevice = loaded.devices?.find((device) => device.deviceId === DEVICE_ID);
+      setRequiredAppVersion(registeredDevice?.requiredAppVersion ?? APP_VERSION);
+      setScannerEnabled(registeredDevice?.isActive ?? true);
       setOnline(true);
     } catch {
       setOnline(false);
@@ -212,6 +215,10 @@ function AppContent() {
   }, []);
 
   useEffect(() => { void loadLocal(); }, [loadLocal]);
+  useEffect(() => {
+    const refreshTimer = setInterval(() => void loadLocal(), 30_000);
+    return () => clearInterval(refreshTimer);
+  }, [loadLocal]);
 
   const pending = observations.filter((item) => item.status === "pending").length;
   const effectiveOnline = online && !offlineMode;
@@ -233,7 +240,7 @@ function AppContent() {
   };
 
   const syncPending = async () => {
-    if (offlineMode) return;
+    if (offlineMode || !scannerEnabled) return;
     const next = [...observations];
     let reachedServer = false;
     for (let index = 0; index < next.length; index += 1) {
@@ -269,6 +276,10 @@ function AppContent() {
   };
 
   const beginScan = () => {
+    if (!scannerEnabled) {
+      Alert.alert("Scanner disabled", "An administrator has disabled this scanner. Ask them to enable it before recording new observations.");
+      return;
+    }
     setWorkflow(initialWorkflow);
     setStep("scan");
     setWorkflowOpen(true);
@@ -392,7 +403,7 @@ function AppContent() {
               <Text style={styles.headerStatusText}>{effectiveOnline ? "SYNCED" : "OFFLINE"}</Text>
             </View>
           </View>
-          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} onScan={beginScan} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} />}
+          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} onScan={beginScan} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} />}
           {tab === "activity" && <ActivityScreen observations={observations} />}
           {tab === "settings" && (
             <SettingsScreen
@@ -402,6 +413,7 @@ function AppContent() {
               onReconnect={() => void syncPending()}
               updateRequired={updateRequired}
               requiredAppVersion={requiredAppVersion}
+              scannerEnabled={scannerEnabled}
             />
           )}
           {!isWide && <BottomNav tab={tab} setTab={setTab} pending={pending} />}
@@ -426,7 +438,7 @@ function AppContent() {
   );
 }
 
-function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredAppVersion }: { online: boolean; pending: number; recent: LocalObservation[]; onScan: () => void; updateRequired: boolean; requiredAppVersion: string }) {
+function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredAppVersion, scannerEnabled }: { online: boolean; pending: number; recent: LocalObservation[]; onScan: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.locationStrip}>
@@ -435,12 +447,13 @@ function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredA
         <Tag tone="green">LOCKED</Tag>
       </View>
       {updateRequired && <View style={styles.requiredUpdateBanner}><Icon name="alert-circle-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Update required</Text><Text style={styles.requiredUpdateText}>This scanner is on {APP_VERSION}; StackTrack {requiredAppVersion} is required. Ask an administrator to update this device.</Text></View></View>}
+      {!scannerEnabled && <View style={styles.requiredUpdateBanner}><Icon name="pause-circle-outline" color={colors.red} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Scanner disabled</Text><Text style={styles.requiredUpdateText}>An administrator has paused this shared scanner. New observations cannot be recorded until it is enabled.</Text></View></View>}
 
       <View style={styles.hero}>
         <Text style={styles.heroEyebrow}>FIELD SCANNER</Text>
         <Text style={styles.heroTitle}>Ready for the{`\n`}next container.</Text>
         <Text style={styles.heroText}>Scan the 4 × 4 label, then record one clear observation.</Text>
-        <Pressable onPress={onScan} style={({ pressed }) => [styles.scanButton, pressed && styles.buttonPressed]}>
+        <Pressable onPress={onScan} disabled={!scannerEnabled} style={({ pressed }) => [styles.scanButton, pressed && scannerEnabled && styles.buttonPressed, !scannerEnabled && styles.buttonDisabled]}>
           <View style={styles.scanGlyph}><Icon name="scan-outline" size={36} color="white" /></View>
           <View style={styles.scanCopy}><Text style={styles.scanButtonText}>SCAN CONTAINER</Text><Text style={styles.scanButtonSub}>Camera or handheld scanner</Text></View>
           <Icon name="arrow-forward" color="white" />
@@ -490,13 +503,14 @@ function ActivityScreen({ observations }: { observations: LocalObservation[] }) 
   );
 }
 
-function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, updateRequired, requiredAppVersion }: { offlineMode: boolean; setOfflineMode: (value: boolean) => void; online: boolean; onReconnect: () => void; updateRequired: boolean; requiredAppVersion: string }) {
+function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, updateRequired, requiredAppVersion, scannerEnabled }: { offlineMode: boolean; setOfflineMode: (value: boolean) => void; online: boolean; onReconnect: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <Text style={styles.pageEyebrow}>LOCAL PROTOTYPE</Text><Text style={styles.pageTitle}>Device settings</Text><Text style={styles.pageDescription}>This shared scanner is provisioned for one operating location.</Text>
       <View style={styles.settingsCard}>
         <SettingRow icon="location-outline" title="Assigned location" subtitle="Midtown Store" trailing={<Tag tone="green">LOCKED</Tag>} />
         <SettingRow icon="phone-portrait-outline" title="Device" subtitle="Scanner A — Midtown" />
+        <SettingRow icon={scannerEnabled ? "play-circle-outline" : "pause-circle-outline"} title="Scanner availability" subtitle={scannerEnabled ? "Enabled by administrator" : "Disabled by administrator"} trailing={<Tag tone={scannerEnabled ? "green" : "orange"}>{scannerEnabled ? "ENABLED" : "DISABLED"}</Tag>} />
         <SettingRow icon={updateRequired ? "alert-circle-outline" : "checkmark-circle-outline"} title="StackTrack version" subtitle={`${APP_RELEASE}${updateRequired ? ` — update to ${requiredAppVersion} required` : " — current"}`} trailing={<Tag tone={updateRequired ? "orange" : "green"}>{updateRequired ? "UPDATE" : "CURRENT"}</Tag>} />
         <SettingRow icon="person-outline" title="Session" subtitle="Shared device mode" />
       </View>

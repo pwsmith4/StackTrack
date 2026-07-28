@@ -35,6 +35,11 @@ export interface DeviceAdministration {
     deviceId: string,
     update: DeviceTelemetryUpdate
   ): Promise<DeviceControlResult | null>;
+  isScannerEnabled(
+    tenantId: string,
+    deviceId: string,
+    installationId: string
+  ): Promise<boolean>;
 }
 
 export class PostgresDeviceAdministration implements DeviceAdministration {
@@ -215,6 +220,28 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
         requiredAppVersion: row.required_app_version,
         lastReportedAt: row.last_reported_at?.toISOString() ?? null
       };
+    });
+  }
+
+  public async isScannerEnabled(
+    tenantId: string,
+    deviceId: string,
+    installationId: string
+  ): Promise<boolean> {
+    return this.tenantTransaction(tenantId, async (client) => {
+      const result = await client.query(
+        `SELECT 1
+           FROM devices d
+           JOIN device_installations di
+             ON di.tenant_id = d.tenant_id AND di.device_id = d.device_id
+          WHERE d.tenant_id = $1
+            AND d.device_id = $2
+            AND di.installation_id = $3
+            AND d.is_active
+            AND di.is_active`,
+        [tenantId, deviceId, installationId]
+      );
+      return result.rowCount === 1;
     });
   }
 }

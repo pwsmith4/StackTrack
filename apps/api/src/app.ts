@@ -94,6 +94,24 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       });
     }
 
+    const installationId =
+      typeof (request.body as { deviceInstallationId?: unknown } | undefined)?.deviceInstallationId === "string"
+        ? (request.body as { deviceInstallationId: string }).deviceInstallationId
+        : undefined;
+    if (dependencies.deviceAdministration && installationId) {
+      const scannerEnabled = await dependencies.deviceAdministration.isScannerEnabled(
+        context.tenantId,
+        context.deviceId,
+        installationId
+      );
+      if (!scannerEnabled) {
+        return reply.code(403).send({
+          error: "ScannerDisabled",
+          message: "This scanner is disabled or no longer assigned to an active installation."
+        });
+      }
+    }
+
     const result = await ledger.submit(request.body, context, now());
     if (!result.accepted) {
       const statusCode =
