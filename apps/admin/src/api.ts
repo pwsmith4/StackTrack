@@ -78,7 +78,10 @@ export interface Projection {
 const headers = { "x-stacktrack-tenant-id": TENANT_ID };
 
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, { headers });
+  const joiner = path.includes("?") ? "&" : "?";
+  const response = await fetch(`${API_URL}${path}${joiner}refresh=${Date.now()}`, {
+    headers: { ...headers, "cache-control": "no-cache" }
+  });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json() as Promise<T>;
 }
@@ -101,7 +104,6 @@ export async function updateDevice(
   update: {
     assignedLocationId?: string;
     isActive?: boolean;
-    requiredAppVersion?: string;
     assignmentReason?: string;
   }
 ): Promise<Device> {

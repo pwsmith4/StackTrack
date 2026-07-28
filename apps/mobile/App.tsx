@@ -42,6 +42,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://127.0.0.1:3000";
 const TENANT_ID = "10000000-0000-4000-8000-000000000001";
 const DEVICE_ID = "30000000-0000-4000-8000-000000000001";
 const INSTALLATION_ID = "31000000-0000-4000-8000-000000000001";
+const SCANNER_ID = "00001";
 const LOCATION_ID = "20000000-0000-4000-8000-000000000002";
 const QUEUE_KEY = "stacktrack.local.queue.v2";
 const SEQUENCE_KEY = "stacktrack.local.sequence.v2";
@@ -62,7 +63,13 @@ interface Fixtures {
   containers: ContainerReference[];
   locations: { locationId: string; name: string; type: string }[];
   goodsTypes: { name: string; secondaryLabel: string; options: string[] }[];
-  devices?: { deviceId: string; requiredAppVersion?: string; isActive?: boolean }[];
+  devices?: {
+    deviceId: string;
+    label?: string;
+    assignedLocationId?: string;
+    requiredAppVersion?: string;
+    isActive?: boolean;
+  }[];
 }
 
 interface LocalObservation {
@@ -175,13 +182,22 @@ function AppContent() {
   const [submitting, setSubmitting] = useState(false);
   const [requiredAppVersion, setRequiredAppVersion] = useState(APP_VERSION);
   const [scannerEnabled, setScannerEnabled] = useState(true);
+  const [assignedLocationId, setAssignedLocationId] = useState(LOCATION_ID);
+  const [deviceLocationName, setDeviceLocationName] = useState("Midtown Store");
+  const [deviceLabel, setDeviceLabel] = useState("Scanner A — Midtown");
+  const [refreshingDevice, setRefreshingDevice] = useState(false);
 
   const loadLocal = useCallback(async () => {
     const cached = await AsyncStorage.getItem(QUEUE_KEY);
     if (cached) setObservations(JSON.parse(cached) as LocalObservation[]);
     try {
-      const response = await fetch(`${API_URL}/api/v1/local/reference-data`, {
-        headers: { "x-stacktrack-tenant-id": TENANT_ID }
+      // Device availability and assignment are control-plane data.  Bust any
+      // intermediary cache so an admin action is visible on the next refresh.
+      const response = await fetch(`${API_URL}/api/v1/local/reference-data?refresh=${Date.now()}`, {
+        headers: {
+          "x-stacktrack-tenant-id": TENANT_ID,
+          "cache-control": "no-cache"
+        }
       });
       if (!response.ok) throw new Error("API unavailable");
       const loaded = await response.json() as Fixtures;
@@ -189,6 +205,10 @@ function AppContent() {
       const registeredDevice = loaded.devices?.find((device) => device.deviceId === DEVICE_ID);
       setRequiredAppVersion(registeredDevice?.requiredAppVersion ?? APP_VERSION);
       setScannerEnabled(registeredDevice?.isActive ?? true);
+      const nextLocationId = registeredDevice?.assignedLocationId ?? LOCATION_ID;
+      setAssignedLocationId(nextLocationId);
+      setDeviceLocationName(loaded.locations.find((location) => location.locationId === nextLocationId)?.name ?? "Assigned location unavailable");
+      setDeviceLabel(registeredDevice?.label ?? "Assigned scanner");
       setOnline(true);
     } catch {
       setOnline(false);
@@ -219,6 +239,12 @@ function AppContent() {
     const refreshTimer = setInterval(() => void loadLocal(), 30_000);
     return () => clearInterval(refreshTimer);
   }, [loadLocal]);
+
+  const refreshDevice = async () => {
+    setRefreshingDevice(true);
+    await loadLocal();
+    setRefreshingDevice(false);
+  };
 
   const pending = observations.filter((item) => item.status === "pending").length;
   const effectiveOnline = online && !offlineMode;
@@ -323,7 +349,7 @@ function AppContent() {
       ...(loadCodeId ? { loadCodeId } : {}),
       locationId: workflow.action === "batch_out"
         ? "20000000-0000-4000-8000-000000000004"
-        : LOCATION_ID,
+        : assignedLocationId,
       eventType: workflow.action,
       eventAt,
       deviceClockOffsetSeconds: 0,
@@ -398,12 +424,15 @@ function AppContent() {
         <View style={styles.main}>
           <View style={styles.header}>
             <Mark />
-            <View style={styles.headerStatus}>
-              <View style={[styles.statusDot, !effectiveOnline && styles.statusDotOffline]} />
-              <Text style={styles.headerStatusText}>{effectiveOnline ? "SYNCED" : "OFFLINE"}</Text>
+            <View style={styles.headerRight}>
+              <Pressable onPress={() => void refreshDevice()} disabled={refreshingDevice} accessibilityLabel="Refresh device assignment" style={({ pressed }) => [styles.headerRefresh, pressed && styles.buttonPressed]}><Icon name="refresh-outline" size={18} color={colors.blue} /></Pressable>
+              <View style={styles.headerStatus}>
+                <View style={[styles.statusDot, !effectiveOnline && styles.statusDotOffline]} />
+                <Text style={styles.headerStatusText}>{refreshingDevice ? "REFRESHING" : effectiveOnline ? "SYNCED" : "OFFLINE"}</Text>
+              </View>
             </View>
           </View>
-          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} onScan={beginScan} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} />}
+          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} onScan={beginScan} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} deviceLocationName={deviceLocationName} />}
           {tab === "activity" && <ActivityScreen observations={observations} />}
           {tab === "settings" && (
             <SettingsScreen
@@ -414,6 +443,8 @@ function AppContent() {
               updateRequired={updateRequired}
               requiredAppVersion={requiredAppVersion}
               scannerEnabled={scannerEnabled}
+              deviceLocationName={deviceLocationName}
+              deviceLabel={deviceLabel}
             />
           )}
           {!isWide && <BottomNav tab={tab} setTab={setTab} pending={pending} />}
@@ -427,7 +458,7 @@ function AppContent() {
             <ScrollView contentContainerStyle={styles.workflowContent} keyboardShouldPersistTaps="handled">
               {step === "scan" && <ScanStep workflow={workflow} setWorkflow={setWorkflow} onContinue={findContainer} />}
               {step === "action" && workflow.container && <ActionStep container={workflow.container} onChoose={chooseAction} />}
-              {step === "details" && fixtures && <DetailsStep workflow={workflow} setWorkflow={setWorkflow} fixtures={fixtures} onContinue={() => setStep("confirm")} />}
+              {step === "details" && fixtures && <DetailsStep workflow={workflow} setWorkflow={setWorkflow} fixtures={fixtures} assignedLocationId={assignedLocationId} onContinue={() => setStep("confirm")} />}
               {step === "confirm" && workflow.container && workflow.action && <ConfirmStep workflow={workflow} fixtures={fixtures} submitting={submitting} onSubmit={() => void submitObservation()} />}
               {step === "success" && workflow.container && workflow.action && <SuccessStep workflow={workflow} online={effectiveOnline} onDone={closeWorkflow} onAnother={() => { closeWorkflow(); setTimeout(beginScan, 150); }} />}
             </ScrollView>
@@ -438,12 +469,12 @@ function AppContent() {
   );
 }
 
-function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredAppVersion, scannerEnabled }: { online: boolean; pending: number; recent: LocalObservation[]; onScan: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean }) {
+function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredAppVersion, scannerEnabled, deviceLocationName }: { online: boolean; pending: number; recent: LocalObservation[]; onScan: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; deviceLocationName: string }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.locationStrip}>
         <View style={styles.locationIcon}><Icon name="location" size={19} /></View>
-        <View style={styles.locationCopy}><Text style={styles.overline}>DEVICE LOCATION</Text><Text style={styles.locationName}>Midtown Store</Text></View>
+        <View style={styles.locationCopy}><Text style={styles.overline}>DEVICE LOCATION</Text><Text style={styles.locationName}>{deviceLocationName}</Text></View>
         <Tag tone="green">LOCKED</Tag>
       </View>
       {updateRequired && <View style={styles.requiredUpdateBanner}><Icon name="alert-circle-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Update required</Text><Text style={styles.requiredUpdateText}>This scanner is on {APP_VERSION}; StackTrack {requiredAppVersion} is required. Ask an administrator to update this device.</Text></View></View>}
@@ -503,15 +534,17 @@ function ActivityScreen({ observations }: { observations: LocalObservation[] }) 
   );
 }
 
-function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, updateRequired, requiredAppVersion, scannerEnabled }: { offlineMode: boolean; setOfflineMode: (value: boolean) => void; online: boolean; onReconnect: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean }) {
+function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, updateRequired, requiredAppVersion, scannerEnabled, deviceLocationName, deviceLabel }: { offlineMode: boolean; setOfflineMode: (value: boolean) => void; online: boolean; onReconnect: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; deviceLocationName: string; deviceLabel: string }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <Text style={styles.pageEyebrow}>LOCAL PROTOTYPE</Text><Text style={styles.pageTitle}>Device settings</Text><Text style={styles.pageDescription}>This shared scanner is provisioned for one operating location.</Text>
       <View style={styles.settingsCard}>
-        <SettingRow icon="location-outline" title="Assigned location" subtitle="Midtown Store" trailing={<Tag tone="green">LOCKED</Tag>} />
-        <SettingRow icon="phone-portrait-outline" title="Device" subtitle="Scanner A — Midtown" />
+        <SettingRow icon="location-outline" title="Assigned location" subtitle={deviceLocationName} trailing={<Tag tone="green">LOCKED</Tag>} />
+        <SettingRow icon="phone-portrait-outline" title="Device" subtitle={deviceLabel} />
+        <SettingRow icon="finger-print-outline" title="Scanner ID" subtitle={SCANNER_ID} trailing={<Tag tone="blue">MATCH THIS</Tag>} />
         <SettingRow icon={scannerEnabled ? "play-circle-outline" : "pause-circle-outline"} title="Scanner availability" subtitle={scannerEnabled ? "Enabled by administrator" : "Disabled by administrator"} trailing={<Tag tone={scannerEnabled ? "green" : "orange"}>{scannerEnabled ? "ENABLED" : "DISABLED"}</Tag>} />
         <SettingRow icon={updateRequired ? "alert-circle-outline" : "checkmark-circle-outline"} title="StackTrack version" subtitle={`${APP_RELEASE}${updateRequired ? ` — update to ${requiredAppVersion} required` : " — current"}`} trailing={<Tag tone={updateRequired ? "orange" : "green"}>{updateRequired ? "UPDATE" : "CURRENT"}</Tag>} />
+        <SettingRow icon={online ? "cloud-done-outline" : "cloud-offline-outline"} title="Data service" subtitle={API_URL.includes("azurecontainerapps.io") ? "Azure test environment" : "Local development environment"} trailing={<Tag tone={online ? "green" : "orange"}>{online ? "CONNECTED" : "OFFLINE"}</Tag>} />
         <SettingRow icon="person-outline" title="Session" subtitle="Shared device mode" />
       </View>
       <Text style={styles.sectionTitle}>TESTING</Text>
@@ -588,7 +621,7 @@ function ActionStep({ container, onChoose }: { container: ContainerReference; on
   );
 }
 
-function DetailsStep({ workflow, setWorkflow, fixtures, onContinue }: { workflow: WorkflowState; setWorkflow: (value: (current: WorkflowState) => WorkflowState) => void; fixtures: Fixtures; onContinue: () => void }) {
+function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onContinue }: { workflow: WorkflowState; setWorkflow: (value: (current: WorkflowState) => WorkflowState) => void; fixtures: Fixtures; assignedLocationId: string; onContinue: () => void }) {
   const selectedGoods = fixtures.goodsTypes.find((item) => item.name === workflow.goodsType) ?? fixtures.goodsTypes[0];
   return (
     <View style={styles.step}>
@@ -599,7 +632,7 @@ function DetailsStep({ workflow, setWorkflow, fixtures, onContinue }: { workflow
           <Text style={styles.fieldLabel}>{selectedGoods?.secondaryLabel.toUpperCase()}</Text><View style={styles.choiceWrap}>{selectedGoods?.options.map((item) => <Pressable key={item} onPress={() => setWorkflow((current) => ({ ...current, secondaryValue: item }))} style={[styles.choice, workflow.secondaryValue === item && styles.choiceActive]}><Text style={[styles.choiceText, workflow.secondaryValue === item && styles.choiceTextActive]}>{item}</Text></Pressable>)}</View>
         </>
       ) : (
-        <View>{fixtures.locations.filter((item) => item.locationId !== LOCATION_ID && item.type !== "in_transit").map((location) => <Pressable key={location.locationId} onPress={() => setWorkflow((current) => ({ ...current, destinationId: location.locationId }))} style={[styles.destination, workflow.destinationId === location.locationId && styles.destinationActive]}><View style={styles.destinationIcon}><Icon name="business-outline" /></View><View style={styles.destinationCopy}><Text style={styles.destinationTitle}>{location.name}</Text><Text style={styles.destinationText}>{location.type.replaceAll("_", " ")}</Text></View><Icon name={workflow.destinationId === location.locationId ? "radio-button-on" : "radio-button-off"} color={workflow.destinationId === location.locationId ? colors.blue : colors.muted} /></Pressable>)}</View>
+        <View>{fixtures.locations.filter((item) => item.locationId !== assignedLocationId && item.type !== "in_transit").map((location) => <Pressable key={location.locationId} onPress={() => setWorkflow((current) => ({ ...current, destinationId: location.locationId }))} style={[styles.destination, workflow.destinationId === location.locationId && styles.destinationActive]}><View style={styles.destinationIcon}><Icon name="business-outline" /></View><View style={styles.destinationCopy}><Text style={styles.destinationTitle}>{location.name}</Text><Text style={styles.destinationText}>{location.type.replaceAll("_", " ")}</Text></View><Icon name={workflow.destinationId === location.locationId ? "radio-button-on" : "radio-button-off"} color={workflow.destinationId === location.locationId ? colors.blue : colors.muted} /></Pressable>)}</View>
       )}
       <Text style={styles.fieldLabel}>OPTIONAL NOTE</Text><TextInput value={workflow.notes} onChangeText={(notes) => setWorkflow((current) => ({ ...current, notes }))} placeholder="Add context for a manager" placeholderTextColor="#98A2AB" style={[styles.labelInput, styles.noteInput]} multiline />
       <PrimaryButton onPress={onContinue} icon="arrow-forward">REVIEW OBSERVATION</PrimaryButton>
@@ -678,6 +711,8 @@ const styles = StyleSheet.create({
   launchSpinner: { marginTop: 24 },
   launchLoadingText: { color: colors.muted, marginTop: 12, fontSize: 13 },
   header: { height: 68, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.line, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerRefresh: { width: 34, height: 34, borderWidth: 1, borderColor: colors.line, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
   mark: { flexDirection: "row", alignItems: "center" },
   markLogo: { width: 156, height: 42 },
   headerStatus: { flexDirection: "row", alignItems: "center", backgroundColor: "#F0F4F6", borderRadius: 12, paddingHorizontal: 9, paddingVertical: 5 },
