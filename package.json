@@ -23,7 +23,10 @@
     "db:seed": "npm run seed:postgres --workspace @stacktrack/api",
     "db:azure:bootstrap": "powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure/postgres/bootstrap-azure.ps1",
     "build:admin": "npm run build --workspace @stacktrack/admin",
-    "build:mobile": "npm run export:web --workspace @stacktrack/mobile"
+    "build:mobile": "npm run export:web --workspace @stacktrack/mobile",
+    "release:mobile:patch": "npm run release:patch --workspace @stacktrack/mobile",
+    "release:mobile:minor": "npm run release:minor --workspace @stacktrack/mobile",
+    "release:mobile:major": "npm run release:major --workspace @stacktrack/mobile"
   },
   "engines": {
     "node": ">=22"
@@ -33,5 +36,10 @@
     "concurrently": "^9.2.1",
     "typescript": "^5.8.3",
     "vitest": "^3.1.2"
+  },
+  "dependencies": {
+    "expo": "~57.0.7",
+    "react": "19.2.8",
+    "react-native": "0.86.0"
   }
 }

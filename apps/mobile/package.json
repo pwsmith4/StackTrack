@@ -1,13 +1,16 @@
 {
   "name": "@stacktrack/mobile",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "private": true,
   "main": "index.tsx",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "web": "expo start --web --port 8082",
     "export:web": "expo export --platform web",
+    "release:patch": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../infrastructure/release/bump-mobile-version.ps1 -Bump patch",
+    "release:minor": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../infrastructure/release/bump-mobile-version.ps1 -Bump minor",
+    "release:major": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../infrastructure/release/bump-mobile-version.ps1 -Bump major",
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

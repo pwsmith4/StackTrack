@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { APP_RELEASE, APP_REPORTED_VERSION, APP_VERSION } from "./src/release";
 
 const colors = {
   navy: "#00294F",
@@ -61,6 +62,7 @@ interface Fixtures {
   containers: ContainerReference[];
   locations: { locationId: string; name: string; type: string }[];
   goodsTypes: { name: string; secondaryLabel: string; options: string[] }[];
+  devices?: { deviceId: string; requiredAppVersion?: string; isActive?: boolean }[];
 }
 
 interface LocalObservation {
@@ -120,6 +122,15 @@ function actionLabel(action: ActionType) {
   }[action];
 }
 
+function versionIsOlder(version: string, required: string) {
+  const parse = (value: string) => value.replace(/^v/i, "").split(".").map((item) => Number.parseInt(item, 10) || 0);
+  const actual = parse(version); const target = parse(required);
+  for (let index = 0; index < Math.max(actual.length, target.length); index += 1) {
+    if ((actual[index] ?? 0) !== (target[index] ?? 0)) return (actual[index] ?? 0) < (target[index] ?? 0);
+  }
+  return false;
+}
+
 function Mark() {
   return (
     <View style={styles.mark}>
@@ -162,6 +173,8 @@ function AppContent() {
   const [step, setStep] = useState<WorkflowStep>("scan");
   const [workflow, setWorkflow] = useState<WorkflowState>(initialWorkflow);
   const [submitting, setSubmitting] = useState(false);
+  const [requiredAppVersion, setRequiredAppVersion] = useState(APP_VERSION);
+  const [scannerEnabled, setScannerEnabled] = useState(true);
 
   const loadLocal = useCallback(async () => {
     const cached = await AsyncStorage.getItem(QUEUE_KEY);
@@ -171,7 +184,11 @@ function AppContent() {
         headers: { "x-stacktrack-tenant-id": TENANT_ID }
       });
       if (!response.ok) throw new Error("API unavailable");
-      setFixtures(await response.json() as Fixtures);
+      const loaded = await response.json() as Fixtures;
+      setFixtures(loaded);
+      const registeredDevice = loaded.devices?.find((device) => device.deviceId === DEVICE_ID);
+      setRequiredAppVersion(registeredDevice?.requiredAppVersion ?? APP_VERSION);
+      setScannerEnabled(registeredDevice?.isActive ?? true);
       setOnline(true);
     } catch {
       setOnline(false);
@@ -198,10 +215,24 @@ function AppContent() {
   }, []);
 
   useEffect(() => { void loadLocal(); }, [loadLocal]);
+  useEffect(() => {
+    const refreshTimer = setInterval(() => void loadLocal(), 30_000);
+    return () => clearInterval(refreshTimer);
+  }, [loadLocal]);
 
   const pending = observations.filter((item) => item.status === "pending").length;
   const effectiveOnline = online && !offlineMode;
   const recent = observations.slice(0, 4);
+  const updateRequired = versionIsOlder(APP_VERSION, requiredAppVersion);
+
+  useEffect(() => {
+    if (!effectiveOnline) return;
+    void fetch(`${API_URL}/api/v1/local/devices/${DEVICE_ID}/telemetry`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "x-stacktrack-tenant-id": TENANT_ID },
+      body: JSON.stringify({ installationId: INSTALLATION_ID, appVersion: APP_REPORTED_VERSION, pendingOfflineScanCount: pending })
+    }).catch(() => undefined);
+  }, [effectiveOnline, pending]);
 
   const saveObservations = async (next: LocalObservation[]) => {
     setObservations(next);
@@ -209,7 +240,7 @@ function AppContent() {
   };
 
   const syncPending = async () => {
-    if (offlineMode) return;
+    if (offlineMode || !scannerEnabled) return;
     const next = [...observations];
     let reachedServer = false;
     for (let index = 0; index < next.length; index += 1) {
@@ -245,6 +276,10 @@ function AppContent() {
   };
 
   const beginScan = () => {
+    if (!scannerEnabled) {
+      Alert.alert("Scanner disabled", "An administrator has disabled this scanner. Ask them to enable it before recording new observations.");
+      return;
+    }
     setWorkflow(initialWorkflow);
     setStep("scan");
     setWorkflowOpen(true);
@@ -368,7 +403,7 @@ function AppContent() {
               <Text style={styles.headerStatusText}>{effectiveOnline ? "SYNCED" : "OFFLINE"}</Text>
             </View>
           </View>
-          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} onScan={beginScan} />}
+          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} onScan={beginScan} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} />}
           {tab === "activity" && <ActivityScreen observations={observations} />}
           {tab === "settings" && (
             <SettingsScreen
@@ -376,6 +411,9 @@ function AppContent() {
               setOfflineMode={setOfflineMode}
               online={online}
               onReconnect={() => void syncPending()}
+              updateRequired={updateRequired}
+              requiredAppVersion={requiredAppVersion}
+              scannerEnabled={scannerEnabled}
             />
           )}
           {!isWide && <BottomNav tab={tab} setTab={setTab} pending={pending} />}
@@ -400,7 +438,7 @@ function AppContent() {
   );
 }
 
-function HomeScreen({ online, pending, recent, onScan }: { online: boolean; pending: number; recent: LocalObservation[]; onScan: () => void }) {
+function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredAppVersion, scannerEnabled }: { online: boolean; pending: number; recent: LocalObservation[]; onScan: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.locationStrip}>
@@ -408,12 +446,14 @@ function HomeScreen({ online, pending, recent, onScan }: { online: boolean; pend
         <View style={styles.locationCopy}><Text style={styles.overline}>DEVICE LOCATION</Text><Text style={styles.locationName}>Midtown Store</Text></View>
         <Tag tone="green">LOCKED</Tag>
       </View>
+      {updateRequired && <View style={styles.requiredUpdateBanner}><Icon name="alert-circle-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Update required</Text><Text style={styles.requiredUpdateText}>This scanner is on {APP_VERSION}; StackTrack {requiredAppVersion} is required. Ask an administrator to update this device.</Text></View></View>}
+      {!scannerEnabled && <View style={styles.requiredUpdateBanner}><Icon name="pause-circle-outline" color={colors.red} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Scanner disabled</Text><Text style={styles.requiredUpdateText}>An administrator has paused this shared scanner. New observations cannot be recorded until it is enabled.</Text></View></View>}
 
       <View style={styles.hero}>
         <Text style={styles.heroEyebrow}>FIELD SCANNER</Text>
         <Text style={styles.heroTitle}>Ready for the{`\n`}next container.</Text>
         <Text style={styles.heroText}>Scan the 4 × 4 label, then record one clear observation.</Text>
-        <Pressable onPress={onScan} style={({ pressed }) => [styles.scanButton, pressed && styles.buttonPressed]}>
+        <Pressable onPress={onScan} disabled={!scannerEnabled} style={({ pressed }) => [styles.scanButton, pressed && scannerEnabled && styles.buttonPressed, !scannerEnabled && styles.buttonDisabled]}>
           <View style={styles.scanGlyph}><Icon name="scan-outline" size={36} color="white" /></View>
           <View style={styles.scanCopy}><Text style={styles.scanButtonText}>SCAN CONTAINER</Text><Text style={styles.scanButtonSub}>Camera or handheld scanner</Text></View>
           <Icon name="arrow-forward" color="white" />
@@ -463,13 +503,15 @@ function ActivityScreen({ observations }: { observations: LocalObservation[] }) 
   );
 }
 
-function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect }: { offlineMode: boolean; setOfflineMode: (value: boolean) => void; online: boolean; onReconnect: () => void }) {
+function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, updateRequired, requiredAppVersion, scannerEnabled }: { offlineMode: boolean; setOfflineMode: (value: boolean) => void; online: boolean; onReconnect: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <Text style={styles.pageEyebrow}>LOCAL PROTOTYPE</Text><Text style={styles.pageTitle}>Device settings</Text><Text style={styles.pageDescription}>This shared scanner is provisioned for one operating location.</Text>
       <View style={styles.settingsCard}>
         <SettingRow icon="location-outline" title="Assigned location" subtitle="Midtown Store" trailing={<Tag tone="green">LOCKED</Tag>} />
         <SettingRow icon="phone-portrait-outline" title="Device" subtitle="Scanner A — Midtown" />
+        <SettingRow icon={scannerEnabled ? "play-circle-outline" : "pause-circle-outline"} title="Scanner availability" subtitle={scannerEnabled ? "Enabled by administrator" : "Disabled by administrator"} trailing={<Tag tone={scannerEnabled ? "green" : "orange"}>{scannerEnabled ? "ENABLED" : "DISABLED"}</Tag>} />
+        <SettingRow icon={updateRequired ? "alert-circle-outline" : "checkmark-circle-outline"} title="StackTrack version" subtitle={`${APP_RELEASE}${updateRequired ? ` — update to ${requiredAppVersion} required` : " — current"}`} trailing={<Tag tone={updateRequired ? "orange" : "green"}>{updateRequired ? "UPDATE" : "CURRENT"}</Tag>} />
         <SettingRow icon="person-outline" title="Session" subtitle="Shared device mode" />
       </View>
       <Text style={styles.sectionTitle}>TESTING</Text>
@@ -644,6 +686,10 @@ const styles = StyleSheet.create({
   headerStatusText: { fontSize: 8, color: colors.muted, fontWeight: "800", letterSpacing: 0.7 },
   screenContent: { paddingHorizontal: 18, paddingTop: 18, paddingBottom: 96, maxWidth: 720, width: "100%", alignSelf: "center" },
   locationStrip: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, padding: 12, marginBottom: 18 },
+  requiredUpdateBanner: { flexDirection: "row", gap: 10, backgroundColor: colors.paleOrange, borderLeftWidth: 3, borderLeftColor: colors.orange, padding: 13, marginBottom: 18 },
+  requiredUpdateCopy: { flex: 1 },
+  requiredUpdateTitle: { color: colors.orange, fontWeight: "800", fontSize: 13, marginBottom: 3 },
+  requiredUpdateText: { color: "#80512F", fontSize: 11, lineHeight: 16 },
   locationIcon: { width: 35, height: 35, backgroundColor: colors.paleBlue, alignItems: "center", justifyContent: "center", marginRight: 10 },
   locationCopy: { flex: 1 },
   overline: { color: colors.muted, fontSize: 8, fontWeight: "800", letterSpacing: 1.1 },

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createApp } from "../src/app.js";
+import type { DeviceAdministration } from "../src/device-administration.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const deviceId = "22222222-2222-4222-8222-222222222222";
@@ -83,6 +84,25 @@ describe("StackTrack API foundation", () => {
 
     expect(replay.statusCode).toBe(200);
     expect(replay.json()).toMatchObject({ accepted: true, status: "duplicate" });
+  });
+
+  it("rejects observations from a disabled scanner", async () => {
+    const disabledScanner: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => false
+    };
+    app = createApp({ deviceAdministration: disabledScanner });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/events",
+      headers,
+      payload: event
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "ScannerDisabled" });
   });
 
   it("does not trust unscoped requests", async () => {

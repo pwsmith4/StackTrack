@@ -15,6 +15,7 @@ $ErrorActionPreference = "Stop"
 $postgresBin = "C:\Program Files\PostgreSQL\16\bin"
 $psql = Join-Path $postgresBin "psql.exe"
 $migrationPath = Join-Path $PSScriptRoot "migrations\001_accuracy_foundation.sql"
+$deviceOperationsMigrationPath = Join-Path $PSScriptRoot "migrations\002_device_operations.sql"
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 if (-not (Test-Path -LiteralPath $psql)) {
@@ -57,6 +58,9 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'stacktrack')
     if ($LASTEXITCODE -ne 0) { throw "Azure schema migration failed." }
   }
 
+  & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$deviceOperationsMigrationPath
+  if ($LASTEXITCODE -ne 0) { throw "Azure device operations migration failed." }
+
   # Create a separate, non-admin login for the API. Password is passed as a psql
   # variable and quoted as a SQL literal, so punctuation in the password is safe.
   @"
@@ -68,6 +72,9 @@ GRANT CONNECT ON DATABASE stacktrack TO stacktrack_app;
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
 GRANT UPDATE (assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack_app;
+GRANT UPDATE (required_app_version) ON devices TO stacktrack_app;
+GRANT UPDATE (last_reported_at, reported_app_version, pending_offline_scan_count) ON device_installations TO stacktrack_app;
+GRANT SELECT, INSERT ON device_assignment_history TO stacktrack_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
 "@ | & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --set="app_password=$appPassword"
   if ($LASTEXITCODE -ne 0) { throw "Azure application-login setup failed." }

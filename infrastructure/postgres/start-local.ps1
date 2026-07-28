@@ -10,6 +10,7 @@ $dataDirectory = Join-Path $PSScriptRoot ".local-data\pg16"
 $logDirectory = Join-Path $PSScriptRoot ".local-data"
 $logPath = Join-Path $logDirectory "postgres.log"
 $migrationPath = Join-Path $PSScriptRoot "migrations\001_accuracy_foundation.sql"
+$deviceOperationsMigrationPath = Join-Path $PSScriptRoot "migrations\002_device_operations.sql"
 $port = if ($env:STACKTRACK_POSTGRES_PORT) {
   [int]$env:STACKTRACK_POSTGRES_PORT
 } else {
@@ -102,11 +103,25 @@ if ($schemaExists.Trim() -ne "t") {
   }
 }
 
+& $psql `
+  --host=127.0.0.1 `
+  --port=$port `
+  --username=postgres `
+  --dbname=stacktrack `
+  --set=ON_ERROR_STOP=1 `
+  --file=$deviceOperationsMigrationPath
+if ($LASTEXITCODE -ne 0) {
+  throw "The StackTrack device operations migration failed."
+}
+
 $grantSql = @"
 GRANT CONNECT ON DATABASE stacktrack TO stacktrack;
 GRANT USAGE ON SCHEMA public TO stacktrack;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack;
 GRANT UPDATE (assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack;
+GRANT UPDATE (required_app_version) ON devices TO stacktrack;
+GRANT UPDATE (last_reported_at, reported_app_version, pending_offline_scan_count) ON device_installations TO stacktrack;
+GRANT SELECT, INSERT ON device_assignment_history TO stacktrack;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack;
 "@
 

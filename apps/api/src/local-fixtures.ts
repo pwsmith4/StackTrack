@@ -15,6 +15,19 @@ export interface LocalDevice {
   readonly assignedLocationId: string;
   readonly isActive: boolean;
   readonly deactivatedAt: string | null;
+  readonly pendingOfflineScanCount: number;
+  readonly reportedAppVersion: string | null;
+  readonly requiredAppVersion: string;
+  readonly lastReportedAt: string | null;
+}
+
+export interface LocalDeviceAssignment {
+  readonly assignmentHistoryId: string;
+  readonly deviceId: string;
+  readonly previousLocationId: string;
+  readonly assignedLocationId: string;
+  readonly reason: string;
+  readonly occurredAt: string;
 }
 
 export interface LocalContainer {
@@ -27,6 +40,7 @@ export interface LocalFixtures {
   readonly tenant: { readonly tenantId: string; readonly name: string };
   readonly locations: readonly LocalLocation[];
   readonly devices: readonly LocalDevice[];
+  readonly deviceAssignments: readonly LocalDeviceAssignment[];
   readonly containers: readonly LocalContainer[];
   readonly goodsTypes: readonly {
     readonly name: string;
@@ -69,7 +83,11 @@ export const localFixtures = {
       label: "Scanner A — Midtown",
       assignedLocationId: "20000000-0000-4000-8000-000000000002",
       isActive: true,
-      deactivatedAt: null
+      deactivatedAt: null,
+      pendingOfflineScanCount: 0,
+      reportedAppVersion: "0.2.0",
+      requiredAppVersion: "0.2.0",
+      lastReportedAt: new Date().toISOString()
     },
     {
       deviceId: "30000000-0000-4000-8000-000000000002",
@@ -77,9 +95,23 @@ export const localFixtures = {
       label: "Scanner B — Warehouse",
       assignedLocationId: "20000000-0000-4000-8000-000000000003",
       isActive: true,
-      deactivatedAt: null
+      deactivatedAt: null,
+      pendingOfflineScanCount: 2,
+      reportedAppVersion: "0.2.0",
+      requiredAppVersion: "0.3.0",
+      lastReportedAt: new Date(Date.now() - 12 * 60 * 1000).toISOString()
     }
   ] satisfies readonly LocalDevice[],
+  deviceAssignments: [
+    {
+      assignmentHistoryId: "32000000-0000-4000-8000-000000000001",
+      deviceId: "30000000-0000-4000-8000-000000000001",
+      previousLocationId: "20000000-0000-4000-8000-000000000001",
+      assignedLocationId: "20000000-0000-4000-8000-000000000002",
+      reason: "Pilot scanner moved to the Midtown Store work area.",
+      occurredAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    }
+  ] satisfies readonly LocalDeviceAssignment[],
   containers: [
     ["B1001", "bin"],
     ["B1002", "bin"],

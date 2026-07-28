@@ -59,7 +59,7 @@ export async function seedPostgres(
             audit_log, correction_actions, correction_requests,
             review_case_actions, review_cases, asset_events, load_codes,
             goods_types, secondary_fields, containers, container_types,
-            device_installations, devices, locations, tenants
+            device_assignment_history, device_installations, devices, locations, tenants
           RESTART IDENTITY CASCADE
         `);
       }
@@ -87,22 +87,32 @@ export async function seedPostgres(
         const locationName = locations[assignedLocation - 1]![0];
         await client.query(
           `INSERT INTO devices
-             (tenant_id, device_id, device_label, assigned_location_id)
-           VALUES ($1,$2,$3,$4)`,
+             (tenant_id, device_id, device_label, assigned_location_id, required_app_version)
+           VALUES ($1,$2,$3,$4,$5)`,
           [
             TENANT_ID,
             deviceId(number),
             `Shared scanner ${number} — ${locationName}`,
-            locationId(assignedLocation)
+            locationId(assignedLocation),
+            number === 2 ? "0.4.0" : "0.3.0"
           ]
         );
         await client.query(
           `INSERT INTO device_installations
-             (tenant_id, device_id, installation_id, last_authenticated_at)
-           VALUES ($1,$2,$3,clock_timestamp())`,
-          [TENANT_ID, deviceId(number), installationId(number)]
+             (tenant_id, device_id, installation_id, last_authenticated_at, last_reported_at, reported_app_version, pending_offline_scan_count)
+           VALUES ($1,$2,$3,clock_timestamp(),clock_timestamp() - ($4 || ' minutes')::interval,$5,$6)`,
+          [TENANT_ID, deviceId(number), installationId(number), number * 3, "0.3.0", number === 2 ? 3 : number === 4 ? 1 : 0]
         );
       }
+
+      await client.query(
+        `INSERT INTO device_assignment_history
+           (tenant_id, device_id, previous_location_id, assigned_location_id, reason, actor_type, actor_id, occurred_at)
+         VALUES
+           ($1,$2,$3,$4,'Scanner returned to Midtown after store reset.','system',NULL,clock_timestamp() - interval '3 days'),
+           ($1,$5,$6,$7,'Warehouse scanner reassigned for the outbound pilot shift.','system',NULL,clock_timestamp() - interval '1 day')`,
+        [TENANT_ID, deviceId(1), locationId(1), locationId(2), deviceId(2), locationId(2), locationId(3)]
+      );
 
       const types = [
         [id("41", 1), "bin"],

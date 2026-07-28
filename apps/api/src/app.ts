@@ -8,7 +8,7 @@ import {
   type StoredEvent
 } from "@stacktrack/domain";
 import { localFixtures, type LocalFixtures } from "./local-fixtures.js";
-import type { DeviceAdministration, DeviceControlUpdate } from "./device-administration.js";
+import type { DeviceAdministration, DeviceControlUpdate, DeviceTelemetryUpdate } from "./device-administration.js";
 
 export interface AppDependencies {
   readonly ledger?: EventLedger;
@@ -92,6 +92,24 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
         message:
           "Development authentication requires valid tenant and device UUID headers."
       });
+    }
+
+    const installationId =
+      typeof (request.body as { deviceInstallationId?: unknown } | undefined)?.deviceInstallationId === "string"
+        ? (request.body as { deviceInstallationId: string }).deviceInstallationId
+        : undefined;
+    if (dependencies.deviceAdministration && installationId) {
+      const scannerEnabled = await dependencies.deviceAdministration.isScannerEnabled(
+        context.tenantId,
+        context.deviceId,
+        installationId
+      );
+      if (!scannerEnabled) {
+        return reply.code(403).send({
+          error: "ScannerDisabled",
+          message: "This scanner is disabled or no longer assigned to an active installation."
+        });
+      }
     }
 
     const result = await ledger.submit(request.body, context, now());
@@ -213,9 +231,11 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
         const update = request.body;
         if (
           !update ||
-          (update.assignedLocationId === undefined && update.isActive === undefined) ||
+          (update.assignedLocationId === undefined && update.isActive === undefined && update.requiredAppVersion === undefined) ||
           (update.assignedLocationId !== undefined && typeof update.assignedLocationId !== "string") ||
-          (update.isActive !== undefined && typeof update.isActive !== "boolean")
+          (update.isActive !== undefined && typeof update.isActive !== "boolean") ||
+          (update.requiredAppVersion !== undefined && typeof update.requiredAppVersion !== "string") ||
+          (update.assignmentReason !== undefined && typeof update.assignmentReason !== "string")
         ) {
           return reply.code(400).send({ error: "InvalidDeviceUpdate" });
         }
@@ -233,6 +253,34 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
             message: error instanceof Error ? error.message : "Device update rejected."
           });
         }
+      }
+    );
+
+    app.patch<{ Params: { deviceId: string }; Body: DeviceTelemetryUpdate }>(
+      "/api/v1/local/devices/:deviceId/telemetry",
+      async (request, reply) => {
+        const tenantId = readTenantId(request);
+        if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
+        if (!dependencies.deviceAdministration) {
+          return reply.code(501).send({ error: "DeviceAdministrationUnavailable" });
+        }
+        const update = request.body;
+        if (
+          !update ||
+          typeof update.installationId !== "string" ||
+          typeof update.appVersion !== "string" ||
+          !Number.isInteger(update.pendingOfflineScanCount) ||
+          update.pendingOfflineScanCount < 0
+        ) {
+          return reply.code(400).send({ error: "InvalidDeviceTelemetry" });
+        }
+        const device = await dependencies.deviceAdministration.reportTelemetry(
+          tenantId,
+          request.params.deviceId,
+          update
+        );
+        if (!device) return reply.code(404).send({ error: "NotFound" });
+        return reply.send({ device });
       }
     );
   }
