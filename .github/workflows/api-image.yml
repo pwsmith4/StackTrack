@@ -3,7 +3,7 @@ name: Build StackTrack API test image
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: ["main", "test"]
     paths:
       - "apps/api/**"
       - "packages/domain/**"

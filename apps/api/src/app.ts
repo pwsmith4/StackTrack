@@ -62,7 +62,7 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       reply.header("access-control-allow-origin", "*");
       reply.header(
         "access-control-allow-headers",
-        "content-type,x-stacktrack-tenant-id,x-stacktrack-device-id"
+        "content-type,cache-control,x-stacktrack-tenant-id,x-stacktrack-device-id"
       );
       reply.header("access-control-allow-methods", "GET,POST,PATCH,OPTIONS");
     }
