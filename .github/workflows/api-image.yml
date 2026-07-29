@@ -1,4 +1,4 @@
-name: Build StackTrack API test image
+name: Build and deploy StackTrack API
 
 on:
   workflow_dispatch:
@@ -16,6 +16,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   build-and-publish:
@@ -42,3 +43,56 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+
+  deploy:
+    name: Deploy ${{ github.ref_name }} API to Azure
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    # "test" and "production" are GitHub Environments. Their values are
+    # intentionally separate, so a test push cannot update production.
+    environment:
+      name: ${{ github.ref_name == 'main' && 'production' || 'test' }}
+    if: >-
+      vars.AZURE_CLIENT_ID != '' &&
+      vars.AZURE_TENANT_ID != '' &&
+      vars.AZURE_SUBSCRIPTION_ID != '' &&
+      vars.AZURE_RESOURCE_GROUP != '' &&
+      vars.AZURE_CONTAINER_APP_NAME != ''
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Sign in to Azure with GitHub OpenID Connect
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Create a revision from the branch image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${{ github.repository_owner }}/stacktrack-api:${{ github.ref_name }}"
+          az containerapp update \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "$IMAGE" \
+            --output none
+      - name: Verify the deployed API health
+        shell: bash
+        run: |
+          set -euo pipefail
+          FQDN="$(az containerapp show \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "https://${FQDN}/health"; then
+              exit 0
+            fi
+            echo "Waiting for the new revision to become healthy (${attempt}/30)…"
+            sleep 10
+          done
+          echo "The Container App revision did not become healthy in five minutes." >&2
+          exit 1
