@@ -384,7 +384,7 @@ export function App() {
                   ref={searchRef}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search label or code"
+                  placeholder={page === "devices" ? "Search scanner, ID, or location" : "Search label or code"}
                   aria-label="Search"
                 />
                 <kbd>⌘ K</kbd>
@@ -438,7 +438,7 @@ function PageContent({
   if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "devices") return <DevicesPage data={data} openDetail={openDetail} refresh={refresh} />;
+  if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
   return <SettingsPage openDetail={openDetail} />;
 }
@@ -901,10 +901,20 @@ function ActivityPage({ data, query, openDetail }: { data: OperationsData; query
   ))}</div></section>;
 }
 
-function DevicesPage({ data, openDetail, refresh }: { data: OperationsData; openDetail: OpenDetail; refresh: () => Promise<void> }) {
+function DevicesPage({ data, query, openDetail, refresh }: { data: OperationsData; query: string; openDetail: OpenDetail; refresh: () => Promise<void> }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
+  const matchingDevices = data.fixtures.devices.filter((device) => {
+    const assignedLocation = data.fixtures.locations.find((location) => location.locationId === device.assignedLocationId)?.name ?? "";
+    const previousLocations = data.fixtures.deviceAssignments
+      .filter((entry) => entry.deviceId === device.deviceId)
+      .flatMap((entry) => [entry.previousLocationId, entry.assignedLocationId])
+      .map((locationId) => data.fixtures.locations.find((location) => location.locationId === locationId)?.name ?? "")
+      .join(" ");
+    const searchText = `${device.label} ${scannerNumber(device.deviceId)} ${assignedLocation} ${previousLocations}`.toLowerCase();
+    return searchText.includes(query.trim().toLowerCase());
+  });
   const save = async (device: Device, update: { assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => {
     setBusyId(device.deviceId); setNotice(null);
     try {
@@ -919,7 +929,8 @@ function DevicesPage({ data, openDetail, refresh }: { data: OperationsData; open
   return <>
     <div className="device-guidance"><ShieldCheck size={20} /><span><strong>Scanner control is an accountable action.</strong> The app reports its queued offline count and installed version; assignment changes become permanent history, with an optional note.</span></div>
     {notice && <div className="device-notice">{notice}</div>}
-    <div className="device-grid">{data.fixtures.devices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div>
+    {query.trim() && <p className="device-search-summary">Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners matching “{query.trim()}”. Searches include the current and previous assigned locations.</p>}
+    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
   </>;
 }
 
