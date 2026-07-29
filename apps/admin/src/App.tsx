@@ -903,7 +903,7 @@ function ActivityPage({ data, query, openDetail }: { data: OperationsData; query
 
 function DevicesPage({ data, query, openDetail, refresh }: { data: OperationsData; query: string; openDetail: OpenDetail; refresh: () => Promise<void> }) {
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
   const matchingDevices = data.fixtures.devices.filter((device) => {
     const assignedLocation = data.fixtures.locations.find((location) => location.locationId === device.assignedLocationId)?.name ?? "";
@@ -915,20 +915,20 @@ function DevicesPage({ data, query, openDetail, refresh }: { data: OperationsDat
     const searchText = `${device.label} ${scannerNumber(device.deviceId)} ${assignedLocation} ${previousLocations}`.toLowerCase();
     return searchText.includes(query.trim().toLowerCase());
   });
-  const save = async (device: Device, update: { assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => {
+  const save = async (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => {
     setBusyId(device.deviceId); setNotice(null);
     try {
       await updateDevice(device.deviceId, update);
       await refresh();
       const destination = update.assignedLocationId ? data.fixtures.locations.find((location) => location.locationId === update.assignedLocationId)?.name ?? "the selected location" : null;
-      setNotice(destination ? `${device.label} was moved to ${destination}. Use Refresh in the scanner app to apply the assignment immediately.` : `${device.label} was ${update.isActive ? "enabled" : "disabled"}.`);
+      setNotice({ text: destination ? `${device.label} was moved to ${destination}. Use Refresh in the scanner app to apply the assignment immediately.` : update.label ? `${update.label} was saved as the scanner name.` : `${device.label} was ${update.isActive ? "enabled" : "disabled"}.`, tone: "success" });
     }
-    catch (error) { setNotice(error instanceof Error ? error.message : "Device update failed."); }
+    catch (error) { setNotice({ text: error instanceof Error ? error.message : "Device update failed.", tone: "error" }); }
     finally { setBusyId(null); }
   };
   return <>
     <div className="device-guidance"><ShieldCheck size={20} /><span><strong>Scanner control is an accountable action.</strong> The app reports its installed version; assignments and scanner-name changes become permanent history, with an optional move note.</span></div>
-    {notice && <div className="device-notice">{notice}</div>}
+    {notice && <div className={`device-notice ${notice.tone === "error" ? "device-notice--error" : ""}`}>{notice.text}</div>}
     {query.trim() && <p className="device-search-summary">Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners matching “{query.trim()}”. Searches include the current and previous assigned locations.</p>}
     {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
   </>;
