@@ -384,7 +384,7 @@ export function App() {
                   ref={searchRef}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search label or code"
+                  placeholder={page === "devices" ? "Search scanner, ID, or location" : "Search label or code"}
                   aria-label="Search"
                 />
                 <kbd>⌘ K</kbd>
@@ -438,7 +438,7 @@ function PageContent({
   if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "devices") return <DevicesPage data={data} openDetail={openDetail} refresh={refresh} />;
+  if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
   return <SettingsPage openDetail={openDetail} />;
 }
@@ -901,10 +901,20 @@ function ActivityPage({ data, query, openDetail }: { data: OperationsData; query
   ))}</div></section>;
 }
 
-function DevicesPage({ data, openDetail, refresh }: { data: OperationsData; openDetail: OpenDetail; refresh: () => Promise<void> }) {
+function DevicesPage({ data, query, openDetail, refresh }: { data: OperationsData; query: string; openDetail: OpenDetail; refresh: () => Promise<void> }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
+  const matchingDevices = data.fixtures.devices.filter((device) => {
+    const assignedLocation = data.fixtures.locations.find((location) => location.locationId === device.assignedLocationId)?.name ?? "";
+    const previousLocations = data.fixtures.deviceAssignments
+      .filter((entry) => entry.deviceId === device.deviceId)
+      .flatMap((entry) => [entry.previousLocationId, entry.assignedLocationId])
+      .map((locationId) => data.fixtures.locations.find((location) => location.locationId === locationId)?.name ?? "")
+      .join(" ");
+    const searchText = `${device.label} ${scannerNumber(device.deviceId)} ${assignedLocation} ${previousLocations}`.toLowerCase();
+    return searchText.includes(query.trim().toLowerCase());
+  });
   const save = async (device: Device, update: { assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => {
     setBusyId(device.deviceId); setNotice(null);
     try {
@@ -917,9 +927,10 @@ function DevicesPage({ data, openDetail, refresh }: { data: OperationsData; open
     finally { setBusyId(null); }
   };
   return <>
-    <div className="device-guidance"><ShieldCheck size={20} /><span><strong>Scanner control is an accountable action.</strong> The app reports its queued offline count and installed version; assignment changes require a reason and become permanent history.</span></div>
+    <div className="device-guidance"><ShieldCheck size={20} /><span><strong>Scanner control is an accountable action.</strong> The app reports its queued offline count and installed version; assignment changes become permanent history, with an optional note.</span></div>
     {notice && <div className="device-notice">{notice}</div>}
-    <div className="device-grid">{data.fixtures.devices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div>
+    {query.trim() && <p className="device-search-summary">Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners matching “{query.trim()}”. Searches include the current and previous assigned locations.</p>}
+    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
   </>;
 }
 
@@ -946,7 +957,7 @@ function DeviceCard({ device, data, operatingLocations, busy, onSave, onDetails 
   const location = data.fixtures.locations.find((item) => item.locationId === device.assignedLocationId);
   const events = data.events.filter((item) => item.deviceId === device.deviceId);
   const assignmentChanged = assignedLocationId !== device.assignedLocationId;
-  return <article className="device-card"><div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div><h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name ?? "Unassigned"}</p><dl><div><dt>Scanner ID</dt><dd className="device-id">{scannerNumber(device.deviceId)}</dd></div><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>StackTrack version</dt><dd>{device.reportedAppVersion ?? "Not reported"}</dd></div><div><dt>Queued scans</dt><dd>{device.pendingOfflineScanCount ?? 0}</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>Last app report</dt><dd>{relativeTime(device.lastReportedAt)}</dd></div></dl><label className="device-location-control"><span>Move scanner to</span><select value={assignedLocationId} disabled={busy} onChange={(event) => setAssignedLocationId(event.target.value)}>{operatingLocations.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}</select></label>{assignmentChanged && <label className="device-location-control"><span>Required reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Scanner moved with the Midtown store team." disabled={busy} /></label>}{assignmentChanged && <button className="primary device-save-assignment" disabled={busy || reason.trim().length < 5} onClick={() => void onSave(device, { assignedLocationId, assignmentReason: reason.trim() })}>{busy ? "Saving…" : "Record scanner move"}</button>}<div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={onDetails}>Details <ChevronRight size={16} /></button></div></article>;
+  return <article className="device-card"><div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div><h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name ?? "Unassigned"}</p><dl><div><dt>Scanner ID</dt><dd className="device-id">{scannerNumber(device.deviceId)}</dd></div><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>StackTrack version</dt><dd>{device.reportedAppVersion ?? "Not reported"}</dd></div><div><dt>Queued scans</dt><dd>{device.pendingOfflineScanCount ?? 0}</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>Last app report</dt><dd>{relativeTime(device.lastReportedAt)}</dd></div></dl><label className="device-location-control"><span>Move scanner to</span><select value={assignedLocationId} disabled={busy} onChange={(event) => setAssignedLocationId(event.target.value)}>{operatingLocations.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}</select></label>{assignmentChanged && <label className="device-location-control"><span>Reason (optional)</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Scanner moved with the Midtown store team." disabled={busy} /></label>}{assignmentChanged && <button className="primary device-save-assignment" disabled={busy} onClick={() => void onSave(device, { assignedLocationId, ...(reason.trim() ? { assignmentReason: reason.trim() } : {}) })}>{busy ? "Saving…" : "Record scanner move"}</button>}<div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={onDetails}>Details <ChevronRight size={16} /></button></div></article>;
   /* Legacy required-version controls intentionally removed from the pilot UI.
   const versionChanged = requiredVersion.trim() !== requiredAppVersion;
   const updateNeeded = versionIsOlder(device.reportedAppVersion, requiredAppVersion);

@@ -301,6 +301,16 @@ function AppContent() {
     await saveObservations(next);
   };
 
+  // A device should not need a second scan or a manual Retry tap just because
+  // connectivity returned. Keep device order by using the existing sequential
+  // sync routine whenever either real connectivity or the test offline switch
+  // comes back online.
+  useEffect(() => {
+    if (effectiveOnline && pending > 0 && scannerEnabled) {
+      void syncPending();
+    }
+  }, [effectiveOnline, pending, scannerEnabled]);
+
   const beginScan = () => {
     if (!scannerEnabled) {
       Alert.alert("Scanner disabled", "An administrator has disabled this scanner. Ask them to enable it before recording new observations.");
