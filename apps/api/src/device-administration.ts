@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 
 export interface DeviceControlUpdate {
+  readonly label?: string;
   readonly assignedLocationId?: string;
   readonly isActive?: boolean;
   readonly requiredAppVersion?: string;
@@ -71,11 +72,12 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
   ): Promise<DeviceControlResult | null> {
     return this.tenantTransaction(tenantId, async (client) => {
       const current = await client.query<{
+        device_label: string;
         assigned_location_id: string;
         is_active: boolean;
         required_app_version: string;
       }>(
-        `SELECT assigned_location_id, is_active, required_app_version
+        `SELECT device_label, assigned_location_id, is_active, required_app_version
            FROM devices
           WHERE tenant_id = $1 AND device_id = $2
           FOR UPDATE`,
@@ -83,9 +85,12 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
       );
       if (!current.rows[0]) return null;
 
+      const label = update.label === undefined ? current.rows[0].device_label : update.label.trim();
+      if (label.length < 2) throw new Error("Scanner name must contain at least 2 characters.");
       const assignedLocationId = update.assignedLocationId ?? current.rows[0].assigned_location_id;
       const isActive = update.isActive ?? current.rows[0].is_active;
       const requiredAppVersion = update.requiredAppVersion ?? current.rows[0].required_app_version;
+      const changedLabel = label !== current.rows[0].device_label;
       const changedLocation = assignedLocationId !== current.rows[0].assigned_location_id;
       const changedAvailability = isActive !== current.rows[0].is_active;
       const changedRequiredVersion = requiredAppVersion !== current.rows[0].required_app_version;
@@ -94,7 +99,7 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
       // written reason, while preserving a truthful audit record either way.
       const assignmentReason = update.assignmentReason?.trim() || "No reason provided";
 
-      if (!changedLocation && !changedAvailability && !changedRequiredVersion) {
+      if (!changedLabel && !changedLocation && !changedAvailability && !changedRequiredVersion) {
         return {
           deviceId,
           assignedLocationId,
@@ -124,13 +129,14 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
         required_app_version: string;
       }>(
         `UPDATE devices
-            SET assigned_location_id = $3,
-                is_active = $4,
-                deactivated_at = CASE WHEN $4 THEN NULL ELSE clock_timestamp() END,
-                required_app_version = $5
+            SET device_label = $3,
+                assigned_location_id = $4,
+                is_active = $5,
+                deactivated_at = CASE WHEN $5 THEN NULL ELSE clock_timestamp() END,
+                required_app_version = $6
           WHERE tenant_id = $1 AND device_id = $2
         RETURNING device_id, assigned_location_id, is_active, deactivated_at, required_app_version`,
-        [tenantId, deviceId, assignedLocationId, isActive, requiredAppVersion]
+        [tenantId, deviceId, label, assignedLocationId, isActive, requiredAppVersion]
       );
       const row = updated.rows[0]!;
 
@@ -149,10 +155,14 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
          VALUES ($1, 'system', $2, 'device', $3, $4::jsonb)`,
         [
           tenantId,
-          changedLocation && changedAvailability
+          changedLabel && changedLocation
+            ? "device.renamed_and_reassigned"
+            : changedLocation && changedAvailability
             ? "device.reassigned_and_availability_changed"
             : changedLocation
               ? "device.reassigned"
+              : changedLabel
+                ? "device.renamed"
               : isActive
                 ? "device.enabled"
                 : changedRequiredVersion
@@ -161,7 +171,7 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
           deviceId,
           JSON.stringify({
             before: current.rows[0],
-            after: { assignedLocationId, isActive, requiredAppVersion },
+            after: { label, assignedLocationId, isActive, requiredAppVersion },
             ...(changedLocation ? { assignmentReason } : {}),
             source: "pilot_admin_console"
           })

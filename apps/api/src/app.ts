@@ -231,7 +231,8 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
         const update = request.body;
         if (
           !update ||
-          (update.assignedLocationId === undefined && update.isActive === undefined && update.requiredAppVersion === undefined) ||
+          (update.label === undefined && update.assignedLocationId === undefined && update.isActive === undefined && update.requiredAppVersion === undefined) ||
+          (update.label !== undefined && typeof update.label !== "string") ||
           (update.assignedLocationId !== undefined && typeof update.assignedLocationId !== "string") ||
           (update.isActive !== undefined && typeof update.isActive !== "boolean") ||
           (update.requiredAppVersion !== undefined && typeof update.requiredAppVersion !== "string") ||
