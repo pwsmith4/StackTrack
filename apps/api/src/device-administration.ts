@@ -90,9 +90,9 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
       const changedAvailability = isActive !== current.rows[0].is_active;
       const changedRequiredVersion = requiredAppVersion !== current.rows[0].required_app_version;
 
-      if (changedLocation && (!update.assignmentReason || update.assignmentReason.trim().length < 5)) {
-        throw new Error("A reassignment reason of at least 5 characters is required.");
-      }
+      // The pilot lets an administrator make a routine scanner move without a
+      // written reason, while preserving a truthful audit record either way.
+      const assignmentReason = update.assignmentReason?.trim() || "No reason provided";
 
       if (!changedLocation && !changedAvailability && !changedRequiredVersion) {
         return {
@@ -139,7 +139,7 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
           `INSERT INTO device_assignment_history
             (tenant_id, device_id, previous_location_id, assigned_location_id, reason, actor_type)
            VALUES ($1, $2, $3, $4, $5, 'system')`,
-          [tenantId, deviceId, current.rows[0].assigned_location_id, assignedLocationId, update.assignmentReason!.trim()]
+          [tenantId, deviceId, current.rows[0].assigned_location_id, assignedLocationId, assignmentReason]
         );
       }
 
@@ -162,7 +162,7 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
           JSON.stringify({
             before: current.rows[0],
             after: { assignedLocationId, isActive, requiredAppVersion },
-            ...(changedLocation ? { assignmentReason: update.assignmentReason!.trim() } : {}),
+            ...(changedLocation ? { assignmentReason } : {}),
             source: "pilot_admin_console"
           })
         ]
