@@ -45,6 +45,10 @@ The repository contains the website, mobile app, API, database infrastructure,
 and shared packages. See the [deployment layout](docs/deployment.md) before
 publishing the admin site through GitHub Pages.
 
+For branch-based API deployment to Azure Container Apps, see the
+[automatic Azure deployment setup](docs/azure-github-deployment.md). It uses
+GitHub OpenID Connect rather than storing an Azure password in GitHub.
+
 ### Start the PostgreSQL simulation
 
 The website and mobile app use PostgreSQL automatically when the local database
