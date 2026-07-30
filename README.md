@@ -49,6 +49,9 @@ For branch-based API deployment to Azure Container Apps, see the
 [automatic Azure deployment setup](docs/azure-github-deployment.md). It uses
 GitHub OpenID Connect rather than storing an Azure password in GitHub.
 
+The proposed Goodwill-owned access model and production authentication boundary
+are documented in the [access-control foundation](docs/access-control-foundation.md).
+
 ### Start the PostgreSQL simulation
 
 The website and mobile app use PostgreSQL automatically when the local database
