@@ -1,7 +1,7 @@
-﻿// This file is deliberately kept in sync by infrastructure/release/bump-mobile-version.ps1.
+// This file is deliberately kept in sync by infrastructure/release/bump-mobile-version.ps1.
 // It is bundled into the app, so every installed device reports the exact release it runs.
-export const APP_VERSION = "0.3.1";
-export const APP_BUILD_NUMBER = 4;
+export const APP_VERSION = "0.3.2";
+export const APP_BUILD_NUMBER = 5;
 const AUTOMATED_BUILD_ID = process.env.EXPO_PUBLIC_BUILD_ID?.trim();
 
 // GitHub Actions supplies this on every push build. The local fallback keeps

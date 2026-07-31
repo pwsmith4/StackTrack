@@ -500,7 +500,7 @@ function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredA
           <View style={styles.scanCopy}><Text style={styles.scanButtonText}>SCAN CONTAINER</Text><Text style={styles.scanButtonSub}>Camera or handheld scanner</Text></View>
           <Icon name="arrow-forward" color="white" />
         </Pressable>
-        <Text style={styles.testHint}>Local test labels: B1001 · B1002 · C2001</Text>
+        <Text style={styles.testHint}>Pilot test labels: B1001 · B1002 · C2001</Text>
       </View>
 
       <View style={styles.syncCard}>
