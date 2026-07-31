@@ -32,6 +32,20 @@ database bootstrap/grant script so migration `004_location_manager_access.sql`
 and its application-role grants are applied before deploying the API. Do not
 manually edit password hashes or grant the application role superuser access.
 
+If the API is already deployed and reports that `admin_user_locations` does not
+exist, use the non-destructive repair command below. It prompts for the Azure
+administrator password, applies only migration `004`, repairs the application
+role grant, and does not seed, delete, or overwrite operational data:
+
+```powershell
+npm.cmd run db:azure:location-manager -- -ServerName "testserv5.postgres.database.azure.com" -AdminLogin "theparkersmith"
+```
+
+Run it once against the test database, then restart the test Container App
+revision (or wait for the next revision health check) and refresh the admin
+site. The full bootstrap remains the right command for a brand-new database;
+the repair command is safer for an existing pilot database.
+
 `db:seed` deliberately resets this isolated development database, then creates a
 repeatable simulation with 120 containers, 8 locations, 7 shared scanners, four
 goods types, roughly 300 observations, completed movement histories, active
