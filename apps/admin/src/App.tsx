@@ -1204,7 +1204,7 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
         <div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.first)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`${group.origin?.name ?? "Origin pending"} to ${group.destination?.name ?? "Destination pending"}`}>{group.origin?.name ?? "Origin pending"} <ArrowRight size={12} /> {group.destination?.name ?? "Destination pending"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional route{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div>
       </div>}
       <div className="table-wrap">
-        <table>
+        <table className="container-table">
           <thead><tr><th>Container label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>History health</th></tr></thead>
           <tbody>{visibleRows.map((container) => {
             const projection = data.projections[container.containerId];
