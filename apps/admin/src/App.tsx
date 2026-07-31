@@ -6,6 +6,7 @@ import {
   Boxes,
   Building2,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleHelp,
   ClipboardCheck,
@@ -2113,13 +2114,30 @@ type AuditDraft = {
   search: string;
   locationId: string;
   deviceId: string;
-  actionPrefix: string;
-  targetType: string;
+  actionPrefixes: string[];
+  targetTypes: string[];
   from: string;
   to: string;
 };
 
-const emptyAuditFilters: AuditDraft = { search: "", locationId: "", deviceId: "", actionPrefix: "", targetType: "", from: "", to: "" };
+const emptyAuditFilters: AuditDraft = { search: "", locationId: "", deviceId: "", actionPrefixes: [], targetTypes: [], from: "", to: "" };
+
+type AuditFilterOption = { value: string; label: string };
+
+function AuditMultiSelect({ label, options, selected, onToggle, onClear, emptyLabel }: { label: string; options: readonly AuditFilterOption[]; selected: readonly string[]; onToggle: (value: string) => void; onClear: () => void; emptyLabel: string }) {
+  const selectionLabel = selected.length === 0
+    ? emptyLabel
+    : selected.length === 1
+      ? options.find((option) => option.value === selected[0])?.label ?? "1 selected"
+      : `${selected.length} selected`;
+  return <details className="audit-multi-select">
+    <summary><span>{label}</span><span className="audit-multi-select__summary">{selectionLabel}</span><ChevronDown size={15} /></summary>
+    <div className="audit-multi-select__menu">
+      <div className="audit-multi-select__menu-head"><small>{selected.length ? `${selected.length} selected · matches any selected option` : "No restriction applied"}</small><button type="button" onClick={onClear} disabled={!selected.length}>Clear</button></div>
+      {options.map((option) => <label key={option.value}><input type="checkbox" checked={selected.includes(option.value)} onChange={() => onToggle(option.value)} /><span>{option.label}</span></label>)}
+    </div>
+  </details>;
+}
 
 function auditActionLabel(action: string) {
   return action
@@ -2261,12 +2279,14 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   }, [applied, pageIndex, session]);
   useEffect(() => { void load(); }, [load]);
 
-  const updateFilter = (field: keyof AuditDraft, value: string) => setDraft((current) => ({ ...current, [field]: value }));
+  const updateFilter = (field: Exclude<keyof AuditDraft, "actionPrefixes" | "targetTypes">, value: string) => setDraft((current) => ({ ...current, [field]: value }));
+  const toggleMultiFilter = (field: "actionPrefixes" | "targetTypes", value: string) => setDraft((current) => ({ ...current, [field]: current[field].includes(value) ? current[field].filter((item) => item !== value) : [...current[field], value] }));
+  const clearMultiFilter = (field: "actionPrefixes" | "targetTypes") => setDraft((current) => ({ ...current, [field]: [] }));
   const applyFilters = (event: React.FormEvent) => {
     event.preventDefault(); setPageIndex(0); setApplied({ ...draft });
   };
   const clearFilters = () => { setDraft(emptyAuditFilters); setPageIndex(0); setApplied(emptyAuditFilters); };
-  const activeCount = Object.values(applied).filter(Boolean).length;
+  const activeCount = Object.values(applied).filter((value) => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
   const pageCount = Math.max(1, Math.ceil(result.total / Math.max(1, result.limit)));
   const currentPage = Math.min(pageCount, pageIndex + 1);
   const exportResults = async () => {
@@ -2292,8 +2312,8 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
         <label className="audit-filter--wide">Search text<input value={draft.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Actor, scanner, container, reason, or action" /></label>
         <label>Operating location<select value={draft.locationId} onChange={(event) => updateFilter("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label>
         <label>Scanner<select value={draft.deviceId} onChange={(event) => updateFilter("deviceId", event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option key={device.deviceId} value={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label>
-        <label>Action group<select value={draft.actionPrefix} onChange={(event) => updateFilter("actionPrefix", event.target.value)}><option value="">All actions</option><option value="admin">Administrator access</option><option value="device">Scanner administration</option><option value="review">Review decisions</option><option value="correction">Corrections</option></select></label>
-        <label>Action applies to<select value={draft.targetType} onChange={(event) => updateFilter("targetType", event.target.value)}><option value="">All subjects</option><option value="device">Scanner</option><option value="container">Container</option><option value="review_case">Review case</option><option value="correction_request">Correction request</option><option value="admin_user">Administrator account</option></select></label>
+        <AuditMultiSelect label="Action groups" options={[{ value: "admin", label: "Administrator access" }, { value: "device", label: "Scanner administration" }, { value: "review", label: "Review decisions" }, { value: "correction", label: "Corrections" }]} selected={draft.actionPrefixes} onToggle={(value) => toggleMultiFilter("actionPrefixes", value)} onClear={() => clearMultiFilter("actionPrefixes")} emptyLabel="All action groups" />
+        <AuditMultiSelect label="Action applies to" options={[{ value: "device", label: "Scanner" }, { value: "container", label: "Container" }, { value: "review_case", label: "Review case" }, { value: "correction_request", label: "Correction request" }, { value: "admin_user", label: "Administrator account" }]} selected={draft.targetTypes} onToggle={(value) => toggleMultiFilter("targetTypes", value)} onClear={() => clearMultiFilter("targetTypes")} emptyLabel="All subjects" />
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateFilter("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateFilter("to", event.target.value)} /></label>
       </div>

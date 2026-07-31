@@ -407,6 +407,25 @@ describe("StackTrack API foundation", () => {
     expect(invalid.json()).toMatchObject({ error: "InvalidAuditFilter" });
   });
 
+  it("accepts exact multi-value audit filters", async () => {
+    const searchAuditEntries = vi.fn().mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(ownerPrincipal), searchAuditEntries } as unknown as PostgresAdminAccess
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/admin/audit-log?actionPrefixes=device,correction&targetTypes=device,correction_request",
+      headers: { authorization: `Bearer ${"e".repeat(32)}` }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(searchAuditEntries).toHaveBeenCalledWith(expect.objectContaining({
+      actionPrefixes: ["device", "correction"],
+      targetTypes: ["device", "correction_request"]
+    }));
+  });
+
   it("only emits CORS access headers for approved StackTrack browser origins", async () => {
     app = await createApp({ localMode: true });
     const request = {

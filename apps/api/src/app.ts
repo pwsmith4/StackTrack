@@ -40,6 +40,8 @@ type AuditQuery = {
   locationId?: string;
   deviceId?: string;
   actorUserId?: string;
+  actionPrefixes?: string;
+  targetTypes?: string;
   actionPrefix?: string;
   targetType?: string;
   from?: string;
@@ -203,6 +205,12 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       if (query.targetType !== undefined && !/^[a-z0-9_.-]{1,64}$/i.test(query.targetType)) {
         return reply.code(400).send({ error: "InvalidAuditFilter", message: "Target type is invalid." });
       }
+      if (query.actionPrefixes !== undefined && !/^[a-z0-9_.-]{1,64}(,[a-z0-9_.-]{1,64})*$/i.test(query.actionPrefixes)) {
+        return reply.code(400).send({ error: "InvalidAuditFilter", message: "Action groups are invalid." });
+      }
+      if (query.targetTypes !== undefined && !/^[a-z0-9_.-]{1,64}(,[a-z0-9_.-]{1,64})*$/i.test(query.targetTypes)) {
+        return reply.code(400).send({ error: "InvalidAuditFilter", message: "Action subjects are invalid." });
+      }
       const from = parseAuditDate(query.from);
       const to = parseAuditDate(query.to, true);
       if ((query.from && !from) || (query.to && !to)) {
@@ -225,6 +233,8 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         ...(query.locationId ? { locationId: query.locationId } : {}),
         ...(query.deviceId ? { deviceId: query.deviceId } : {}),
         ...(query.actorUserId ? { actorUserId: query.actorUserId } : {}),
+        ...(query.actionPrefixes?.trim() ? { actionPrefixes: query.actionPrefixes.split(",") } : {}),
+        ...(query.targetTypes?.trim() ? { targetTypes: query.targetTypes.split(",") } : {}),
         ...(query.actionPrefix?.trim() ? { actionPrefix: query.actionPrefix.trim() } : {}),
         ...(query.targetType?.trim() ? { targetType: query.targetType.trim() } : {}),
         ...(from ? { from } : {}),

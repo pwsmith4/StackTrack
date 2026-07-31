@@ -59,6 +59,8 @@ export interface AuditFilters {
   readonly locationId?: string;
   readonly deviceId?: string;
   readonly actorUserId?: string;
+  readonly actionPrefixes?: readonly string[];
+  readonly targetTypes?: readonly string[];
   readonly actionPrefix?: string;
   readonly targetType?: string;
   readonly from?: string;
@@ -243,8 +245,10 @@ export class PostgresAdminAccess {
     if (filters.locationId) add("EXISTS (SELECT 1 FROM locations filter_location WHERE filter_location.tenant_id=a.tenant_id AND filter_location.location_id=$VALUE::uuid AND (a.target_id=filter_location.location_id OR a.details->>'locationId'=filter_location.location_id::text OR a.details->>'assignedLocationId'=filter_location.location_id::text OR a.details->>'previousLocationId'=filter_location.location_id::text OR a.details->'after'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'after'->>'assigned_location_id'=filter_location.location_id::text OR a.details->'before'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'before'->>'assigned_location_id'=filter_location.location_id::text))", filters.locationId);
     if (filters.deviceId) add("(a.target_id=$VALUE::uuid OR a.details->>'deviceId'=$VALUE::text)", filters.deviceId);
     if (filters.actorUserId) add("a.actor_id=$VALUE::uuid", filters.actorUserId);
-    if (filters.actionPrefix) add("a.action LIKE $VALUE || '%'", filters.actionPrefix.trim().slice(0, 64));
-    if (filters.targetType) add("a.target_type=$VALUE", filters.targetType.trim().slice(0, 64));
+    if (filters.actionPrefixes?.length) add("a.action LIKE ANY($VALUE::text[])", filters.actionPrefixes.slice(0, 12).map((prefix) => `${prefix.trim().slice(0, 64)}%`));
+    else if (filters.actionPrefix) add("a.action LIKE $VALUE || '%'", filters.actionPrefix.trim().slice(0, 64));
+    if (filters.targetTypes?.length) add("a.target_type = ANY($VALUE::text[])", filters.targetTypes.slice(0, 12).map((targetType) => targetType.trim().slice(0, 64)));
+    else if (filters.targetType) add("a.target_type=$VALUE", filters.targetType.trim().slice(0, 64));
     if (filters.from) add("a.occurred_at >= $VALUE::timestamptz", filters.from);
     if (filters.to) add("a.occurred_at < $VALUE::timestamptz", filters.to);
     const where = clauses.join(" AND ");
