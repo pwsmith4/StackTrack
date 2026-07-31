@@ -18,7 +18,10 @@ The executable baseline centers on an immutable event ledger, deterministic cont
   7 shared scanners, 302 immutable observations, and seeded accuracy-review cases
 - Baseline assumptions and unanswered-decision register
 
-This is not production-ready yet. Authentication is intentionally represented by development headers until Goodwill provides an Entra tenant, device provisioning policy, and production Azure environment.
+This is not production-ready yet. Scanner and test-data routes still use a
+synthetic pilot tenant header, but scanner administration and administrator
+management now require a server-issued pilot session. Production will replace
+the temporary password pilot bridge with Goodwill Microsoft Entra sign-in.
 
 ## Run locally
 
@@ -124,6 +127,13 @@ npm.cmd run db:azure:bootstrap -- -ServerName "your-server.postgres.database.azu
 The command prompts for both passwords, applies the schema, creates the
 non-admin `stacktrack_app` API login, and loads synthetic test data. It does
 not save passwords in the repository.
+
+### Enable pilot administrator access
+
+Once the test API is deployed, create the first Organization Owner with the
+separate password-prompted command in the
+[administrator access setup guide](docs/admin-access-setup.md). This enables
+the admin website's sign-in, scanner controls, and administrator directory.
 
 ## First API slice
 
