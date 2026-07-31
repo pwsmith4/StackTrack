@@ -40,7 +40,7 @@ import {
   Wifi,
   X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   API_URL,
   ApiRequestError,
@@ -2241,6 +2241,30 @@ function CorrectionsPage({
 
 type ActivityWindow = "all" | "today" | "7d" | "30d";
 
+type ActivityEventNeighbors = {
+  previousContainer?: StoredEvent;
+  nextContainer?: StoredEvent;
+  previousScanner?: StoredEvent;
+  nextScanner?: StoredEvent;
+};
+
+function activityEventColor(containerId: string): CSSProperties {
+  let hash = 0;
+  for (const character of containerId) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  const hue = hash % 360;
+  return {
+    "--timeline-accent": `hsl(${hue} 62% 42%)`,
+    "--timeline-rail": `hsl(${hue} 54% 78%)`,
+    "--timeline-wash": `hsl(${hue} 58% 98%)`
+  } as CSSProperties;
+}
+
+function activityEventOrder(left: StoredEvent, right: StoredEvent) {
+  return Date.parse(left.eventAt) - Date.parse(right.eventAt)
+    || Date.parse(left.receivedAt) - Date.parse(right.receivedAt)
+    || left.eventId.localeCompare(right.eventId);
+}
+
 function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; setPage: (page: Page) => void }) {
   const [eventFilter, setEventFilter] = useState<"all" | StoredEvent["eventType"]>("all");
   const [locationFilter, setLocationFilter] = useState("");
@@ -2250,7 +2274,30 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
   const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown location";
   const deviceFor = (id: string) => data.fixtures.devices.find((item) => item.deviceId === id);
   const searchTerm = query.trim().toLowerCase();
-  const eventOrder = [...data.events].sort((left, right) => Date.parse(right.eventAt) - Date.parse(left.eventAt) || right.eventId.localeCompare(left.eventId));
+  const eventOrder = [...data.events].sort(activityEventOrder);
+  const neighborsByEventId = new Map<string, ActivityEventNeighbors>();
+  const previousContainerEvent = new Map<string, StoredEvent>();
+  const previousScannerEvent = new Map<string, StoredEvent>();
+  for (const event of eventOrder) {
+    const neighbors = neighborsByEventId.get(event.eventId) ?? {};
+    const previousContainer = previousContainerEvent.get(event.containerId);
+    const previousScanner = previousScannerEvent.get(event.deviceId);
+    if (previousContainer) {
+      neighbors.previousContainer = previousContainer;
+      const previousNeighbors = neighborsByEventId.get(previousContainer.eventId) ?? {};
+      previousNeighbors.nextContainer = event;
+      neighborsByEventId.set(previousContainer.eventId, previousNeighbors);
+    }
+    if (previousScanner) {
+      neighbors.previousScanner = previousScanner;
+      const previousNeighbors = neighborsByEventId.get(previousScanner.eventId) ?? {};
+      previousNeighbors.nextScanner = event;
+      neighborsByEventId.set(previousScanner.eventId, previousNeighbors);
+    }
+    neighborsByEventId.set(event.eventId, neighbors);
+    previousContainerEvent.set(event.containerId, event);
+    previousScannerEvent.set(event.deviceId, event);
+  }
   const cutoff = windowFilter === "today" ? Date.now() - 24 * 60 * 60 * 1000 : windowFilter === "7d" ? Date.now() - 7 * 24 * 60 * 60 * 1000 : windowFilter === "30d" ? Date.now() - 30 * 24 * 60 * 60 * 1000 : null;
   const events = data.events.filter((event) => {
     const device = deviceFor(event.deviceId);
@@ -2273,7 +2320,8 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
       (!locationFilter || event.locationId === locationFilter) &&
       (!deviceFilter || event.deviceId === deviceFilter) &&
       (cutoff === null || Date.parse(event.eventAt) >= cutoff);
-  });
+  }).sort((left, right) => -activityEventOrder(left, right));
+  const visibleEvents = events.slice(0, 100);
   const clearFilters = () => { setEventFilter("all"); setLocationFilter(""); setDeviceFilter(""); setWindowFilter("all"); };
   const hasFilters = Boolean(searchTerm || locationFilter || deviceFilter || windowFilter !== "all" || eventFilter !== "all");
   return <section className="panel activity-page">
@@ -2281,32 +2329,32 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
     <div className="toolbar"><div className="filter-tabs">{(["all", "load_assigned", "batch_out", "batch_in", "emptied"] as const).map((value) => <button key={value} className={eventFilter === value ? "active" : ""} onClick={() => setEventFilter(value)}>{value === "all" ? "All events" : eventLabel(value)}</button>)}</div><span className="date-chip">{events.length} shown</span></div>
     <div className="activity-filters"><label>Location<select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label>Scanner<select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option value={device.deviceId} key={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label><label>Time window<select value={windowFilter} onChange={(event) => setWindowFilter(event.target.value as ActivityWindow)}><option value="all">All available</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>{hasFilters && <button className="secondary activity-filters__clear" onClick={clearFilters}>Clear filters</button>}</div>
     {searchTerm && <p className="activity-search-summary">Searching event IDs, load codes, goods, containers, scanners, locations, and warning text for <strong>“{query.trim()}”</strong>.</p>}
-    {events.length ? <div className="timeline">{events.slice(0, 100).map((event, index) => {
-      const container = data.fixtures.containers.find((item) => item.containerId === event.containerId);
-      const location = locationName(event.locationId);
-      // Relationships are resolved against the complete event history, not the
-      // filtered list. A location/scanner filter must never make unrelated rows
-      // look adjacent simply because the intervening evidence was hidden.
-      const eventTime = Date.parse(event.eventAt);
-      const previousContainer = eventOrder.find((candidate) => candidate.containerId === event.containerId && Date.parse(candidate.eventAt) < eventTime);
-      const previousScanner = eventOrder.find((candidate) => candidate.deviceId === event.deviceId && Date.parse(candidate.eventAt) < eventTime);
-      const sameScanner = Boolean(previousScanner);
-      const sameContainer = Boolean(previousContainer);
-      const relationship = sameScanner && sameContainer ? "Same scanner + container history" : sameScanner ? "Earlier same scanner" : sameContainer ? "Earlier same container" : null;
-      const eventRoute = getContainerRouteContext(event.containerId, data);
-      const eventSegment = eventRoute.segments.find((segment) => segment.departureEventId === event.eventId || segment.receiptEventId === event.eventId);
-      const routeText = eventSegment ? `${eventSegment.origin?.name ?? "Origin pending"} → ${eventSegment.destination?.name ?? "Destination pending"}` : null;
-      return <article className={`clickable-timeline ${relationship ? "clickable-timeline--linked" : ""}`} key={event.eventId} onClick={() => openDetail({
-        eyebrow: "Scanner observation",
-        icon: <FileClock size={18} />,
-        status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "No data-quality warnings", tone: "good" },
+     {events.length ? <div className="timeline">{visibleEvents.map((event, index) => {
+       const container = data.fixtures.containers.find((item) => item.containerId === event.containerId);
+       const location = locationName(event.locationId);
+       // Relationships are resolved against the complete event history, not the
+       // filtered list. A location/scanner filter must never make unrelated rows
+       // look adjacent simply because the intervening evidence was hidden.
+       const neighbors = neighborsByEventId.get(event.eventId) ?? {};
+       const sameScanner = Boolean(neighbors.previousScanner || neighbors.nextScanner);
+       const sameContainer = Boolean(neighbors.previousContainer || neighbors.nextContainer);
+       const adjacentSameContainer = visibleEvents[index - 1]?.containerId === event.containerId || visibleEvents[index + 1]?.containerId === event.containerId;
+       const relationship = sameContainer ? adjacentSameContainer ? "Same container · adjacent event" : "Same container · history" : sameScanner ? "Same scanner · different container" : null;
+       const eventRoute = getContainerRouteContext(event.containerId, data);
+       const eventSegment = eventRoute.segments.find((segment) => segment.departureEventId === event.eventId || segment.receiptEventId === event.eventId);
+       const routeText = eventSegment ? `${eventSegment.origin?.name ?? "Origin pending"} → ${eventSegment.destination?.name ?? "Destination pending"}` : null;
+       const relationshipClass = sameContainer ? "" : "timeline__relationship--scanner";
+       return <article className={`clickable-timeline ${sameContainer ? "clickable-timeline--linked" : ""} ${adjacentSameContainer ? "clickable-timeline--adjacent" : ""}`} style={activityEventColor(event.containerId)} key={event.eventId} onClick={() => openDetail({
+         eyebrow: "Scanner observation",
+         icon: <FileClock size={18} />,
+         status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "No data-quality warnings", tone: "good" },
         summary: "A physical observation received from a shared scanner. Use this feed for movement history; use Audit trail for administrator actions.",
         recordId: event.eventId,
         recordIdLabel: "Event UUID",
         title: `${container?.label ?? "Unknown container"} · ${eventLabel(event.eventType)}`,
          body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Handoff", routeText ?? "Not a location handoff"], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
-       })}><div className="timeline__rail"><span>{index + 1}</span></div><div className="timeline__card"><div className="timeline__card-heading"><span><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{relationship && <span className="timeline__relationship"><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"} · {location}</h3><p><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />{routeText}</span>} · received {relativeTime(event.receivedAt)} · {event.accuracyFlags.length ? `${event.accuracyFlags.length} warning` : "no data-quality warnings"}</p></div></article>;
-    })}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
+        })}><div className={`timeline__rail ${adjacentSameContainer ? "timeline__rail--linked" : ""}`}><span>{index + 1}</span>{adjacentSameContainer && <i aria-hidden="true" />}</div><div className="timeline__card"><div className="timeline__card-heading"><span><span className={`timeline__event-pill timeline__event-pill--${event.eventType}`}>{eventLabel(event.eventType)}</span>{event.accuracyFlags.length > 0 && <span className="timeline__warning">Needs review</span>}{relationship && <span className={`timeline__relationship ${relationshipClass}`}><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"}</h3><p className="timeline__narrative">{eventNarrative(event, data)}</p><p className="timeline__meta"><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />Route: {routeText}</span>}<span>received {relativeTime(event.receivedAt)}</span>{event.accuracyFlags.length > 0 && <span>{event.accuracyFlags.length} data-quality warning{event.accuracyFlags.length === 1 ? "" : "s"}</span>}</p></div></article>;
+     })}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
     {events.length > 100 && <p className="activity-limit-note">Showing the newest 100 matching observations. Use the filters to narrow the feed further.</p>}
   </section>;
 }
@@ -2383,9 +2431,9 @@ function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRe
       || device.reportedAppVersion === versionFilter;
     return (!searchTerm || searchText.includes(searchTerm))
       && (locationFilter === "all" || device.assignedLocationId === locationFilter || (locationFilter === "unknown" && !data.fixtures.locations.some((location) => location.locationId === device.assignedLocationId)))
-      && statusMatches
-      && versionMatches;
-  });
+       && statusMatches
+       && versionMatches;
+   });
   const sortDevices = (devices: Device[]) => [...devices].sort((left, right) => {
     const leftLocation = locationName(left.assignedLocationId);
     const rightLocation = locationName(right.assignedLocationId);
