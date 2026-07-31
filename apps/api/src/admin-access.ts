@@ -237,7 +237,7 @@ export class PostgresAdminAccess {
     const clauses = ["a.tenant_id=$1"];
     const add = (clause: string, value: unknown) => {
       values.push(value);
-      clauses.push(clause.replace("$VALUE", `$${values.length}`));
+      clauses.push(clause.replaceAll("$VALUE", `$${values.length}`));
     };
     if (filters.search?.trim()) add("concat_ws(' ', a.action, a.target_type, a.target_id, u.display_name, u.username, target_device.device_label, target_container.container_label, audit_location.location_name, a.details::text) ILIKE '%' || $VALUE || '%'", filters.search.trim().slice(0, 120));
     if (filters.locationId) add("EXISTS (SELECT 1 FROM locations filter_location WHERE filter_location.tenant_id=a.tenant_id AND filter_location.location_id=$VALUE::uuid AND (a.target_id=filter_location.location_id OR a.details->>'locationId'=filter_location.location_id::text OR a.details->>'assignedLocationId'=filter_location.location_id::text OR a.details->>'previousLocationId'=filter_location.location_id::text OR a.details->'after'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'after'->>'assigned_location_id'=filter_location.location_id::text OR a.details->'before'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'before'->>'assigned_location_id'=filter_location.location_id::text))", filters.locationId);
