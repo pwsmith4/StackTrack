@@ -342,8 +342,8 @@ function relativeTime(value?: string | null) {
 function eventLabel(type: StoredEvent["eventType"]) {
   return {
     load_assigned: "Marked full",
-    batch_out: "Sent in transit",
-    batch_in: "Received",
+    batch_out: "Departed",
+    batch_in: "Arrived",
     emptied: "Marked empty"
   }[type];
 }
@@ -352,20 +352,30 @@ function containerTypeLabel(value?: string | null) {
   return value ? humanizeCode(value) : "Container";
 }
 
+function priorPhysicalLocationId(event: StoredEvent, data: OperationsData) {
+  const transitLocationIds = new Set(data.fixtures.locations.filter((location) => location.type === "in_transit").map((location) => location.locationId));
+  return data.events
+    .filter((candidate) => candidate.containerId === event.containerId && candidate.eventId !== event.eventId && Date.parse(candidate.effectiveAt) < Date.parse(event.effectiveAt) && !transitLocationIds.has(candidate.locationId))
+    .sort((left, right) => Date.parse(right.effectiveAt) - Date.parse(left.effectiveAt) || Date.parse(right.receivedAt) - Date.parse(left.receivedAt))[0]?.locationId ?? null;
+}
+
 function eventNarrative(event: StoredEvent, data: OperationsData) {
   const container = data.fixtures.containers.find((item) => item.containerId === event.containerId);
   const subject = containerTypeLabel(container?.type);
   const locationFor = (locationId: string | null | undefined) => data.fixtures.locations.find((item) => item.locationId === locationId)?.name;
   const location = locationFor(event.locationId) ?? "an unconfirmed location";
   if (event.eventType === "load_assigned") return `${subject} marked full at ${location}.`;
-  if (event.eventType === "batch_in") return `${subject} received at ${location}.`;
+  if (event.eventType === "batch_in") {
+    const source = locationFor(payloadLocationId(event, "sourceLocationId"));
+    return `${subject} arrived at ${location}${source ? ` from ${source}` : ""}.`;
+  }
   if (event.eventType === "emptied") return `${subject} marked empty at ${location}.`;
   if (event.eventType === "batch_out") {
-    const origin = locationFor(payloadLocationId(event, "sourceLocationId"));
+    const origin = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
     const destination = locationFor(payloadLocationId(event, "destinationLocationId"));
-    if (origin && destination) return `${subject} sent from ${origin} to ${destination}.`;
-    if (destination) return `${subject} sent in transit toward ${destination}.`;
-    return `${subject} sent in transit from ${origin ?? "its last confirmed location"}.`;
+    if (origin && destination) return `${subject} left ${origin} and is in transit to ${destination}.`;
+    if (destination) return `${subject} is in transit to ${destination}.`;
+    return `${subject} left ${origin ?? "its last confirmed location"}; destination not recorded.`;
   }
   return `${subject} observed at ${location}.`;
 }
@@ -2597,7 +2607,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
          <label>Location<select value={draft.locationId} onChange={(event) => updateDraft("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}{location.type === "in_transit" ? " · virtual transit" : ""}</option>)}</select></label>
         <label>Scanner<select value={draft.deviceId} onChange={(event) => updateDraft("deviceId", event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option value={device.deviceId} key={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label>
         <label>Admin / requester<select value={draft.actor} onChange={(event) => updateDraft("actor", event.target.value)}><option value="">All users</option>{actorOptions.map((actor) => <option value={actor} key={actor}>{actor}</option>)}</select></label>
-        <label>Observation type<select value={draft.eventType} onChange={(event) => updateDraft("eventType", event.target.value as ReportsFilterDraft["eventType"])}><option value="">All observations</option><option value="load_assigned">Marked full / load assigned</option><option value="batch_out">Sent in transit</option><option value="batch_in">Received</option><option value="emptied">Marked empty</option></select></label>
+        <label>Observation type<select value={draft.eventType} onChange={(event) => updateDraft("eventType", event.target.value as ReportsFilterDraft["eventType"])}><option value="">All observations</option><option value="load_assigned">Marked full</option><option value="batch_out">Departed / in transit</option><option value="batch_in">Arrived</option><option value="emptied">Marked empty</option></select></label>
         <label>Data health<select value={draft.health} onChange={(event) => updateDraft("health", event.target.value as ReportsFilterDraft["health"])}><option value="">All projection health</option><option value="clean">Clean projection</option><option value="warning">Warning</option><option value="needs_review">Needs review</option></select></label>
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateDraft("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateDraft("to", event.target.value)} /></label>
