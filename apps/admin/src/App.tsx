@@ -15,6 +15,7 @@ import {
   Download,
   ExternalLink,
   FileClock,
+  FilePenLine,
   HandHeart,
   LayoutDashboard,
   MapPin,
@@ -38,6 +39,8 @@ import {
   API_URL,
   ApiRequestError,
   changeOwnPassword,
+  correctionRequestAction,
+  createCorrectionRequest,
   createAdminUser,
   listAdminUsers,
   loadOperationsData,
@@ -50,6 +53,8 @@ import {
   type AdminSession,
   type AuditEntry,
   type Container,
+  type CorrectionAction,
+  type CorrectionRequest,
   type Device,
   type DeviceAssignment,
   type Fixtures,
@@ -68,6 +73,7 @@ type Page =
   | "loads"
   | "locations"
   | "exceptions"
+  | "corrections"
   | "activity"
   | "devices"
   | "reports"
@@ -77,6 +83,7 @@ interface OperationsData {
   fixtures: Fixtures;
   events: StoredEvent[];
   reviewCases: ReviewCase[];
+  correctionRequests: CorrectionRequest[];
   auditEntries: AuditEntry[];
   warnings: OperationsWarning[];
   projections: Record<string, Projection | null>;
@@ -116,6 +123,11 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
     title: "Needs review",
     description: "Contradictory or unusual observations remain visible until resolved."
   },
+  corrections: {
+    eyebrow: "Controlled changes",
+    title: "Corrections",
+    description: "Request and approve official-state changes without erasing original scans."
+  },
   activity: {
     eyebrow: "Append-only ledger",
     title: "Activity",
@@ -144,6 +156,7 @@ const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
   { page: "loads", label: "Load codes", icon: PackageCheck },
   { page: "locations", label: "Locations", icon: MapPin },
   { page: "exceptions", label: "Needs review", icon: AlertTriangle },
+  { page: "corrections", label: "Corrections", icon: FilePenLine },
   { page: "activity", label: "Activity", icon: FileClock },
   { page: "devices", label: "Devices", icon: Smartphone },
   { page: "reports", label: "Reports & data", icon: BarChart3 }
@@ -352,6 +365,12 @@ export function App() {
   const reviewCount = data
     ? Object.values(data.projections).filter((projection) => projection?.health === "needs_review").length
     : 0;
+  const correctionCount = data
+    ? data.correctionRequests.filter((item) => item.status === "pending").length
+    : 0;
+  const isCloudEnvironment = !(
+    API_URL.includes("127.0.0.1") || API_URL.includes("localhost")
+  );
   const connectionState = loading
     ? "checking"
     : error
@@ -390,11 +409,11 @@ export function App() {
           <span>Current organization</span>
           <button onClick={() => setDetail({
             eyebrow: "Environment",
-            title: "Goodwill Local simulation",
-            body: <><p className="detail-lead">This organization is the isolated PostgreSQL pilot tenant. Future production environments will appear here after Entra authentication and tenant provisioning are configured.</p><DetailFacts items={[["Tenant", data?.fixtures.tenant.name ?? "Goodwill Local"], ["Environment", "Local development"], ["Database", "PostgreSQL 16"], ["Authentication", "Development headers"]]}/></>
+            title: "Goodwill pilot environment",
+            body: <><p className="detail-lead">This organization is the isolated PostgreSQL pilot tenant. It contains generated test data only and remains separate from the stable baseline.</p><DetailFacts items={[["Tenant", data?.fixtures.tenant.name ?? "Goodwill Pilot"], ["Environment", isCloudEnvironment ? "Azure testing" : "Local development"], ["Database", isCloudEnvironment ? "Azure Database for PostgreSQL" : "Local PostgreSQL"], ["Authentication", "Server-verified pilot administrator session"]]}/></>
           })}>
             <span className="site-dot">M</span>
-            <span><strong>Goodwill Local</strong><small>Pilot environment</small></span>
+            <span><strong>Goodwill Pilot</strong><small>{isCloudEnvironment ? "Azure test environment" : "Local environment"}</small></span>
             <ChevronRight size={16} />
           </button>
         </div>
@@ -409,6 +428,7 @@ export function App() {
               <item.icon size={19} strokeWidth={1.9} />
               <span>{item.label}</span>
               {item.page === "exceptions" && reviewCount > 0 && <b>{reviewCount}</b>}
+              {item.page === "corrections" && correctionCount > 0 && <b>{correctionCount}</b>}
             </button>
           ))}
         </nav>
@@ -416,9 +436,19 @@ export function App() {
           <button onClick={() => setPage("settings")} className={page === "settings" ? "active" : ""}>
             <Settings size={19} /><span>Settings</span>
           </button>
-          <a href="http://127.0.0.1:8082" target="_blank" rel="noreferrer">
-            <MonitorSmartphone size={19} /><span>Open mobile preview</span><ExternalLink size={14} />
-          </a>
+          {isCloudEnvironment ? (
+            <button onClick={() => setDetail({
+              eyebrow: "Field testing",
+              title: "Open the Android scanner",
+              body: <><p className="detail-lead">The React Native scanner runs in the Android emulator or on a provisioned handheld. It connects directly to the Azure testing API; the admin website does not embed the scanner UI.</p><DetailFacts items={[["Launcher", "start-cloud-mobile.cmd"], ["API", "Azure test environment"], ["Device identity", "Scanner ID 00001"], ["Admin verification", "Devices page"]]}/></>
+            })}>
+              <MonitorSmartphone size={19} /><span>Mobile test guide</span><ChevronRight size={14} />
+            </button>
+          ) : (
+            <a href="http://127.0.0.1:8082" target="_blank" rel="noreferrer">
+              <MonitorSmartphone size={19} /><span>Open mobile preview</span><ExternalLink size={14} />
+            </a>
+          )}
           <button className="user-card" onClick={() => session ? setDetail({
             eyebrow: "Signed-in profile", title: session.principal.displayName,
             body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically after twelve hours. Signing out revokes this browser session on the server.</p><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", "Goodwill Local pilot tenant"], ["Session expires", new Date(session.expiresAt).toLocaleString()]]}/><button className="secondary" onClick={() => void signOut()}>Sign out</button></>
@@ -445,7 +475,7 @@ export function App() {
             <button className="icon-button" aria-label="Help" onClick={() => setDetail({
               eyebrow: "StackTrack help",
               title: "Using the local operations console",
-              body: <><p className="detail-lead">Search for a container or load code, use the left navigation for operational views, and open any record for its immutable evidence history.</p><div className="help-steps"><span><b>1</b> Scan in the mobile app</span><span><b>2</b> Refresh the console</span><span><b>3</b> Review state and evidence</span><span><b>4</b> Export validated records</span></div><div className="detail-callout"><ShieldCheck size={20}/><span>Corrections never delete the original scan. Production approval actions remain disabled until identity and authority rules are confirmed.</span></div></>
+              body: <><p className="detail-lead">Search for a container or load code, use the left navigation for operational views, and open any record for its immutable evidence history.</p><div className="help-steps"><span><b>1</b> Scan in the mobile app</span><span><b>2</b> Refresh the console</span><span><b>3</b> Review state and evidence</span><span><b>4</b> Request a governed correction when evidence is wrong</span></div><div className="detail-callout"><ShieldCheck size={20}/><span>Approved corrections never delete the original scan. Material changes require a second Organization Owner, and a newer physical scan automatically becomes authoritative.</span></div></>
             })}><CircleHelp size={18} /></button>
           </div>
         </header>
@@ -464,7 +494,7 @@ export function App() {
                   ref={searchRef}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder={page === "devices" ? "Search scanner ID or location" : "Search label or code"}
+                  placeholder={page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : "Search label or code"}
                   aria-label="Search"
                 />
                 <kbd>⌘ K</kbd>
@@ -545,6 +575,7 @@ function PageContent({
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
   if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
+  if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
@@ -557,6 +588,9 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
   const transitId = data.fixtures.locations.find((item) => item.type === "in_transit")?.locationId;
   const inTransit = projections.filter((item) => item.locationId === transitId).length;
   const review = projections.filter((item) => item.health === "needs_review").length;
+  const pendingCorrections = data.correctionRequests.filter(
+    (item) => item.status === "pending" || item.status === "reopened"
+  );
   const recent = data.events.slice(0, 5);
   const locName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown";
   const container = (id: string) => data.fixtures.containers.find((item) => item.containerId === id);
@@ -607,7 +641,7 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
         <Metric icon={<ContainerIcon />} label="Tracked containers" value={data.fixtures.containers.length} detail="Across 4 location types" tone="blue" />
         <Metric icon={<PackageCheck />} label="Currently loaded" value={loaded} detail={`${Math.round((loaded / data.fixtures.containers.length) * 100)}% of tracked assets`} tone="cyan" />
         <Metric icon={<Truck />} label="In transit" value={inTransit} detail="Latest valid observation" tone="navy" />
-        <Metric icon={<AlertTriangle />} label="Needs review" value={review} detail={review ? "Manager attention needed" : "No open exceptions"} tone={review ? "orange" : "green"} />
+        <Metric icon={<AlertTriangle />} label="Needs attention" value={review + pendingCorrections.length} detail={review + pendingCorrections.length ? "Review or approval required" : "No open exceptions"} tone={review + pendingCorrections.length ? "orange" : "green"} />
       </div>
 
       <div className="dashboard-grid">
@@ -659,8 +693,9 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
 
         <section className="panel review-panel">
           <PanelTitle title="Attention center" subtitle="Items that could change the official state" action="Open queue" onClick={() => setPage("exceptions")} />
-          {review === 0 ? <EmptyState>All container histories are internally consistent.</EmptyState> : (
-            projections.filter((item) => item.health === "needs_review").map((item) => {
+          {review === 0 && pendingCorrections.length === 0 ? <EmptyState>All container histories are internally consistent.</EmptyState> : (
+            <>
+            {projections.filter((item) => item.health === "needs_review").map((item) => {
               const c = container(item.containerId);
               return (
                 <button className="review-item" key={item.containerId} onClick={() => setPage("exceptions")}>
@@ -670,7 +705,16 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
                   <ChevronRight size={17} />
                 </button>
               );
-            })
+            })}
+            {pendingCorrections.slice(0, 4).map((item) => (
+              <button className="review-item" key={item.correctionRequestId} onClick={() => setPage("corrections")}>
+                <span className="review-item__icon"><FilePenLine size={19} /></span>
+                <span><strong>{item.containerLabel}</strong><small>{item.impactLevel} correction requested by {item.requestedByDisplayName}</small></span>
+                <Pill tone="warn">Approval</Pill>
+                <ChevronRight size={17} />
+              </button>
+            ))}
+            </>
           )}
         </section>
       </div>
@@ -773,8 +817,9 @@ function ContainersPage({ data, query, openDetail }: { data: OperationsData; que
         ["Current state", projection?.loadState ?? "Not observed"],
         ["Last known location", locationName(projection?.locationId ?? null)],
         ["History health", projection?.health ?? "No history"],
+        ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"],
         ["Container UUID", container.containerId]
-      ]}/><h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
+      ]}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
     });
   };
   const exportRows = () => downloadCsv("stacktrack-containers.csv", [
@@ -805,7 +850,7 @@ function ContainersPage({ data, query, openDetail }: { data: OperationsData; que
               <td><Pill tone={projection?.loadState === "loaded" ? "blue" : "muted"}>{projection?.loadState ?? "Not observed"}</Pill></td>
               <td>{locationName(projection?.locationId ?? null)}</td>
               <td>{relativeTime(projection?.lastObservedAt)}</td>
-              <td>{projection?.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : projection ? <Pill tone="good">Clean</Pill> : <Pill tone="muted">No history</Pill>}</td>
+              <td>{projection?.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : projection?.administrativeCorrection ? <Pill tone="blue">Corrected</Pill> : projection ? <Pill tone="good">Clean</Pill> : <Pill tone="muted">No history</Pill>}</td>
             </tr>;
           })}</tbody>
         </table>
@@ -983,6 +1028,310 @@ function LegacyExceptionsPage({ data, openDetail }: { data: OperationsData; open
   </section>;
 }
 
+function correctionStatusLabel(status: CorrectionRequest["status"]) {
+  return {
+    pending: "Pending approval",
+    approved: "Approved",
+    rejected: "Rejected",
+    reopened: "Pending approval"
+  }[status];
+}
+
+function CorrectionRequestForm({
+  data,
+  session,
+  refresh
+}: {
+  data: OperationsData;
+  session: AdminSession;
+  refresh: () => Promise<void>;
+}) {
+  const observedContainers = data.fixtures.containers
+    .filter((item) => data.projections[item.containerId])
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const [containerId, setContainerId] = useState(observedContainers[0]?.containerId ?? "");
+  const [locationId, setLocationId] = useState("");
+  const [loadState, setLoadState] = useState<"" | Projection["loadState"]>("");
+  const [impactLevel, setImpactLevel] = useState<"routine" | "material">("material");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const projection = data.projections[containerId];
+  const currentLocation = data.fixtures.locations.find(
+    (item) => item.locationId === projection?.locationId
+  );
+  const canRequest =
+    session.principal.role === "organization_owner" ||
+    session.principal.role === "operations_administrator";
+  const changed =
+    (locationId !== "" && locationId !== projection?.locationId) ||
+    (loadState !== "" && loadState !== projection?.loadState);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await createCorrectionRequest(session, {
+        containerId,
+        impactLevel,
+        reason,
+        proposedCorrection: {
+          ...(locationId ? { locationId } : {}),
+          ...(loadState ? { loadState } : {})
+        }
+      });
+      setLocationId("");
+      setLoadState("");
+      setReason("");
+      setImpactLevel("material");
+      await refresh();
+      setNotice("Correction request recorded. The original scan evidence is unchanged.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Correction request could not be recorded.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="correction-request-panel">
+      <div className="correction-request-panel__intro">
+        <span><FilePenLine size={22} /></span>
+        <div>
+          <h2>Request an official-state correction</h2>
+          <p>Choose only the fields that are wrong. StackTrack keeps every original scan and records the requester, approver, reason, and before/after evidence.</p>
+        </div>
+      </div>
+      {!canRequest ? (
+        <div className="device-read-only">Read-only access: you can inspect correction history but cannot request a change.</div>
+      ) : (
+        <form className="correction-form" onSubmit={(event) => void submit(event)}>
+          <label>
+            Container
+            <select value={containerId} onChange={(event) => { setContainerId(event.target.value); setLocationId(""); setLoadState(""); }}>
+              {observedContainers.map((container) => (
+                <option value={container.containerId} key={container.containerId}>{container.label} · {container.type}</option>
+              ))}
+            </select>
+          </label>
+          <div className="correction-current">
+            <span>Current official view</span>
+            <strong>{projection?.loadState ?? "Unknown"} · {currentLocation?.name ?? "No confirmed location"}</strong>
+            {projection?.administrativeCorrection && <small>Includes approved correction {projection.administrativeCorrection.correctionRequestId.slice(0, 8)}</small>}
+          </div>
+          <div className="correction-form__grid">
+            <label>
+              Correct location
+              <select value={locationId} onChange={(event) => setLocationId(event.target.value)}>
+                <option value="">No location change</option>
+                {data.fixtures.locations.filter((item) => item.type !== "in_transit").map((location) => (
+                  <option value={location.locationId} key={location.locationId}>{location.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Correct state
+              <select value={loadState} onChange={(event) => setLoadState(event.target.value as typeof loadState)}>
+                <option value="">No state change</option>
+                <option value="loaded">Loaded</option>
+                <option value="empty">Empty</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+            <label>
+              Impact
+              <select value={impactLevel} onChange={(event) => setImpactLevel(event.target.value as typeof impactLevel)}>
+                <option value="material">Material · second owner approval</option>
+                <option value="routine">Routine · owner approval</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            Evidence and reason
+            <textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Describe what was verified, why the official state is wrong, and who confirmed the physical container." />
+          </label>
+          {impactLevel === "material" && (
+            <div className="correction-policy-note"><ShieldCheck size={18} /><span>The requester cannot approve their own material correction. A different Organization Owner must verify it.</span></div>
+          )}
+          {error && <div className="sign-in-error">{error}</div>}
+          {notice && <div className="device-notice">{notice}</div>}
+          <button className="primary" disabled={busy || !changed || reason.trim().length < 8}>
+            {busy ? "Recording…" : "Submit correction request"}
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function CorrectionCard({
+  item,
+  data,
+  session,
+  onAction
+}: {
+  item: CorrectionRequest;
+  data: OperationsData;
+  session: AdminSession;
+  onAction: (action: CorrectionAction, reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const location = item.proposedCorrection.locationId
+    ? data.fixtures.locations.find((entry) => entry.locationId === item.proposedCorrection.locationId)
+    : null;
+  const projection = data.projections[item.containerId];
+  const isPending = item.status === "pending" || item.status === "reopened";
+  const isEffective =
+    item.status === "approved" &&
+    projection?.administrativeCorrection?.correctionRequestId === item.correctionRequestId;
+  const canDecide = session.principal.role === "organization_owner";
+  const selfApprovalBlocked =
+    item.impactLevel === "material" &&
+    item.requestedByUserId === session.principal.userId;
+
+  const act = async (action: CorrectionAction) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onAction(action, reason);
+      setReason("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Correction decision could not be recorded.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <article className={`correction-card correction-card--${item.status}`}>
+      <div className="correction-card__head">
+        <div>
+          <Pill tone={isPending ? "warn" : item.status === "approved" ? "good" : "muted"}>{correctionStatusLabel(item.status)}</Pill>
+          {isEffective && <Pill tone="blue">Applied to official view</Pill>}
+          {item.status === "approved" && !isEffective && <Pill tone="muted">Superseded by newer scan</Pill>}
+        </div>
+        <time>{relativeTime(item.latestActionAt ?? item.requestedAt)}</time>
+      </div>
+      <div className="correction-card__body">
+        <div>
+          <span className="asset-label">{item.containerLabel}</span>
+          <h2>{item.impactLevel === "material" ? "Material" : "Routine"} correction request</h2>
+          <p>{item.reason}</p>
+        </div>
+        <div className="correction-targets">
+          {location && <span><MapPin size={15} /><small>Correct location</small><strong>{location.name}</strong></span>}
+          {item.proposedCorrection.loadState && <span><ContainerIcon size={15} /><small>Correct state</small><strong>{item.proposedCorrection.loadState}</strong></span>}
+        </div>
+        <dl>
+          <div><dt>Requested by</dt><dd>{item.requestedByDisplayName}</dd></div>
+          <div><dt>Requested</dt><dd>{new Date(item.requestedAt).toLocaleString()}</dd></div>
+          <div><dt>Recorded decisions</dt><dd>{item.actionCount}</dd></div>
+          {item.latestActorDisplayName && <div><dt>Latest decision by</dt><dd>{item.latestActorDisplayName}</dd></div>}
+        </dl>
+        {item.latestActionReason && <div className="review-last-action"><strong>Latest decision reason:</strong> {item.latestActionReason}</div>}
+        {canDecide && (
+          <label className="review-reason">
+            <span>{isPending ? "Decision reason" : "Reopen reason"}</span>
+            <textarea value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder={isPending ? "State what evidence you verified before deciding." : "Explain why this correction needs another review."} />
+          </label>
+        )}
+        {selfApprovalBlocked && isPending && <div className="correction-policy-note"><ShieldCheck size={18}/><span>A different Organization Owner must approve this material correction. You may still reject it.</span></div>}
+        {error && <div className="sign-in-error">{error}</div>}
+      </div>
+      {canDecide && (
+        <div className="correction-card__actions">
+          {isPending ? (
+            <>
+              <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("rejected")}>{busy ? "Recording…" : "Reject"}</button>
+              <button className="primary" disabled={busy || reason.trim().length < 8 || selfApprovalBlocked} onClick={() => void act("approved")}>{busy ? "Recording…" : "Approve correction"}</button>
+            </>
+          ) : (
+            <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("reopened")}>{busy ? "Recording…" : "Reopen for review"}</button>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function CorrectionsPage({
+  data,
+  query,
+  session,
+  refresh
+}: {
+  data: OperationsData;
+  query: string;
+  session: AdminSession;
+  refresh: () => Promise<void>;
+}) {
+  const [filter, setFilter] = useState<"active" | "approved" | "rejected" | "all">("active");
+  const normalizedQuery = query.trim().toLowerCase();
+  const items = data.correctionRequests
+    .filter((item) =>
+      !normalizedQuery ||
+      item.containerLabel.toLowerCase().includes(normalizedQuery) ||
+      item.requestedByDisplayName.toLowerCase().includes(normalizedQuery)
+    )
+    .filter((item) =>
+      filter === "all"
+        ? true
+        : filter === "active"
+          ? item.status === "pending" || item.status === "reopened"
+          : item.status === filter
+    );
+
+  return (
+    <>
+      <CorrectionRequestForm data={data} session={session} refresh={refresh} />
+      <section className="panel corrections-history">
+        <div className="toolbar">
+          <div className="filter-tabs">
+            {(["active", "approved", "rejected", "all"] as const).map((value) => (
+              <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>
+                {value[0]!.toUpperCase() + value.slice(1)}
+              </button>
+            ))}
+          </div>
+          <span className="date-chip"><FilePenLine size={15}/> {data.correctionRequests.length} total requests</span>
+        </div>
+        {items.length ? (
+          <div className="correction-list">
+            {items.map((item) => (
+              <CorrectionCard
+                key={item.correctionRequestId}
+                item={item}
+                data={data}
+                session={session}
+                onAction={async (action, reason) => {
+                  await correctionRequestAction(
+                    session,
+                    item.correctionRequestId,
+                    action,
+                    reason
+                  );
+                  await refresh();
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyState>
+            {data.correctionRequests.length
+              ? "No correction requests match this filter."
+              : "No governed corrections have been requested. Original scan evidence remains authoritative."}
+          </EmptyState>
+        )}
+      </section>
+    </>
+  );
+}
+
 function ActivityPage({ data, query, openDetail }: { data: OperationsData; query: string; openDetail: OpenDetail }) {
   const [eventFilter, setEventFilter] = useState<"all" | StoredEvent["eventType"]>("all");
   const c = (id: string) => data.fixtures.containers.find((item) => item.containerId === id);
@@ -1084,6 +1433,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
     { id: "movement", icon: Activity, title: "Container movement", text: "Accepted observations by location and day.", tag: "Ready" },
     { id: "loads", icon: PackageCheck, title: "Daily load codes", text: "Validated codes for production entry.", tag: "Ready" },
     { id: "exceptions", icon: AlertTriangle, title: "Exception history", text: "Corrections, approvals, and preserved evidence.", tag: "Ready" },
+    { id: "corrections", icon: FilePenLine, title: "Correction register", text: "Requests, decisions, impact, and official-state changes.", tag: "Ready" },
     { id: "lake", icon: Cloud, title: "Microsoft data lake export", text: "Scheduled analytics feed for Fabric or Azure.", tag: "Planned" }
   ];
   const openReport = (report: typeof reports[number]) => {
@@ -1115,6 +1465,27 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       ])]);
       return;
     }
+    if (report.id === "corrections") {
+      downloadCsv("stacktrack-correction-register.csv", [[
+        "Request ID", "Container", "Impact", "Status", "Requested by", "Requested at",
+        "Correct location", "Correct state", "Request reason", "Latest decision by",
+        "Latest decision at", "Latest decision reason"
+      ], ...data.correctionRequests.map((item) => [
+        item.correctionRequestId,
+        item.containerLabel,
+        item.impactLevel,
+        item.status,
+        item.requestedByDisplayName,
+        item.requestedAt,
+        data.fixtures.locations.find((location) => location.locationId === item.proposedCorrection.locationId)?.name ?? "",
+        item.proposedCorrection.loadState ?? "",
+        item.reason,
+        item.latestActorDisplayName ?? "",
+        item.latestActionAt ?? "",
+        item.latestActionReason ?? ""
+      ])]);
+      return;
+    }
     openDetail({
       eyebrow: "Planned integration",
       title: "Microsoft analytics export",
@@ -1128,16 +1499,16 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   };
   return <>
     <div className="report-grid">{reports.map((report) => <article className="report-card" key={report.title}><span><report.icon /></span><Pill tone={report.tag === "Ready" ? "good" : "muted"}>{report.tag}</Pill><h2>{report.title}</h2><p>{report.text}</p><button onClick={() => openReport(report)}>{report.tag === "Ready" ? "Download CSV" : "View plan"} <ArrowRight size={16} /></button></article>)}</div>
-    <section className="panel data-health"><PanelTitle title="Data health" subtitle="Quality signals across the local pilot dataset" /><div className="health-bar"><span style={{ width: `${Math.max(15, 100 - data.events.filter((item) => item.accuracyFlags.length).length * 5)}%` }} /></div><div className="health-stats"><span><b>{data.events.length}</b> ledger events</span><span><b>{data.events.filter((item) => item.accuracyFlags.length === 0).length}</b> timing verified</span><span><b>{Object.values(data.projections).filter((item) => item?.health === "needs_review").length}</b> open exceptions</span></div></section>
+    <section className="panel data-health"><PanelTitle title="Data health" subtitle="Quality signals across the testing dataset" /><div className="health-bar"><span style={{ width: `${Math.max(5, Math.round((data.events.filter((item) => item.accuracyFlags.length === 0).length / Math.max(1, data.events.length)) * 100))}%` }} /></div><div className="health-stats"><span><b>{data.events.length}</b> ledger events</span><span><b>{data.events.filter((item) => item.accuracyFlags.length === 0).length}</b> timing verified</span><span><b>{Object.values(data.projections).filter((item) => item?.health === "needs_review").length}</b> open exceptions</span><span><b>{data.correctionRequests.filter((item) => item.status === "pending").length}</b> pending corrections</span></div></section>
   </>;
 }
 
 function SettingsPage({ data, openDetail, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
   const settings = [
-    { icon: UserRound, title: "Roles & approvals", text: "Store managers handle routine corrections; corporate data stewards approve material state changes.", details: [["Store manager", "Request routine corrections"], ["Corporate steward", "Approve material state changes"], ["Status", "Policy draft — needs Goodwill approval"]] as [string, string][] },
-    { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners remain locked to an assigned operating location.", details: [["Identity", "One installation UUID per physical device"], ["Assignment", "Exactly one operating location"], ["Status", "Local shared-device simulation active"]] as [string, string][] },
+    { icon: UserRound, title: "Roles & approvals", text: "Operations Administrators can request corrections; Organization Owners approve them with dual control for material changes.", details: [["Operations Administrator", "Request official-state corrections"], ["Organization Owner", "Approve or reject corrections"], ["Material change", "A different owner must approve"]] as [string, string][] },
+    { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners receive their assigned operating location and availability from the administration service.", details: [["Identity", "One installation UUID per physical device"], ["Assignment", "Exactly one operating location"], ["Pilot", "Fixed scanner identity; remote controls active"]] as [string, string][] },
     { icon: Wifi, title: "Offline behavior", text: "Scans queue locally, preserve device order, and synchronize when connectivity returns.", details: [["Local queue", "AsyncStorage on the scanner"], ["Ordering", "Device installation + monotonic sequence"], ["Conflict handling", "Accept evidence and flag review"]] as [string, string][] },
-    { icon: Cloud, title: "Integrations", text: "Production system, Entra ID, and analytics connections are placeholders in this local build.", details: [["Production system API", "Pending access"], ["Microsoft Entra ID", "Pending tenant details"], ["Analytics", "Fabric / Data Lake decision pending"]] as [string, string][] }
+    { icon: Cloud, title: "Integrations", text: "Production-system, Entra ID, and analytics connections remain outside the pilot boundary.", details: [["Production system API", "Pending access"], ["Microsoft Entra ID", "Pilot password bridge active"], ["Analytics", "Fabric / Data Lake decision pending"]] as [string, string][] }
   ];
   return <><section className="settings-list"><article className="access-settings"><span><ShieldCheck /></span><div><h2>Administrator access</h2><p>{session ? `${session.principal.displayName} is signed in as ${roleLabel(session.principal.role)}. Organization Owners can add daily administrators from this console.` : "Operational changes are protected by a server-side pilot account. Sign in to manage scanners and administrator accounts."}</p></div><button className="secondary" onClick={onRequestSignIn}>{session ? "Manage access" : "Sign in"}</button></article>{settings.map((setting) => <article key={setting.title}><span><setting.icon /></span><div><h2>{setting.title}</h2><p>{setting.text}</p></div><button aria-label={`Open ${setting.title}`} onClick={() => openDetail({
     eyebrow: "Configuration",

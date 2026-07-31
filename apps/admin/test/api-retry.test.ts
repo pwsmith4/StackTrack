@@ -44,6 +44,7 @@ describe("admin API reads", () => {
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -54,11 +55,12 @@ describe("admin API reads", () => {
       fixtures: { tenant: { name: "Goodwill Local" } },
       events: [],
       reviewCases: [],
+      correctionRequests: [],
       auditEntries: [],
       warnings: [],
       projections: {}
     });
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
   it("keeps core operations available and identifies an unavailable supporting feed", async () => {
@@ -71,6 +73,7 @@ describe("admin API reads", () => {
         containers: [],
         goodsTypes: []
       }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }))

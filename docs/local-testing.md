@@ -99,13 +99,16 @@ The default services bind only to this computer. Before field-device testing, th
 
 The event contracts, ordering evidence, conflict rules, offline queue, and projection logic are the production-oriented foundation. Connecting real services later replaces local adapters rather than rewriting the tested rules.
 
-## Not implemented yet
+## Remaining pilot boundaries
 
 - Camera-based QR recognition and physical Unitech hardware integration
-- Entra login, employee session identity, and remote device management
-- Applying a correction or conflict-resolution decision in the UI
-- Production/corporate approval routing and notifications
+- Entra login and employee session identity (the isolated pilot uses a
+  server-issued password session)
+- Push notifications and escalation reminders for pending approvals
 - Real production-system and Microsoft analytics integrations
-- PostgreSQL as the runtime database
 - Printing labels or load codes
-- Automated deployment and multi-store rollout tooling
+- Enterprise mobile provisioning and multi-store rollout tooling
+
+PostgreSQL is the runtime source of truth for the local and Azure test APIs.
+Remote scanner assignment/availability, review decisions, administrator access,
+and governed correction approval are implemented in the pilot.

@@ -22,6 +22,46 @@ export interface SyncSummary {
   readonly pending: number;
 }
 
+export interface EventResponseBody {
+  readonly accepted?: boolean;
+  readonly status?: string;
+  readonly message?: string;
+  readonly error?: string;
+}
+
+export type EventResponseOutcome =
+  | { readonly kind: "synced"; readonly message: string }
+  | { readonly kind: "review"; readonly message: string }
+  | { readonly kind: "retry"; readonly message: string };
+
+export function classifyEventResponse(
+  httpStatus: number,
+  body: EventResponseBody
+): EventResponseOutcome {
+  const detail = body.message ?? body.error;
+  if ([408, 425, 429].includes(httpStatus) || httpStatus >= 500) {
+    return {
+      kind: "retry",
+      message: detail ?? "The data service is temporarily unavailable."
+    };
+  }
+  if (body.accepted) {
+    return body.status === "accepted_for_review"
+      ? {
+          kind: "review",
+          message: detail ?? "Saved and flagged for administrative review."
+        }
+      : {
+          kind: "synced",
+          message: detail ?? "Synced to the operational ledger."
+        };
+  }
+  return {
+    kind: "review",
+    message: `Not accepted by the service: ${detail ?? "Administrator review is required."}`
+  };
+}
+
 export async function syncPendingEvents(
   queue: OfflineEventQueue,
   transport: SyncTransport
@@ -58,4 +98,3 @@ export async function syncPendingEvents(
 
   return { synced, needsReview, pending };
 }
-

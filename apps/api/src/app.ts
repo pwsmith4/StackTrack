@@ -12,6 +12,11 @@ import { localFixtures, type LocalFixtures } from "./local-fixtures.js";
 import type { DeviceAdministration, DeviceControlUpdate, DeviceTelemetryUpdate } from "./device-administration.js";
 import type { AdminPrincipal, AdminUserUpdate, NewAdminUser, PostgresAdminAccess } from "./admin-access.js";
 import type { PostgresReviewAdministration, ReviewAction } from "./review-administration.js";
+import type {
+  CorrectionAction,
+  CorrectionAdministration,
+  NewCorrectionRequest
+} from "./correction-administration.js";
 
 export interface AppDependencies {
   readonly ledger?: EventLedger;
@@ -23,6 +28,7 @@ export interface AppDependencies {
   readonly deviceAdministration?: DeviceAdministration;
   readonly adminAccess?: PostgresAdminAccess;
   readonly reviewAdministration?: PostgresReviewAdministration;
+  readonly correctionAdministration?: CorrectionAdministration;
 }
 
 interface ResettableLedger extends EventLedger {
@@ -229,6 +235,93 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     });
 
+    app.get("/api/v1/local/correction-requests", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      if (!dependencies.correctionAdministration) {
+        return reply.code(501).send({ error: "CorrectionAdministrationUnavailable" });
+      }
+      return reply.send({
+        items: await dependencies.correctionAdministration.listRequests(principal.tenantId)
+      });
+    });
+
+    app.post<{ Body: NewCorrectionRequest }>(
+      "/api/v1/local/correction-requests",
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (!dependencies.correctionAdministration) {
+          return reply.code(501).send({ error: "CorrectionAdministrationUnavailable" });
+        }
+        const input = request.body;
+        if (
+          !input ||
+          typeof input.containerId !== "string" ||
+          !["routine", "material"].includes(input.impactLevel) ||
+          typeof input.reason !== "string" ||
+          !input.proposedCorrection ||
+          typeof input.proposedCorrection !== "object"
+        ) {
+          return reply.code(400).send({ error: "InvalidCorrectionRequest" });
+        }
+        try {
+          return reply.code(201).send({
+            item: await dependencies.correctionAdministration.createRequest(
+              principal.tenantId,
+              principal,
+              input
+            )
+          });
+        } catch (error) {
+          return reply.code(400).send({
+            error: "CorrectionRequestRejected",
+            message:
+              error instanceof Error ? error.message : "Correction request could not be recorded."
+          });
+        }
+      }
+    );
+
+    app.post<{
+      Params: { correctionRequestId: string };
+      Body: { action?: CorrectionAction; reason?: string };
+    }>(
+      "/api/v1/local/correction-requests/:correctionRequestId/actions",
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (!dependencies.correctionAdministration) {
+          return reply.code(501).send({ error: "CorrectionAdministrationUnavailable" });
+        }
+        const body = request.body;
+        if (
+          !body ||
+          !["approved", "rejected", "reopened"].includes(body.action ?? "") ||
+          typeof body.reason !== "string"
+        ) {
+          return reply.code(400).send({ error: "InvalidCorrectionAction" });
+        }
+        try {
+          return reply.send({
+            item: await dependencies.correctionAdministration.takeAction(
+              principal.tenantId,
+              principal,
+              request.params.correctionRequestId,
+              body.action!,
+              body.reason
+            )
+          });
+        } catch (error) {
+          return reply.code(400).send({
+            error: "CorrectionActionRejected",
+            message:
+              error instanceof Error ? error.message : "Correction decision could not be recorded."
+          });
+        }
+      }
+    );
+
     app.options("/*", async (_request, reply) => reply.code(204).send());
   }
 
@@ -305,7 +398,13 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         return reply.code(404).send({ error: "NotFound" });
       }
 
-      return reply.send(state);
+      const corrected = dependencies.correctionAdministration
+        ? (await dependencies.correctionAdministration.applyApprovedCorrections(
+            tenantId,
+            [state]
+          ))[0] ?? state
+        : state;
+      return reply.send(corrected);
     }
   );
 
@@ -316,13 +415,19 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
     if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
     const events = await ledger.eventsForTenant(tenantId);
     const containerIds = [...new Set(events.map((event) => event.containerId))];
-    const items = containerIds
+    let items = containerIds
       .map((containerId) =>
         projectContainer(
           events.filter((event) => event.containerId === containerId)
         )
       )
       .filter((item) => item !== null);
+    if (dependencies.correctionAdministration) {
+      items = await dependencies.correctionAdministration.applyApprovedCorrections(
+        tenantId,
+        items
+      );
+    }
     return reply.send({ count: items.length, items });
   });
 

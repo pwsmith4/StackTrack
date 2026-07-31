@@ -4,6 +4,7 @@ import { PostgresEventLedger } from "./postgres-ledger.js";
 import { PostgresDeviceAdministration } from "./device-administration.js";
 import { PostgresAdminAccess } from "./admin-access.js";
 import { PostgresReviewAdministration } from "./review-administration.js";
+import { PostgresCorrectionAdministration } from "./correction-administration.js";
 
 const { Pool } = pg;
 
@@ -27,7 +28,8 @@ const app = await createApp({
   referenceData: (tenantId) => ledger.referenceData(tenantId),
   deviceAdministration: new PostgresDeviceAdministration(pool),
   adminAccess: new PostgresAdminAccess(pool, tenantId),
-  reviewAdministration: new PostgresReviewAdministration(pool)
+  reviewAdministration: new PostgresReviewAdministration(pool),
+  correctionAdministration: new PostgresCorrectionAdministration(pool)
 });
 app.addHook("onClose", () => pool.end());
 

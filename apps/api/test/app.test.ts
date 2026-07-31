@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { createApp } from "../src/app.js";
 import type { DeviceAdministration } from "../src/device-administration.js";
 import type { AdminPrincipal, PostgresAdminAccess } from "../src/admin-access.js";
+import type { CorrectionAdministration } from "../src/correction-administration.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const deviceId = "22222222-2222-4222-8222-222222222222";
@@ -41,6 +42,14 @@ const supportPrincipal: AdminPrincipal = {
   role: "support",
   mustChangePassword: false,
   supportExpiresAt: "2026-08-01T00:00:00.000Z"
+};
+
+const ownerPrincipal: AdminPrincipal = {
+  ...temporaryPasswordPrincipal,
+  username: "pilot-owner",
+  displayName: "Pilot Owner",
+  role: "organization_owner",
+  mustChangePassword: false
 };
 
 let app: FastifyInstance | undefined;
@@ -232,6 +241,48 @@ describe("StackTrack API foundation", () => {
 
     expect(response.statusCode).toBe(403);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("keeps correction requests authenticated and delegates the verified actor", async () => {
+    const createRequest = vi.fn().mockResolvedValue({
+      correctionRequestId: "99999999-9999-4999-8999-999999999999",
+      containerId,
+      containerLabel: "B1001",
+      status: "pending"
+    });
+    const corrections: CorrectionAdministration = {
+      listRequests: vi.fn().mockResolvedValue([]),
+      createRequest,
+      takeAction: vi.fn(),
+      applyApprovedCorrections: vi.fn(async (_tenant, projections) => [...projections])
+    };
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(ownerPrincipal) } as unknown as PostgresAdminAccess,
+      correctionAdministration: corrections
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/correction-requests",
+      headers: { authorization: `Bearer ${"c".repeat(32)}` },
+      payload: {
+        containerId,
+        impactLevel: "material",
+        reason: "Receiving paperwork confirms the official location.",
+        proposedCorrection: { locationId: "66666666-6666-4666-8666-666666666666" }
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({
+      item: { correctionRequestId: "99999999-9999-4999-8999-999999999999" }
+    });
+    expect(createRequest).toHaveBeenCalledWith(
+      tenantId,
+      ownerPrincipal,
+      expect.objectContaining({ impactLevel: "material" })
+    );
   });
 
   it("rate limits repeated administrator sign-in attempts", async () => {
