@@ -316,6 +316,105 @@ function DetailFacts({ items }: { items: readonly [string, ReactNode][] }) {
   return <dl className="detail-facts">{items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function humanizeDetailKey(key: string) {
+  const aliases: Record<string, string> = {
+    device_label: "Scanner name",
+    label: "Scanner name",
+    assigned_location_id: "Assigned location",
+    assignedLocationId: "Assigned location",
+    is_active: "Availability",
+    isActive: "Availability",
+    required_app_version: "Required app version",
+    requiredAppVersion: "Required app version",
+    assignmentReason: "Move reason",
+    impactLevel: "Correction impact",
+    proposedCorrection: "Proposed correction",
+    revokedOtherSessions: "Other sessions",
+    displayLoadCode: "Load code",
+    goodsType: "Goods category",
+    secondaryValue: "Classification",
+    destinationLocationId: "Destination"
+  };
+  if (aliases[key]) return aliases[key];
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function humanizeDetailValue(key: string, value: unknown, data?: OperationsData): string {
+  if (value === null || value === undefined || value === "") return "Not recorded";
+  if (typeof value === "boolean") {
+    if (key === "is_active" || key === "isActive") return value ? "Enabled" : "Disabled";
+    if (key === "revokedOtherSessions") return value ? "Revoked" : "Kept active";
+    return value ? "Yes" : "No";
+  }
+  if (typeof value === "number" || typeof value === "string") {
+    const text = String(value);
+    if (data && (key === "assigned_location_id" || key === "assignedLocationId" || key === "locationId" || key === "destinationLocationId")) {
+      const location = data.fixtures.locations.find((item) => item.locationId === text);
+      if (location) return location.name;
+    }
+    if (data && (key === "deviceId" || key === "device_id")) {
+      const device = data.fixtures.devices.find((item) => item.deviceId === text);
+      if (device) return `${scannerNumber(text)} · ${device.label}`;
+    }
+    if (data && (key === "containerId" || key === "container_id")) {
+      const container = data.fixtures.containers.find((item) => item.containerId === text);
+      if (container) return container.label;
+    }
+    if (key === "source") return text.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+    if (key === "impactLevel") return text === "material" ? "Material change" : "Routine change";
+    return text;
+  }
+  if (Array.isArray(value)) return value.map((item) => humanizeDetailValue(key, item, data)).join(", ");
+  if (isRecord(value)) {
+    return Object.entries(value)
+      .map(([nestedKey, nestedValue]) => `${humanizeDetailKey(nestedKey)}: ${humanizeDetailValue(nestedKey, nestedValue, data)}`)
+      .join(" · ");
+  }
+  return String(value);
+}
+
+function detailChangeRows(details: Record<string, unknown>, data?: OperationsData): [string, ReactNode][] {
+  const before = isRecord(details.before) ? details.before : {};
+  const after = isRecord(details.after) ? details.after : {};
+  const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+  return keys
+    .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+    .map((key) => [humanizeDetailKey(key), `${humanizeDetailValue(key, before[key], data)} → ${humanizeDetailValue(key, after[key], data)}`]);
+}
+
+function ReadableDetails({ details, data, emptyLabel = "No additional details were recorded." }: { details: Record<string, unknown>; data?: OperationsData; emptyLabel?: string }) {
+  const changes = detailChangeRows(details, data);
+  const fields = Object.entries(details)
+    .filter(([key]) => key !== "before" && key !== "after")
+    .map(([key, value]) => [humanizeDetailKey(key), humanizeDetailValue(key, value, data)] as [string, ReactNode]);
+  if (changes.length === 0 && fields.length === 0) return <p className="detail-empty-note">{emptyLabel}</p>;
+  return <div className="readable-details">
+    {changes.length > 0 && <><span className="readable-details__label">Recorded changes</span><DetailFacts items={changes} /></>}
+    {fields.length > 0 && <><span className="readable-details__label">Additional context</span><DetailFacts items={fields} /></>}
+  </div>;
+}
+
+function humanizeDetailsText(details: Record<string, unknown>, data?: OperationsData) {
+  const changes = detailChangeRows(details, data).map(([label, value]) => `${label}: ${String(value)}`);
+  const fields = Object.entries(details)
+    .filter(([key]) => key !== "before" && key !== "after")
+    .map(([key, value]) => `${humanizeDetailKey(key)}: ${humanizeDetailValue(key, value, data)}`);
+  return [...changes, ...fields].join(" · ");
+}
+
+function eventPayloadFacts(event: StoredEvent, data: OperationsData): [string, ReactNode][] {
+  return Object.entries(event.payload)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([key, value]) => [humanizeDetailKey(key), humanizeDetailValue(key, value, data)] as [string, ReactNode]);
+}
+
 function EventEvidence({ events, data }: { events: StoredEvent[]; data: OperationsData }) {
   const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown";
   return <div className="detail-events">{events.length ? events.map((event) => <article key={event.eventId}>
@@ -323,7 +422,7 @@ function EventEvidence({ events, data }: { events: StoredEvent[]; data: Operatio
     <strong>{locationName(event.locationId)}</strong>
     <span className="detail-event__id">{event.eventId} <CopyValueButton value={event.eventId} label="Copy" /></span>
     <small>{event.accuracyFlags.length ? event.accuracyFlags.join(" · ") : "Timing and device order verified"}</small>
-    <details className="detail-event__more"><summary>View evidence details</summary><DetailFacts items={[["Device", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Device sequence", String(event.deviceSequence)], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Effective", new Date(event.effectiveAt).toLocaleString()]]}/><pre>{JSON.stringify(event.payload, null, 2)}</pre></details>
+    <details className="detail-event__more"><summary>View scan details</summary><DetailFacts items={[["Device", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Device sequence", String(event.deviceSequence)], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Effective", new Date(event.effectiveAt).toLocaleString()]]}/>{eventPayloadFacts(event, data).length > 0 ? <><span className="readable-details__label">Scan information</span><DetailFacts items={eventPayloadFacts(event, data)} /></> : <p className="detail-empty-note">No additional scan information was recorded.</p>}</details>
   </article>) : <EmptyState>No observations have been recorded for this item.</EmptyState>}</div>;
 }
 
@@ -1775,7 +1874,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   });
   const actorOptions = Array.from(new Set([...data.auditEntries.map((entry) => entry.actorDisplayName), ...data.correctionRequests.flatMap((item) => [item.requestedByDisplayName, item.latestActorDisplayName ?? ""]).filter(Boolean)])).sort((left, right) => left.localeCompare(right));
   const filteredAuditEntries = data.auditEntries.filter((entry) => {
-    const searchable = [entry.auditId, entry.action, entry.targetType, entry.targetLabel ?? "", entry.actorDisplayName, entry.locationName ?? "", JSON.stringify(entry.details)].join(" ").toLowerCase();
+    const searchable = [entry.auditId, entry.action, entry.targetType, entry.targetLabel ?? "", entry.actorDisplayName, entry.locationName ?? "", humanizeDetailsText(entry.details, data)].join(" ").toLowerCase();
     const deviceMatches = !applied.deviceId || entry.targetId === applied.deviceId || entry.details.deviceId === applied.deviceId;
     return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || entry.locationId === applied.locationId || entry.details.locationId === applied.locationId || entry.details.assignedLocationId === applied.locationId) && deviceMatches && (!applied.actor || entry.actorDisplayName === applied.actor) && inDateRange(entry.occurredAt);
   });
@@ -1895,7 +1994,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       return;
     }
     if (report.id === "governance") {
-      downloadCsv("stacktrack-governance-actions.csv", [["Audit ID", "Action", "Actor", "Target", "Location", "Occurred at", "Details"], ...filteredAuditEntries.map((entry) => [entry.auditId, entry.action, entry.actorDisplayName, auditTargetLabel(entry), entry.locationName ?? "", entry.occurredAt, JSON.stringify(entry.details)])]);
+      downloadCsv("stacktrack-governance-actions.csv", [["Audit ID", "Action", "Actor", "Target", "Location", "Occurred at", "Summary"], ...filteredAuditEntries.map((entry) => [entry.auditId, entry.action, entry.actorDisplayName, auditTargetLabel(entry), entry.locationName ?? "", entry.occurredAt, humanizeDetailsText(entry.details, data)])]);
       return;
     }
     openDetail({ eyebrow: "Planned integration", title: "Microsoft analytics export", icon: <Cloud size={18} />, summary: "The reporting boundary keeps operational writes fast and auditable while making curated data available for corporate analytics.", body: <><p className="detail-lead">PostgreSQL remains the operational source of truth. A scheduled, incremental export can publish append-only event facts and daily aggregates to Microsoft Fabric or Azure Data Lake Storage Gen2 without allowing a lake pipeline to edit scanner state.</p><DetailFacts items={[["Source", "Azure Database for PostgreSQL"], ["Destination", "Microsoft Fabric Lakehouse or ADLS Gen2"], ["Recommended grain", "Immutable event facts plus daily location aggregates"], ["Security boundary", "Read-only export identity"], ["Status", "Awaiting Goodwill Microsoft architecture decisions"]]}/></> });
@@ -1994,8 +2093,8 @@ function auditEntryDetail(entry: AuditEntry, data: OperationsData): DetailView {
         ["Location context", entry.locationName ?? "Not associated"]
       ]} />
       {entry.details.reason && typeof entry.details.reason === "string" && <div className="detail-callout"><ShieldCheck size={19} /><span><strong>Recorded reason:</strong> {entry.details.reason}</span></div>}
-      <h3 className="detail-section-title">Event metadata</h3>
-      <pre className="detail-json">{JSON.stringify(entry.details, null, 2)}</pre>
+      <h3 className="detail-section-title">What changed</h3>
+      <ReadableDetails details={entry.details} data={data} />
       {evidenceEvents.length > 0 && <><h3 className="detail-section-title">Related operational evidence</h3><EventEvidence events={evidenceEvents} data={data} /></>}
     </>
   };
@@ -2035,10 +2134,10 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
     try {
       const exported = await searchAuditEntries(session, { ...applied, limit: 250, offset: 0 });
       downloadCsv("stacktrack-audit-trail.csv", [
-        ["Occurred at", "Actor", "Username", "Actor type", "Action", "Target type", "Target", "Location", "Details"],
+        ["Occurred at", "Actor", "Username", "Actor type", "Action", "Target type", "Target", "Location", "Summary"],
         ...exported.items.map((entry) => [
           new Date(entry.occurredAt).toISOString(), entry.actorDisplayName, entry.actorUsername ?? "", entry.actorType,
-          entry.action, entry.targetType, auditTargetLabel(entry), entry.locationName ?? "", JSON.stringify(entry.details)
+          entry.action, entry.targetType, auditTargetLabel(entry), entry.locationName ?? "", auditDetailSummary(entry.details)
         ])
       ]);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "The audit export could not be created."); }
@@ -2066,7 +2165,6 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
         <div className="audit-entry__header"><div className="audit-entry__headline"><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{auditActionLabel(entry.action)}</strong><span className="audit-entry__action">{entry.action}</span></div></div><div className="audit-entry__time"><strong>{relativeTime(entry.occurredAt)}</strong><time>{new Date(entry.occurredAt).toLocaleString()}</time></div></div>
         <div className="audit-entry__grid"><div><small>Actor</small><strong>{entry.actorDisplayName}</strong><span>{entry.actorUsername ? `@${entry.actorUsername}` : `${entry.actorType} event`}</span></div><div><small>Target</small><strong>{auditTargetLabel(entry)}</strong><span>{entry.targetType.replaceAll("_", " ")}{entry.targetId && entry.targetLabel ? ` · ${entry.targetId}` : ""}</span></div><div><small>Location context</small><strong>{entry.locationName ?? "Not associated"}</strong><span>{entry.locationId ?? "No location reference"}</span></div></div>
         {auditDetailSummary(entry.details) && <p className="audit-entry__summary">{auditDetailSummary(entry.details)}</p>}
-        <details className="audit-entry__details" onClick={(event) => event.stopPropagation()}><summary>View event metadata</summary><pre>{JSON.stringify(entry.details, null, 2)}</pre></details>
       </article>)}</div>
       <div className="audit-page__pagination"><button className="secondary" disabled={pageIndex === 0 || loading} onClick={() => setPageIndex((current) => Math.max(0, current - 1))}>Previous</button><span>{result.total ? `${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)} of ${result.total}` : "0 events"}</span><button className="secondary" disabled={loading || (pageIndex + 1) * result.limit >= result.total} onClick={() => setPageIndex((current) => current + 1)}>Next</button></div>
     </div>
