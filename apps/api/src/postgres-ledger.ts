@@ -292,9 +292,9 @@ export class PostgresEventLedger implements EventLedger {
       const [locations, devices, deviceAssignments, containers, goodsTypes] = await Promise.all([
         client.query<LocalLocation>(
           `SELECT location_id AS "locationId", location_name AS name,
-                  location_type AS type
-             FROM locations WHERE tenant_id = $1 AND is_active
-             ORDER BY location_type, location_name`,
+                  location_type AS type, is_active AS "isActive"
+             FROM locations WHERE tenant_id = $1
+             ORDER BY is_active DESC, location_type, location_name`,
           [tenantId]
         ),
         client.query<LocalDevice>(

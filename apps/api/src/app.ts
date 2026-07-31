@@ -17,6 +17,12 @@ import type {
   CorrectionAdministration,
   NewCorrectionRequest
 } from "./correction-administration.js";
+import type {
+  LocationAdministration,
+  LocationRetireConflict,
+  NewLocation,
+  RetireLocationInput
+} from "./location-administration.js";
 
 export interface AppDependencies {
   readonly ledger?: EventLedger;
@@ -26,6 +32,7 @@ export interface AppDependencies {
     tenantId: string
   ) => LocalFixtures | null | Promise<LocalFixtures | null>;
   readonly deviceAdministration?: DeviceAdministration;
+  readonly locationAdministration?: LocationAdministration;
   readonly adminAccess?: PostgresAdminAccess;
   readonly reviewAdministration?: PostgresReviewAdministration;
   readonly correctionAdministration?: CorrectionAdministration;
@@ -583,6 +590,122 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
       return reply.send(fixtures);
     });
+
+    app.get<{ Params: { locationId: string } }>(
+      "/api/v1/local/locations/:locationId/dependencies",
+      { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (!dependencies.locationAdministration) {
+          return reply.code(501).send({ error: "LocationAdministrationUnavailable" });
+        }
+        if (!requestContextSchema.shape.deviceId.safeParse(request.params.locationId).success) {
+          return reply.code(400).send({ error: "InvalidLocationId" });
+        }
+        const result = await dependencies.locationAdministration.dependencies(
+          principal.tenantId,
+          request.params.locationId
+        );
+        if (!result) return reply.code(404).send({ error: "NotFound" });
+        return reply.send(result);
+      }
+    );
+
+    app.post<{ Body: NewLocation }>(
+      "/api/v1/local/locations",
+      { config: { rateLimit: { max: 30, timeWindow: "15 minutes" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+          return reply.code(403).send({
+            error: "InsufficientRole",
+            message: "Only Organization Owners and Operations Administrators can add locations."
+          });
+        }
+        if (!dependencies.locationAdministration) {
+          return reply.code(501).send({ error: "LocationAdministrationUnavailable" });
+        }
+        const input = request.body;
+        if (
+          !input ||
+          typeof input.name !== "string" ||
+          input.name.trim().length < 2 ||
+          input.name.trim().length > 120 ||
+          !["donation_express", "store_backroom", "warehouse"].includes(input.type)
+        ) {
+          return reply.code(400).send({ error: "InvalidLocation", message: "Provide a name and an operating location type." });
+        }
+        try {
+          return reply.code(201).send({
+            location: await dependencies.locationAdministration.create(
+              principal.tenantId,
+              { userId: principal.userId },
+              input
+            )
+          });
+        } catch (error) {
+          return reply.code(400).send({
+            error: "LocationCreateRejected",
+            message: error instanceof Error ? error.message : "Location could not be created."
+          });
+        }
+      }
+    );
+
+    app.post<{ Params: { locationId: string }; Body: RetireLocationInput }>(
+      "/api/v1/local/locations/:locationId/retire",
+      { config: { rateLimit: { max: 15, timeWindow: "15 minutes" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (principal.role !== "organization_owner") {
+          return reply.code(403).send({
+            error: "InsufficientRole",
+            message: "Only Organization Owners can retire a location because the action affects historical references."
+          });
+        }
+        if (!dependencies.locationAdministration) {
+          return reply.code(501).send({ error: "LocationAdministrationUnavailable" });
+        }
+        if (!requestContextSchema.shape.deviceId.safeParse(request.params.locationId).success) {
+          return reply.code(400).send({ error: "InvalidLocationId" });
+        }
+        const input = request.body ?? {};
+        if (
+          (input.replacementLocationId !== undefined &&
+            !requestContextSchema.shape.deviceId.safeParse(input.replacementLocationId).success) ||
+          (input.moveDevicesToUnknown !== undefined && typeof input.moveDevicesToUnknown !== "boolean") ||
+          (input.confirmation !== undefined && typeof input.confirmation !== "string")
+        ) {
+          return reply.code(400).send({ error: "InvalidLocationRetirement" });
+        }
+        try {
+          return reply.send({
+            result: await dependencies.locationAdministration.retire(
+              principal.tenantId,
+              { userId: principal.userId },
+              request.params.locationId,
+              input
+            )
+          });
+        } catch (error) {
+          const conflict = error as LocationRetireConflict;
+          if (conflict?.name === "LocationRetireConflict") {
+            return reply.code(409).send({
+              error: "LocationRetireBlocked",
+              message: conflict.message,
+              dependencies: conflict.dependencies
+            });
+          }
+          return reply.code(400).send({
+            error: "LocationRetirementRejected",
+            message: error instanceof Error ? error.message : "Location could not be retired."
+          });
+        }
+      }
+    );
 
     app.get("/api/v1/local/events", async (request, reply) => {
       const principal = await requireAdmin(request, reply);

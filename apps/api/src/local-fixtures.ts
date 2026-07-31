@@ -6,6 +6,7 @@ export interface LocalLocation {
     | "store_backroom"
     | "warehouse"
     | "in_transit";
+  readonly isActive?: boolean;
 }
 
 export interface LocalDevice {
@@ -58,22 +59,26 @@ export const localFixtures = {
     {
       locationId: "20000000-0000-4000-8000-000000000001",
       name: "Auburn Boulevard Donation Xpress",
-      type: "donation_express"
+      type: "donation_express",
+      isActive: true
     },
     {
       locationId: "20000000-0000-4000-8000-000000000002",
       name: "Midtown Store",
-      type: "store_backroom"
+      type: "store_backroom",
+      isActive: true
     },
     {
       locationId: "20000000-0000-4000-8000-000000000003",
       name: "South Sacramento Warehouse",
-      type: "warehouse"
+      type: "warehouse",
+      isActive: true
     },
     {
       locationId: "20000000-0000-4000-8000-000000000004",
       name: "In Transit",
-      type: "in_transit"
+      type: "in_transit",
+      isActive: true
     }
   ] satisfies readonly LocalLocation[],
   devices: [

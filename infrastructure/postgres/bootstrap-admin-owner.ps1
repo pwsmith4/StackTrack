@@ -59,6 +59,7 @@ try {
   $sql = if ($ResetExisting) { @"
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
+GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
@@ -75,6 +76,7 @@ ON CONFLICT (tenant_id, username) DO UPDATE
 "@ } else { @"
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
+GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
