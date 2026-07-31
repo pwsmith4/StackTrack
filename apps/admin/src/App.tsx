@@ -263,7 +263,10 @@ export function App() {
       return stored ? JSON.parse(stored) as AdminSession : null;
     } catch { return null; }
   });
-  const [signInOpen, setSignInOpen] = useState(false);
+  // The pilot console opens on the sign-in surface. A user may close it only
+  // to inspect read-only operational data; all administrative writes stay
+  // locked until the API verifies a session.
+  const [signInOpen, setSignInOpen] = useState(true);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
