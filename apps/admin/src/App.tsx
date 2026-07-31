@@ -549,7 +549,7 @@ export function App() {
                   ref={searchRef}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder={page === "audit" ? "Use the audit filters below" : page === "activity" ? "Search container, event, scanner, or location" : page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : "Search label or code"}
+                  placeholder={page === "audit" ? "Use the audit filters below" : page === "activity" ? "Search container, event, scanner, or location" : page === "loads" ? "Search load code, container, goods, or location" : page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : "Search label or code"}
                   aria-label="Search"
                 />
                 <kbd>⌘ K</kbd>
@@ -955,28 +955,71 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
   );
 }
 
+type LoadTimeWindow = "all" | "today" | "7d" | "30d";
+type LoadSort = "newest" | "oldest" | "location" | "code";
+interface LoadFilters {
+  locationId: string;
+  goodsType: string;
+  timeWindow: LoadTimeWindow;
+  from: string;
+  to: string;
+  sort: LoadSort;
+}
+
+const emptyLoadFilters: LoadFilters = { locationId: "", goodsType: "", timeWindow: "all", from: "", to: "", sort: "newest" };
+
 function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: string; openDetail: OpenDetail }) {
   const [filter, setFilter] = useState<"available" | "used" | "previous">("available");
+  const [draft, setDraft] = useState<LoadFilters>(emptyLoadFilters);
+  const [applied, setApplied] = useState<LoadFilters>(emptyLoadFilters);
   const [pageIndex, setPageIndex] = useState(0);
   const pageSize = 12;
-  useEffect(() => setPageIndex(0), [query]);
-  const allLoads = data.events.filter((event) => event.eventType === "load_assigned").filter((event) => {
-    const code = String(event.payload.displayLoadCode ?? "");
-    return code.toLowerCase().includes(query.toLowerCase());
-  });
+  useEffect(() => setPageIndex(0), [query, filter, applied]);
+  const containerName = (id: string) => data.fixtures.containers.find((item) => item.containerId === id)?.label ?? "Unknown container";
+  const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown location";
+  const codeFor = (event: StoredEvent) => String(event.payload.displayLoadCode ?? event.loadCodeId ?? "");
   const isToday = (value: string) => new Date(value).toDateString() === new Date().toDateString();
   const isActive = (event: StoredEvent) => data.projections[event.containerId]?.activeLoadCodeId === event.loadCodeId;
-  const loads = allLoads.filter((event) =>
+  const sourceLoads = data.events.filter((event) => event.eventType === "load_assigned");
+  const goodsOptions = Array.from(new Set(sourceLoads.map((event) => String(event.payload.goodsType ?? "").trim()).filter(Boolean))).sort((left, right) => left.localeCompare(right));
+  const searchTerm = query.trim().toLowerCase();
+  const now = Date.now();
+  const quickStart = applied.timeWindow === "today" ? now - 24 * 60 * 60 * 1000 : applied.timeWindow === "7d" ? now - 7 * 24 * 60 * 60 * 1000 : applied.timeWindow === "30d" ? now - 30 * 24 * 60 * 60 * 1000 : null;
+  const startOfDate = (value: string) => { const timestamp = Date.parse(`${value}T00:00:00`); return Number.isNaN(timestamp) ? null : timestamp; };
+  const endOfDate = (value: string) => { const timestamp = Date.parse(`${value}T23:59:59.999`); return Number.isNaN(timestamp) ? null : timestamp; };
+  const fromTimestamp = startOfDate(applied.from);
+  const toTimestamp = endOfDate(applied.to);
+  const allLoads = sourceLoads.filter((event) => {
+    const searchable = [codeFor(event), containerName(event.containerId), locationName(event.locationId), String(event.payload.goodsType ?? ""), String(event.payload.secondaryValue ?? "")].join(" ").toLowerCase();
+    const eventTimestamp = Date.parse(event.eventAt);
+    const lowerBound = Math.max(quickStart ?? Number.NEGATIVE_INFINITY, fromTimestamp ?? Number.NEGATIVE_INFINITY);
+    const upperBound = Math.min(toTimestamp ?? Number.POSITIVE_INFINITY, applied.timeWindow === "today" ? now : Number.POSITIVE_INFINITY);
+    return (!searchTerm || searchable.includes(searchTerm)) &&
+      (!applied.locationId || event.locationId === applied.locationId) &&
+      (!applied.goodsType || String(event.payload.goodsType ?? "") === applied.goodsType) &&
+      eventTimestamp >= lowerBound && eventTimestamp <= upperBound;
+  });
+  const loads = [...allLoads].filter((event) =>
     filter === "available" ? isActive(event) : filter === "used" ? !isActive(event) : !isToday(event.eventAt)
-  );
+  ).sort((left, right) => {
+    if (applied.sort === "location") return locationName(left.locationId).localeCompare(locationName(right.locationId)) || Date.parse(right.eventAt) - Date.parse(left.eventAt);
+    if (applied.sort === "code") return codeFor(left).localeCompare(codeFor(right), undefined, { numeric: true }) || Date.parse(right.eventAt) - Date.parse(left.eventAt);
+    return applied.sort === "oldest" ? Date.parse(left.eventAt) - Date.parse(right.eventAt) : Date.parse(right.eventAt) - Date.parse(left.eventAt);
+  });
   const pageCount = Math.max(1, Math.ceil(loads.length / pageSize));
   const visibleLoads = loads.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize);
-  const containerName = (id: string) => data.fixtures.containers.find((item) => item.containerId === id)?.label;
-  const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name;
+  const activeCount = Object.entries(applied).filter(([key, value]) => key !== "sort" && Boolean(value) && value !== "all").length + (applied.sort !== "newest" ? 1 : 0);
+  const statusLabel = filter === "available" ? "Available codes" : filter === "used" ? "Used codes" : "Previous days";
+  const invalidRange = Boolean(draft.from && draft.to && draft.from > draft.to);
+  const hasLoadFilterValues = (value: LoadFilters) => Boolean(value.locationId || value.goodsType || value.timeWindow !== "all" || value.from || value.to || value.sort !== "newest");
+  const draftHasFilters = Boolean(filter !== "available" || hasLoadFilterValues(draft) || hasLoadFilterValues(applied));
+  const updateFilter = (field: keyof LoadFilters, value: string) => setDraft((current) => ({ ...current, [field]: value }));
+  const applyFilters = (event: React.FormEvent) => { event.preventDefault(); if (invalidRange) return; setPageIndex(0); setApplied({ ...draft }); };
+  const clearFilters = () => { setDraft(emptyLoadFilters); setApplied(emptyLoadFilters); setFilter("available"); setPageIndex(0); };
   const exportLoads = () => downloadCsv("stacktrack-load-codes.csv", [
     ["Load code", "Container", "Location", "Goods type", "Classification", "Created at"],
     ...loads.map((event) => [
-      String(event.payload.displayLoadCode ?? event.loadCodeId ?? ""),
+      codeFor(event),
       containerName(event.containerId) ?? "",
       locationName(event.locationId) ?? "",
       String(event.payload.goodsType ?? ""),
@@ -984,20 +1027,31 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
       event.eventAt
     ])
   ]);
-  const today = new Date().toLocaleDateString([], { month: "short", day: "numeric" });
   return (
     <>
-      <div className="notice-banner"><CheckCircle2 size={22} /><div><strong>Validated list for today</strong><span>Managers can use these codes in the production system. Codes come directly from accepted “mark full” observations.</span></div><button className="primary" onClick={exportLoads}><Download size={16} /> Download list</button></div>
+      <div className="notice-banner"><CheckCircle2 size={22} /><div><strong>Validated load-code register</strong><span>Managers can use these codes in the production system. Filter or sort the accepted mark-full observations before exporting.</span></div><button className="primary" onClick={exportLoads}><Download size={16} /> Download list</button></div>
       <section className="panel">
-        <div className="toolbar"><div className="filter-tabs"><button className={filter === "available" ? "active" : ""} onClick={() => { setFilter("available"); setPageIndex(0); }}>Available <b>{allLoads.filter(isActive).length}</b></button><button className={filter === "used" ? "active" : ""} onClick={() => { setFilter("used"); setPageIndex(0); }}>Used <b>{allLoads.filter((event) => !isActive(event)).length}</b></button><button className={filter === "previous" ? "active" : ""} onClick={() => { setFilter("previous"); setPageIndex(0); }}>Previous days</button></div><span className="date-chip"><Clock3 size={15} /> Today, {today}</span></div>
+        <form className="load-filter-panel" onSubmit={applyFilters}>
+          <div className="load-filter-panel__header"><div><strong>Filter and sort load codes</strong><span>{statusLabel}{activeCount ? ` · ${activeCount} active filter${activeCount === 1 ? "" : "s"}` : ""} · {loads.length.toLocaleString()} matching</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!draftHasFilters}>Clear filters</button><button className="primary" type="submit" disabled={invalidRange}>Apply filters</button></div></div>
+          <div className="load-filter-grid">
+            <label className="load-filter--wide">Location<select value={draft.locationId} onChange={(event) => updateFilter("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label>
+            <label>Time window<select value={draft.timeWindow} onChange={(event) => updateFilter("timeWindow", event.target.value as LoadTimeWindow)}><option value="all">All available</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
+            <label>Goods type<select value={draft.goodsType} onChange={(event) => updateFilter("goodsType", event.target.value)}><option value="">All goods types</option>{goodsOptions.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label>
+            <label>From date<input type="date" value={draft.from} onChange={(event) => updateFilter("from", event.target.value)} /></label>
+            <label>To date<input type="date" value={draft.to} onChange={(event) => updateFilter("to", event.target.value)} /></label>
+            <label>Sort by<select value={draft.sort} onChange={(event) => updateFilter("sort", event.target.value as LoadSort)}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="location">Location A–Z</option><option value="code">Load code A–Z</option></select></label>
+          </div>
+          {invalidRange && <p className="load-filter-error">The from date must be on or before the to date.</p>}
+        </form>
+        <div className="toolbar"><div className="filter-tabs"><button className={filter === "available" ? "active" : ""} onClick={() => { setFilter("available"); setPageIndex(0); }}>Available <b>{allLoads.filter(isActive).length}</b></button><button className={filter === "used" ? "active" : ""} onClick={() => { setFilter("used"); setPageIndex(0); }}>Used <b>{allLoads.filter((event) => !isActive(event)).length}</b></button><button className={filter === "previous" ? "active" : ""} onClick={() => { setFilter("previous"); setPageIndex(0); }}>Previous days</button></div><span className="date-chip"><Clock3 size={15} /> {loads.length.toLocaleString()} matching</span></div>
         <div className="load-grid">{visibleLoads.map((event) => (
           <article className="load-card" key={event.eventId}>
             <div className="load-card__top"><span>LOAD CODE</span><Pill tone="good">Validated</Pill></div>
-            <strong>{String(event.payload.displayLoadCode ?? event.loadCodeId?.slice(0, 8))}</strong>
+            <strong>{codeFor(event)}</strong>
             <div className="load-card__details"><span><ContainerIcon size={15} /> {containerName(event.containerId)}</span><span><MapPin size={15} /> {locationName(event.locationId)}</span><span><Boxes size={15} /> {String(event.payload.goodsType ?? "Not set")} · {String(event.payload.secondaryValue ?? "Not set")}</span></div>
             <div className="load-card__bottom"><span>Created {relativeTime(event.eventAt)}</span><button onClick={() => openDetail({
               eyebrow: "Load code history",
-              title: String(event.payload.displayLoadCode ?? event.loadCodeId),
+              title: codeFor(event),
               icon: <PackageCheck size={18} />,
               status: { label: isActive(event) ? "Available" : "Used", tone: isActive(event) ? "good" : "muted" },
               summary: "Validated production handoff linked to an immutable mark-full observation.",
