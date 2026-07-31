@@ -640,7 +640,7 @@ footer > span:first-child { display: none; }
 .activity-search-summary strong { color: var(--ink); }
 .activity-limit-note { margin: 0; color: var(--muted); font-size: 11px; text-align: center; }
 .operations-pulse { margin-top: 18px; }
-.pulse-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.pulse-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .pulse-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; min-width: 0; padding: 14px; border: 1px solid var(--line); color: var(--ink); background: #fff; text-align: left; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
 .pulse-card:hover { border-color: #a8c9d8; box-shadow: 0 7px 18px rgba(0, 41, 79, .08); transform: translateY(-1px); }
 .pulse-card__icon { width: 32px; height: 32px; display: grid; place-items: center; color: var(--blue-800); background: #eaf5fa; }
