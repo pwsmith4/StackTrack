@@ -37,6 +37,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha
+            type=raw,value=${{ github.sha }}
       - name: Build and publish
         uses: docker/build-push-action@v6
         with:
@@ -82,7 +83,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/${{ github.repository_owner }}/stacktrack-api:${{ github.ref_name }}"
+          # Use the immutable commit tag, not the mutable branch tag. Container
+          # Apps otherwise has no configuration change to trigger a revision
+          # when :test has been rebuilt with newer code.
+          IMAGE="ghcr.io/${{ github.repository_owner }}/stacktrack-api:${{ github.sha }}"
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
