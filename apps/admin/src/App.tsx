@@ -142,7 +142,7 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
   activity: {
     eyebrow: "Operational feed",
     title: "Activity",
-    description: "Follow physical scanner observations and container movement as it happens."
+    description: "Follow physical scanner observations and container movement; use Audit trail for administrative actions."
   },
   audit: {
     eyebrow: "Governance evidence",
@@ -157,7 +157,7 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
   reports: {
     eyebrow: "Operations intelligence",
     title: "Reports & data",
-    description: "A home for exports, trends, and the future Microsoft data integration."
+    description: "Filter operational evidence, interpret data health, and export decision-ready reports."
   },
   settings: {
     eyebrow: "Configuration",
@@ -529,7 +529,7 @@ export function App() {
             </button>
             <button className="icon-button" aria-label="Help" onClick={() => setDetail({
               eyebrow: "StackTrack help",
-              title: "Using the local operations console",
+              title: "Using the operations console",
               body: <><p className="detail-lead">Search for a container or load code, use the left navigation for operational views, and open any record for its immutable evidence history.</p><div className="help-steps"><span><b>1</b> Scan in the mobile app</span><span><b>2</b> Refresh the console</span><span><b>3</b> Review state and evidence</span><span><b>4</b> Request a governed correction when evidence is wrong</span></div><div className="detail-callout"><ShieldCheck size={20}/><span>Approved corrections never delete the original scan. Material changes require a second Organization Owner, and a newer physical scan automatically becomes authoritative.</span></div></>
             })}><CircleHelp size={18} /></button>
           </div>
@@ -583,8 +583,8 @@ export function App() {
           ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
-          <span><ShieldCheck size={15} /> Pilot test environment • append-only audit foundation</span>
-          <span>Goodwill operations · governed event history</span>
+          <span><ShieldCheck size={15} /> Governed operations console · append-only audit foundation</span>
+          <span>Goodwill operations · immutable event history</span>
           <span>Last refreshed {lastRefresh.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
         </footer>
       </main>
@@ -1741,79 +1741,209 @@ function LegacyDeviceCard({ device, data, operatingLocations, busy, canManage, o
 */
 }
 
+type ReportsFilterDraft = {
+  search: string;
+  locationId: string;
+  deviceId: string;
+  actor: string;
+  eventType: "" | StoredEvent["eventType"];
+  health: "" | Projection["health"];
+  from: string;
+  to: string;
+};
+
+const emptyReportsFilters: ReportsFilterDraft = { search: "", locationId: "", deviceId: "", actor: "", eventType: "", health: "", from: "", to: "" };
+
 function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
+  const [draft, setDraft] = useState<ReportsFilterDraft>(emptyReportsFilters);
+  const [applied, setApplied] = useState<ReportsFilterDraft>(emptyReportsFilters);
+  const locationName = (id: string | null | undefined) => data.fixtures.locations.find((location) => location.locationId === id)?.name ?? "Unknown location";
+  const deviceName = (id: string | null | undefined) => data.fixtures.devices.find((device) => device.deviceId === id)?.label ?? "Unknown scanner";
+  const containerLabel = (id: string | null | undefined) => data.fixtures.containers.find((container) => container.containerId === id)?.label ?? "Unknown container";
+  const fromTimestamp = applied.from ? Date.parse(`${applied.from}T00:00:00`) : null;
+  const toTimestamp = applied.to ? Date.parse(`${applied.to}T23:59:59.999`) : null;
+  const inDateRange = (value: string | null | undefined) => {
+    if (!value) return fromTimestamp === null && toTimestamp === null;
+    const timestamp = Date.parse(value);
+    return (fromTimestamp === null || timestamp >= fromTimestamp) && (toTimestamp === null || timestamp <= toTimestamp);
+  };
+  const searchTerm = applied.search.trim().toLowerCase();
+  const eventMatches = (event: StoredEvent) => {
+    const searchable = [event.eventId, containerLabel(event.containerId), eventLabel(event.eventType), locationName(event.locationId), deviceName(event.deviceId), ...event.accuracyFlags].join(" ").toLowerCase();
+    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || event.locationId === applied.locationId) && (!applied.deviceId || event.deviceId === applied.deviceId) && (!applied.eventType || event.eventType === applied.eventType) && inDateRange(event.eventAt);
+  };
+  const filteredEvents = data.events.filter(eventMatches).sort((left, right) => Date.parse(right.eventAt) - Date.parse(left.eventAt));
+  const projectionMatches = (projection: Projection) => {
+    const relatedEvents = data.events.filter((event) => event.containerId === projection.containerId);
+    const searchable = [containerLabel(projection.containerId), locationName(projection.locationId), ...relatedEvents.map((event) => `${event.eventId} ${deviceName(event.deviceId)} ${locationName(event.locationId)}`)].join(" ").toLowerCase();
+    const locationMatches = !applied.locationId || projection.locationId === applied.locationId || relatedEvents.some((event) => event.locationId === applied.locationId);
+    const deviceMatches = !applied.deviceId || relatedEvents.some((event) => event.deviceId === applied.deviceId);
+    const dateMatches = (!applied.from && !applied.to) || relatedEvents.some((event) => inDateRange(event.eventAt));
+    const typeMatches = !applied.eventType || relatedEvents.some((event) => event.eventType === applied.eventType && inDateRange(event.eventAt));
+    return (!searchTerm || searchable.includes(searchTerm)) && locationMatches && deviceMatches && dateMatches && typeMatches && (!applied.health || projection.health === applied.health);
+  };
+  const filteredProjections = Object.values(data.projections).filter((projection): projection is Projection => {
+    if (!projection) return false;
+    return projectionMatches(projection);
+  });
+  const filteredCorrections = data.correctionRequests.filter((item) => {
+    const searchable = [item.correctionRequestId, item.containerLabel, item.requestedByDisplayName, item.reason, item.latestActorDisplayName ?? ""].join(" ").toLowerCase();
+    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || item.proposedCorrection.locationId === applied.locationId) && (!applied.actor || item.requestedByDisplayName === applied.actor || item.latestActorDisplayName === applied.actor) && inDateRange(item.requestedAt);
+  });
+  const actorOptions = Array.from(new Set([...data.auditEntries.map((entry) => entry.actorDisplayName), ...data.correctionRequests.flatMap((item) => [item.requestedByDisplayName, item.latestActorDisplayName ?? ""]).filter(Boolean)])).sort((left, right) => left.localeCompare(right));
+  const filteredAuditEntries = data.auditEntries.filter((entry) => {
+    const searchable = [entry.auditId, entry.action, entry.targetType, entry.targetLabel ?? "", entry.actorDisplayName, entry.locationName ?? "", JSON.stringify(entry.details)].join(" ").toLowerCase();
+    const deviceMatches = !applied.deviceId || entry.targetId === applied.deviceId || entry.details.deviceId === applied.deviceId;
+    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || entry.locationId === applied.locationId || entry.details.locationId === applied.locationId || entry.details.assignedLocationId === applied.locationId) && deviceMatches && (!applied.actor || entry.actorDisplayName === applied.actor) && inDateRange(entry.occurredAt);
+  });
+  const filteredDevices = data.fixtures.devices.filter((device) => {
+    const searchable = [device.deviceId, scannerNumber(device.deviceId), device.label, locationName(device.assignedLocationId), device.reportedAppVersion ?? ""].join(" ").toLowerCase();
+    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || device.assignedLocationId === applied.locationId) && (!applied.deviceId || device.deviceId === applied.deviceId) && inDateRange(device.lastReportedAt);
+  });
+  const locationRows = Array.from(new Map(filteredEvents.map((event) => [event.locationId, event.locationId]))).map(([, locationId]) => {
+    const events = filteredEvents.filter((event) => event.locationId === locationId);
+    const flagged = events.filter((event) => event.accuracyFlags.length > 0).length;
+    const containers = new Set(events.map((event) => event.containerId)).size;
+    return { locationId, name: locationName(locationId), events: events.length, containers, flagged };
+  }).sort((left, right) => right.events - left.events);
+  const flaggedEvents = filteredEvents.filter((event) => event.accuracyFlags.length > 0);
+  const reviewCount = filteredProjections.filter((projection) => projection.health === "needs_review").length;
+  const warningCount = filteredProjections.filter((projection) => projection.health === "warning").length;
+  const transitLocationId = data.fixtures.locations.find((location) => location.type === "in_transit")?.locationId;
+  const transitCount = filteredProjections.filter((projection) => projection.locationId === transitLocationId).length;
+  const transitRows = filteredProjections
+    .filter((projection) => projection.locationId === transitLocationId)
+    .map((projection) => {
+      const outbound = data.events
+        .filter((event) => event.containerId === projection.containerId && event.eventType === "batch_out")
+        .sort((left, right) => Date.parse(right.effectiveAt) - Date.parse(left.effectiveAt))[0];
+      const destinationId = typeof outbound?.payload.destinationLocationId === "string" ? outbound.payload.destinationLocationId : null;
+      const ageHours = outbound ? Math.max(0, (Date.now() - Date.parse(outbound.effectiveAt)) / 3_600_000) : null;
+      return { projection, outbound, destinationId, ageHours };
+    })
+    .sort((left, right) => (right.ageHours ?? -1) - (left.ageHours ?? -1));
+  const latencyRows = Array.from(new Map(filteredEvents.map((event) => [event.deviceId, event.deviceId]))).map(([, deviceId]) => {
+    const events = filteredEvents.filter((event) => event.deviceId === deviceId);
+    const latencies = events.map((event) => Math.max(0, (Date.parse(event.receivedAt) - Date.parse(event.eventAt)) / 1_000)).filter(Number.isFinite);
+    return { deviceId, events: events.length, averageSeconds: latencies.length ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length) : 0, maxSeconds: latencies.length ? Math.round(Math.max(...latencies)) : 0, flagged: events.filter((event) => event.accuracyFlags.length).length };
+  }).sort((left, right) => right.averageSeconds - left.averageSeconds);
+  const latencySeconds = (event: StoredEvent) => {
+    const value = (Date.parse(event.receivedAt) - Date.parse(event.eventAt)) / 1_000;
+    return Number.isFinite(value) ? Math.max(0, Math.round(value)) : "";
+  };
+  const lateUploadCount = filteredEvents.filter((event) => latencySeconds(event) !== "" && Number(latencySeconds(event)) > 900).length;
+  const staleDevices = filteredDevices.filter((device) => !device.lastReportedAt || Date.now() - Date.parse(device.lastReportedAt) > 24 * 60 * 60 * 1000);
+  const registrationScopeAvailable = !applied.locationId && !applied.deviceId && !applied.eventType && !applied.health && !applied.from && !applied.to;
+  const unobservedContainers = registrationScopeAvailable ? data.fixtures.containers.filter((container) => !data.projections[container.containerId] && (!searchTerm || container.label.toLowerCase().includes(searchTerm))).length : null;
+  const integrityPercent = filteredEvents.length ? Math.round(((filteredEvents.length - flaggedEvents.length) / filteredEvents.length) * 100) : 100;
+  const deviceFreshnessPercent = filteredDevices.length ? Math.round(((filteredDevices.length - staleDevices.length) / filteredDevices.length) * 100) : 100;
+  const activeFilterCount = [applied.search, applied.locationId, applied.deviceId, applied.actor, applied.eventType, applied.health, applied.from, applied.to].filter(Boolean).length;
+  const draftDateError = draft.from && draft.to && draft.from > draft.to ? "The start date must be on or before the end date." : null;
+  const updateDraft = <K extends keyof ReportsFilterDraft>(key: K, value: ReportsFilterDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  const applyFilters = () => { if (!draftDateError) setApplied(draft); };
+  const clearFilters = () => { setDraft(emptyReportsFilters); setApplied(emptyReportsFilters); };
+  const reportScope = activeFilterCount ? `${activeFilterCount} filter${activeFilterCount === 1 ? "" : "s"} applied` : "All available operations data";
+  const openHealthDetail = () => openDetail({
+    eyebrow: "Data quality guide",
+    title: "How to read data health",
+    icon: <CircleHelp size={18} />,
+    summary: "Data health describes evidence quality and operational follow-up. It is not a claim that every physical container is correct.",
+    body: <div className="health-definition-list">
+      <article><Pill tone={integrityPercent >= 98 ? "good" : "warn"}>{integrityPercent >= 98 ? "Strong" : "Review"}</Pill><div><strong>Observation integrity — {integrityPercent}%</strong><p>Share of scanner observations with no timing, sequence, or device-order flags. A flagged event is retained; it means an administrator should verify context before relying on it for a correction.</p><small>Use case: find late uploads, duplicate scans, or offline devices that may make movement appear out of order.</small></div></article>
+      <article><Pill tone={reviewCount ? "warn" : "good"}>{reviewCount ? "Open" : "Clear"}</Pill><div><strong>Containers needing review — {reviewCount}</strong><p>Containers whose projection has conflicting evidence or an unresolved exception. The latest valid projection remains visible while the original events stay immutable.</p><small>Use case: decide whether a controlled correction is needed; never delete the conflicting scan.</small></div></article>
+      <article><Pill tone={deviceFreshnessPercent >= 90 ? "good" : "warn"}>{deviceFreshnessPercent >= 90 ? "Fresh" : "Stale"}</Pill><div><strong>Scanner freshness — {deviceFreshnessPercent}%</strong><p>Share of matching scanners that have reported in the last 24 hours. A stale scanner may be powered off, offline, moved, or unable to send telemetry.</p><small>Use case: call a location before trusting a quiet period as proof that no containers moved.</small></div></article>
+      <article><Pill tone={unobservedContainers === null ? "muted" : unobservedContainers ? "warn" : "good"}>{unobservedContainers === null ? "Broader scope" : unobservedContainers ? "Check" : "Complete"}</Pill><div><strong>Registration coverage — {unobservedContainers === null ? "—" : unobservedContainers}</strong><p>Registered containers without any accepted observation. This check is intentionally tenant-wide because an unobserved container has no event location or date to join to a filtered scope.</p><small>Use case: clear event filters, then verify labels and provisioning instead of inventing a location.</small></div></article>
+      <article><Pill tone={lateUploadCount ? "warn" : "good"}>{lateUploadCount ? "Context" : "Normal"}</Pill><div><strong>Upload latency — {lateUploadCount}</strong><p>Observations received more than 15 minutes after they were recorded. This is expected during offline work, but it can explain why activity appears late in the console.</p><small>Use case: compare this count with scanner freshness and offline queue behavior before escalating a location.</small></div></article>
+    </div>
+  });
+  const openObservation = (event: StoredEvent) => openDetail({
+    eyebrow: "Filtered observation",
+    title: containerLabel(event.containerId),
+    icon: <Activity size={18} />,
+    status: event.accuracyFlags.length ? { label: "Review flags", tone: "warn" } : { label: "Verified timing", tone: "good" },
+    summary: "A single immutable scanner observation from the report scope.",
+    recordId: event.eventId,
+    recordIdLabel: "Event ID",
+    body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", locationName(event.locationId)], ["Scanner", `${deviceName(event.deviceId)} (${scannerNumber(event.deviceId)})`], ["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Latency", `${latencySeconds(event)} seconds`], ["Data flags", event.accuracyFlags.length ? event.accuracyFlags.join(", ") : "None"]]}/><h3 className="detail-section-title">Evidence</h3><EventEvidence events={[event]} data={data}/></>
+  });
   const reports = [
-    { id: "movement", icon: Activity, title: "Container movement", text: "Accepted observations by location and day.", tag: "Ready" },
-    { id: "loads", icon: PackageCheck, title: "Daily load codes", text: "Validated codes for production entry.", tag: "Ready" },
-    { id: "exceptions", icon: AlertTriangle, title: "Exception history", text: "Corrections, approvals, and preserved evidence.", tag: "Ready" },
-    { id: "corrections", icon: FilePenLine, title: "Correction register", text: "Requests, decisions, impact, and official-state changes.", tag: "Ready" },
-    { id: "lake", icon: Cloud, title: "Microsoft data lake export", text: "Scheduled analytics feed for Fabric or Azure.", tag: "Planned" }
-  ];
+    { id: "movement", icon: Activity, title: "Movement ledger", text: "Every accepted container observation, with scanner, location, receipt latency, and data flags.", count: filteredEvents.length, tag: "Ready" },
+    { id: "loads", icon: PackageCheck, title: "Load-code handoff", text: "Load codes created in the selected period, tied to their container, goods classification, and origin.", count: filteredEvents.filter((event) => event.eventType === "load_assigned").length, tag: "Ready" },
+    { id: "exceptions", icon: AlertTriangle, title: "Data-quality exceptions", text: "Containers and observations that need review before an administrator treats the projection as settled.", count: reviewCount + flaggedEvents.length, tag: "Ready" },
+    { id: "corrections", icon: FilePenLine, title: "Correction register", text: "Requests, decisions, reasons, and proposed official-state changes with evidence preserved.", count: filteredCorrections.length, tag: "Ready" },
+    { id: "devices", icon: Smartphone, title: "Scanner coverage", text: "Location assignment, enablement, app version, last report, and stale-device follow-up.", count: filteredDevices.length, tag: "Ready" },
+    { id: "locations", icon: MapPin, title: "Location throughput", text: "Event volume, distinct containers, and flagged observations by store, Donation Xpress, or warehouse.", count: locationRows.length, tag: "Ready" },
+    { id: "transit", icon: Truck, title: "Transit aging", text: "Containers still in motion, their origin and destination, and how long a receipt has been outstanding.", count: transitRows.length, tag: "Ready" },
+    { id: "latency", icon: Clock3, title: "Scan latency", text: "Average and maximum upload delay by scanner, so offline work is separated from service or device problems.", count: latencyRows.length, tag: "Ready" },
+    { id: "governance", icon: ScrollText, title: "Governance actions", text: "Administrator sign-ins, scanner controls, review decisions, and corrections with actor and location context.", count: filteredAuditEntries.length, tag: "Ready" },
+    { id: "lake", icon: Cloud, title: "Microsoft analytics export", text: "A future governed feed into Fabric or ADLS Gen2; scanner writes remain in PostgreSQL.", count: null, tag: "Planned" }
+  ] as const;
   const openReport = (report: typeof reports[number]) => {
     if (report.id === "movement") {
-      downloadCsv("stacktrack-container-movement.csv", [["Event", "Container", "Observation", "Location", "Observed at", "Warnings"], ...data.events.map((event) => [
-        event.eventId,
-        data.fixtures.containers.find((item) => item.containerId === event.containerId)?.label ?? "",
-        eventLabel(event.eventType),
-        data.fixtures.locations.find((item) => item.locationId === event.locationId)?.name ?? "",
-        event.eventAt,
-        event.accuracyFlags.join("; ")
-      ])]);
+      downloadCsv("stacktrack-movement-ledger.csv", [["Event ID", "Container", "Observation", "Location", "Scanner", "Observed at", "Received at", "Latency seconds", "Data flags"], ...filteredEvents.map((event) => [event.eventId, containerLabel(event.containerId), eventLabel(event.eventType), locationName(event.locationId), deviceName(event.deviceId), event.eventAt, event.receivedAt, latencySeconds(event), event.accuracyFlags.join("; ")])]);
       return;
     }
     if (report.id === "loads") {
-      downloadCsv("stacktrack-daily-load-codes.csv", [["Load code", "Container", "Created at"], ...data.events.filter((event) => event.eventType === "load_assigned").map((event) => [
-        String(event.payload.displayLoadCode ?? event.loadCodeId ?? ""),
-        data.fixtures.containers.find((item) => item.containerId === event.containerId)?.label ?? "",
-        event.eventAt
-      ])]);
+      downloadCsv("stacktrack-load-code-handoff.csv", [["Load code", "Container", "Origin", "Goods type", "Secondary value", "Created at", "Scanner"], ...filteredEvents.filter((event) => event.eventType === "load_assigned").map((event) => [String(event.payload.displayLoadCode ?? event.loadCodeId ?? ""), containerLabel(event.containerId), locationName(event.locationId), String(event.payload.goodsType ?? ""), String(event.payload.secondaryValue ?? ""), event.eventAt, deviceName(event.deviceId)])]);
       return;
     }
     if (report.id === "exceptions") {
-      downloadCsv("stacktrack-exception-history.csv", [["Container", "Health", "Conflicts", "Warnings"], ...Object.values(data.projections).filter(Boolean).map((projection) => [
-        data.fixtures.containers.find((item) => item.containerId === projection!.containerId)?.label ?? "",
-        projection!.health,
-        projection!.conflicts.map((item) => item.reason).join("; "),
-        projection!.warnings.join("; ")
-      ])]);
+      downloadCsv("stacktrack-data-quality-exceptions.csv", [["Container", "Health", "Current location", "Conflicts", "Projection warnings", "Flagged observations", "Last observed"], ...filteredProjections.map((projection) => [containerLabel(projection.containerId), projection.health, locationName(projection.locationId), projection.conflicts.map((item) => item.reason).join("; "), projection.warnings.join("; "), filteredEvents.filter((event) => event.containerId === projection.containerId && event.accuracyFlags.length).length, projection.lastObservedAt ?? ""]) , ...flaggedEvents.filter((event) => !filteredProjections.some((projection) => projection.containerId === event.containerId)).map((event) => [containerLabel(event.containerId), "observation_flag", locationName(event.locationId), "", event.accuracyFlags.join("; "), 1, event.eventAt])]);
       return;
     }
     if (report.id === "corrections") {
-      downloadCsv("stacktrack-correction-register.csv", [[
-        "Request ID", "Container", "Impact", "Status", "Requested by", "Requested at",
-        "Correct location", "Correct state", "Request reason", "Latest decision by",
-        "Latest decision at", "Latest decision reason"
-      ], ...data.correctionRequests.map((item) => [
-        item.correctionRequestId,
-        item.containerLabel,
-        item.impactLevel,
-        item.status,
-        item.requestedByDisplayName,
-        item.requestedAt,
-        data.fixtures.locations.find((location) => location.locationId === item.proposedCorrection.locationId)?.name ?? "",
-        item.proposedCorrection.loadState ?? "",
-        item.reason,
-        item.latestActorDisplayName ?? "",
-        item.latestActionAt ?? "",
-        item.latestActionReason ?? ""
-      ])]);
+      downloadCsv("stacktrack-correction-register.csv", [["Request ID", "Container", "Impact", "Status", "Requested by", "Requested at", "Proposed location", "Proposed state", "Request reason", "Latest decision by", "Latest decision at", "Latest decision reason"], ...filteredCorrections.map((item) => [item.correctionRequestId, item.containerLabel, item.impactLevel, item.status, item.requestedByDisplayName, item.requestedAt, locationName(item.proposedCorrection.locationId), item.proposedCorrection.loadState ?? "", item.reason, item.latestActorDisplayName ?? "", item.latestActionAt ?? "", item.latestActionReason ?? ""])]);
       return;
     }
-    openDetail({
-      eyebrow: "Planned integration",
-      title: "Microsoft analytics export",
-      body: <><p className="detail-lead">The operational PostgreSQL database remains the source of truth. A future scheduled pipeline can copy reporting data into Microsoft Fabric or Azure Data Lake without putting scanner writes directly into the lake.</p><DetailFacts items={[
-        ["Source", "Azure Database for PostgreSQL"],
-        ["Destination", "Microsoft Fabric Lakehouse or ADLS Gen2"],
-        ["Pattern", "Incremental append-only export"],
-        ["Status", "Awaiting Goodwill Microsoft architecture decisions"]
-      ]}/></>
-    });
+    if (report.id === "devices") {
+      downloadCsv("stacktrack-scanner-coverage.csv", [["Scanner ID", "Scanner name", "Assigned location", "Enabled", "StackTrack version", "Observations in scope", "Last app report", "Freshness"], ...filteredDevices.map((device) => [scannerNumber(device.deviceId), device.label, locationName(device.assignedLocationId), device.isActive ? "Yes" : "No", device.reportedAppVersion ?? "Not reported", filteredEvents.filter((event) => event.deviceId === device.deviceId).length, device.lastReportedAt ?? "", staleDevices.includes(device) ? "Stale" : "Fresh"])]);
+      return;
+    }
+    if (report.id === "locations") {
+      downloadCsv("stacktrack-location-throughput.csv", [["Location", "Events in scope", "Distinct containers", "Flagged observations"], ...locationRows.map((row) => [row.name, row.events, row.containers, row.flagged])]);
+      return;
+    }
+    if (report.id === "transit") {
+      downloadCsv("stacktrack-transit-aging.csv", [["Container", "Origin", "Destination", "Sent at", "Age hours", "Health", "Receipt status"], ...transitRows.map((row) => [containerLabel(row.projection.containerId), row.outbound ? locationName(row.outbound.locationId) : "Unknown origin", locationName(row.destinationId), row.outbound?.effectiveAt ?? "", row.ageHours === null ? "" : row.ageHours.toFixed(1), row.projection.health, row.outbound ? "Awaiting receipt" : "Missing outbound evidence"])]);
+      return;
+    }
+    if (report.id === "latency") {
+      downloadCsv("stacktrack-scan-latency.csv", [["Scanner ID", "Scanner name", "Assigned location", "Events", "Average upload seconds", "Maximum upload seconds", "Flagged observations"], ...latencyRows.map((row) => [scannerNumber(row.deviceId), deviceName(row.deviceId), locationName(data.fixtures.devices.find((device) => device.deviceId === row.deviceId)?.assignedLocationId), row.events, row.averageSeconds, row.maxSeconds, row.flagged])]);
+      return;
+    }
+    if (report.id === "governance") {
+      downloadCsv("stacktrack-governance-actions.csv", [["Audit ID", "Action", "Actor", "Target", "Location", "Occurred at", "Details"], ...filteredAuditEntries.map((entry) => [entry.auditId, entry.action, entry.actorDisplayName, auditTargetLabel(entry), entry.locationName ?? "", entry.occurredAt, JSON.stringify(entry.details)])]);
+      return;
+    }
+    openDetail({ eyebrow: "Planned integration", title: "Microsoft analytics export", icon: <Cloud size={18} />, summary: "The reporting boundary keeps operational writes fast and auditable while making curated data available for corporate analytics.", body: <><p className="detail-lead">PostgreSQL remains the operational source of truth. A scheduled, incremental export can publish append-only event facts and daily aggregates to Microsoft Fabric or Azure Data Lake Storage Gen2 without allowing a lake pipeline to edit scanner state.</p><DetailFacts items={[["Source", "Azure Database for PostgreSQL"], ["Destination", "Microsoft Fabric Lakehouse or ADLS Gen2"], ["Recommended grain", "Immutable event facts plus daily location aggregates"], ["Security boundary", "Read-only export identity"], ["Status", "Awaiting Goodwill Microsoft architecture decisions"]]}/></> });
   };
-  return <>
-    <div className="report-grid">{reports.map((report) => <article className="report-card" key={report.title}><span><report.icon /></span><Pill tone={report.tag === "Ready" ? "good" : "muted"}>{report.tag}</Pill><h2>{report.title}</h2><p>{report.text}</p><button onClick={() => openReport(report)}>{report.tag === "Ready" ? "Download CSV" : "View plan"} <ArrowRight size={16} /></button></article>)}</div>
-    <section className="panel data-health"><PanelTitle title="Data health" subtitle="Quality signals across tracked operations" /><div className="health-bar"><span style={{ width: `${Math.max(5, Math.round((data.events.filter((item) => item.accuracyFlags.length === 0).length / Math.max(1, data.events.length)) * 100))}%` }} /></div><div className="health-stats"><span><b>{data.events.length}</b> ledger events</span><span><b>{data.events.filter((item) => item.accuracyFlags.length === 0).length}</b> timing verified</span><span><b>{Object.values(data.projections).filter((item) => item?.health === "needs_review").length}</b> open exceptions</span><span><b>{data.correctionRequests.filter((item) => item.status === "pending").length}</b> pending corrections</span></div></section>
-  </>;
+  return <div className="reports-workspace">
+    <section className="panel report-filter-panel">
+      <div className="report-filter-panel__header"><div><span className="eyebrow">Reporting scope</span><h2>Choose exactly what to analyze</h2><p>Filters narrow the matching datasets and downloads; the source events are never changed. Actor filtering applies to governance and correction reports.</p></div><div><span className="report-filter-panel__scope">{reportScope}</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button></div></div>
+      <div className="report-filter-grid">
+        <label className="report-filter--wide">Search<input value={draft.search} onChange={(event) => updateDraft("search", event.target.value)} placeholder="Container, scanner, event, or location" /></label>
+         <label>Location<select value={draft.locationId} onChange={(event) => updateDraft("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}{location.type === "in_transit" ? " · virtual transit" : ""}</option>)}</select></label>
+        <label>Scanner<select value={draft.deviceId} onChange={(event) => updateDraft("deviceId", event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option value={device.deviceId} key={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label>
+        <label>Admin / requester<select value={draft.actor} onChange={(event) => updateDraft("actor", event.target.value)}><option value="">All users</option>{actorOptions.map((actor) => <option value={actor} key={actor}>{actor}</option>)}</select></label>
+        <label>Observation type<select value={draft.eventType} onChange={(event) => updateDraft("eventType", event.target.value as ReportsFilterDraft["eventType"])}><option value="">All observations</option><option value="load_assigned">Marked full / load assigned</option><option value="batch_out">Sent in transit</option><option value="batch_in">Received</option><option value="emptied">Marked empty</option></select></label>
+        <label>Data health<select value={draft.health} onChange={(event) => updateDraft("health", event.target.value as ReportsFilterDraft["health"])}><option value="">All projection health</option><option value="clean">Clean projection</option><option value="warning">Warning</option><option value="needs_review">Needs review</option></select></label>
+        <label>From date<input type="date" value={draft.from} onChange={(event) => updateDraft("from", event.target.value)} /></label>
+        <label>To date<input type="date" value={draft.to} onChange={(event) => updateDraft("to", event.target.value)} /></label>
+        <button className="primary report-filter-panel__apply" onClick={applyFilters} disabled={Boolean(draftDateError)}>Apply report scope</button>
+      </div>
+      {draftDateError && <p className="report-filter-error">{draftDateError}</p>}
+    </section>
+    <div className="report-signal-grid"><article><span><Activity size={17} /></span><div><small>Observations in scope</small><strong>{filteredEvents.length}</strong><em>{flaggedEvents.length ? `${flaggedEvents.length} with data flags` : "No timing or order flags"}</em></div></article><article><span><Truck size={17} /></span><div><small>Movement in scope</small><strong>{transitCount}</strong><em>{transitCount ? "Receipt still needed" : "No active transit"}</em></div></article><article><span><AlertTriangle size={17} /></span><div><small>Needs review</small><strong>{reviewCount + warningCount}</strong><em>{reviewCount ? `${reviewCount} require a decision` : "No open projection conflicts"}</em></div></article><article><span><Smartphone size={17} /></span><div><small>Scanner freshness</small><strong>{deviceFreshnessPercent}%</strong><em>{staleDevices.length ? `${staleDevices.length} stale over 24 hours` : "All scanners reported recently"}</em></div></article></div>
+     <div className="report-grid">{reports.map((report) => <article className="report-card report-card--expanded" key={report.title}><div className="report-card__top"><span><report.icon /></span><Pill tone={report.tag === "Ready" ? "good" : "muted"}>{report.tag}</Pill></div><h2>{report.title}</h2><p>{report.text}</p><div className="report-card__count">{report.count === null ? "—" : report.count}<small>{report.id === "movement" ? "events" : report.id === "locations" ? "locations" : report.id === "devices" ? "scanners" : report.id === "transit" ? "containers" : report.id === "latency" ? "scanner groups" : report.id === "governance" ? "actions" : "rows"} in scope</small></div><button onClick={() => openReport(report)}>{report.tag === "Ready" ? "Download filtered CSV" : "View integration plan"} <ArrowRight size={16} /></button></article>)}</div>
+    <section className="panel data-health">
+      <PanelTitle title="Data health" subtitle="Evidence quality signals, separated from physical-state decisions." action="How to read this" onClick={openHealthDetail} />
+      <div className="health-score"><div className="health-score__value">{integrityPercent}%</div><div><strong>Observation integrity</strong><p>{flaggedEvents.length ? `${flaggedEvents.length} observations carry timing, sequence, or device-order flags.` : "Every observation in this scope is free of timing and order flags."}</p></div><button className="secondary" onClick={openHealthDetail}><CircleHelp size={14} /> Definitions</button></div>
+      <div className="health-bar"><span style={{ width: `${Math.max(5, integrityPercent)}%` }} /></div>
+       <div className="health-stats"><span><b>{filteredEvents.length}</b> events in scope</span><span><b>{flaggedEvents.length}</b> flagged observations</span><span><b>{reviewCount}</b> projection conflicts</span><span><b>{filteredCorrections.filter((item) => item.status === "pending").length}</b> pending corrections</span><span><b>{lateUploadCount}</b> uploads over 15 min</span></div>
+       <div className="health-check-grid"><article><span><ShieldCheck size={16} /></span><div><strong>Integrity</strong><p>Are event timestamps and device order trustworthy?</p></div><Pill tone={integrityPercent >= 98 ? "good" : "warn"}>{integrityPercent >= 98 ? "Strong" : "Review"}</Pill></article><article><span><AlertTriangle size={16} /></span><div><strong>Projection decisions</strong><p>Are any containers waiting for a governed decision?</p></div><Pill tone={reviewCount ? "warn" : "good"}>{reviewCount ? `${reviewCount} open` : "Clear"}</Pill></article><article><span><Wifi size={16} /></span><div><strong>Scanner freshness</strong><p>Can quiet locations be trusted to have reported recently?</p></div><Pill tone={deviceFreshnessPercent >= 90 ? "good" : "warn"}>{deviceFreshnessPercent}% fresh</Pill></article><article><span><Boxes size={16} /></span><div><strong>Registration coverage</strong><p>Which tracked containers have never produced evidence?</p></div><Pill tone={unobservedContainers === null ? "muted" : unobservedContainers ? "warn" : "good"}>{unobservedContainers === null ? "Clear filters" : unobservedContainers ? `${unobservedContainers} unobserved` : "Complete"}</Pill></article><article><span><Clock3 size={16} /></span><div><strong>Upload latency</strong><p>Are delayed uploads explained by offline work?</p></div><Pill tone={lateUploadCount ? "warn" : "good"}>{lateUploadCount ? `${lateUploadCount} late` : "Normal"}</Pill></article></div>
+    </section>
+    <section className="panel report-preview"><PanelTitle title="Filtered event preview" subtitle={`${filteredEvents.length} immutable observations match the current scope. Select a row to inspect its evidence.`} action="Download movement ledger" onClick={() => openReport(reports[0]!)} />{filteredEvents.length ? <div className="table-wrap"><table><thead><tr><th>Observation</th><th>Container</th><th>Location</th><th>Scanner</th><th>Observed</th><th>Quality</th></tr></thead><tbody>{filteredEvents.slice(0, 12).map((event) => <tr className="clickable-row" key={event.eventId} onClick={() => openObservation(event)}><td><strong>{eventLabel(event.eventType)}</strong><small>{event.eventId.slice(0, 12)}…</small></td><td>{containerLabel(event.containerId)}</td><td>{locationName(event.locationId)}</td><td>{scannerNumber(event.deviceId)} · {deviceName(event.deviceId)}</td><td>{relativeTime(event.eventAt)}</td><td>{event.accuracyFlags.length ? <Pill tone="warn">Review flags</Pill> : <Pill tone="good">Verified</Pill>}</td></tr>)}</tbody></table></div> : <EmptyState>No observations match this report scope. Clear a filter or widen the date range.</EmptyState>}{filteredEvents.length > 12 && <p className="report-preview__more">Showing the newest 12 here; the download contains all {filteredEvents.length} matching observations.</p>}</section>
+  </div>;
 }
 
 type AuditDraft = {
@@ -1988,16 +2118,17 @@ function SettingsPage({ data, setPage, session, onRequestSignIn, onPasswordChang
         {actions.map((action) => <button className="settings-action-card" key={action.title} onClick={() => setPage(action.page)}><span className="settings-action-card__icon"><action.icon size={19} /></span><span><strong>{action.title}</strong><small>{action.text}</small></span><span className="settings-action-card__go">Open<ChevronRight size={15} /></span></button>)}
       </div>
     </section>
+    <section className="location-governance panel">
+      <PanelTitle title="Location access model" subtitle="A practical boundary between local operations and corporate governance." action="Open corrections" onClick={() => setPage("corrections")} />
+      <div className="location-governance__intro"><span><ShieldCheck size={20} /></span><div><strong>Recommended for rollout: add scoped Location Managers.</strong><p>Managers at a store, Donation Xpress site, or warehouse should be able to keep work moving without silently changing the corporate record. Their changes should create a reasoned request that corporate administrators can review.</p></div><Pill tone="muted">Design ready</Pill></div>
+      <div className="location-governance__roles"><article><span className="location-governance__role-icon"><MapPin size={17} /></span><div><h3>Location Manager</h3><p>Scoped to assigned locations. Can enable or disable local scanners, request a container correction, and record a reason for a local operational change.</p><small>Cannot add admins, change organization policy, approve their own material correction, or edit another location.</small></div><Pill tone="muted">Proposed</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--admin"><UserRound size={17} /></span><div><h3>Operations Administrator</h3><p>Network-wide operational control. Can manage scanners, triage exceptions, and request corrections across locations.</p><small>Should not approve material corrections when they are the requester.</small></div><Pill tone="good">Current</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--owner"><ShieldCheck size={17} /></span><div><h3>Organization Owner</h3><p>Corporate governance. Manages administrator access and approves, rejects, or reopens official-state corrections with a reason.</p><small>Use sparingly; keep at least two active owners for continuity and dual control.</small></div><Pill tone="blue">Current</Pill></article></div>
+      <div className="location-governance__workflow"><span className="eyebrow">Accountable change path</span><div><span><b>1</b><strong>Local manager records what happened</strong><small>Location, scanner, container, and reason.</small></span><ArrowRight size={15} /><span><b>2</b><strong>Corporate queue receives the request</strong><small>Original scan evidence remains unchanged.</small></span><ArrowRight size={15} /><span><b>3</b><strong>Owner approves or rejects</strong><small>A separate decision and reason are audited.</small></span></div></div>
+    </section>
     <section className="settings-reference panel">
       <PanelTitle title="Operating policies" subtitle="Reference only — these policies are enforced by the service and are not interactive settings." />
       <div className="settings-reference__grid">{settings.map((setting) => <article className="settings-reference__item" key={setting.title}><span className="settings-reference__icon"><setting.icon size={18} /></span><div><h3>{setting.title}</h3><p>{setting.text}</p></div><Pill tone="muted">Reference</Pill></article>)}</div>
     </section>
-    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session && <GovernanceTimeline entries={data.auditEntries} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
-}
-
-function GovernanceTimeline({ entries }: { entries: AuditEntry[] }) {
-  const actionLabel = (action: string) => action.replace(/^admin\.|^device\.|^review\./, "").replaceAll("_", " ").replaceAll(".", " ");
-  return <section className="governance-timeline"><PanelTitle title="Governance timeline" subtitle="Recent system, scanner, access, and review actions." />{entries.length ? <div className="governance-timeline__list">{entries.slice(0, 20).map((entry) => <article key={entry.auditId}><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{actionLabel(entry.action)}</strong><p>{entry.actorDisplayName} · {entry.targetType.replaceAll("_", " ")}</p>{typeof entry.details.assignmentReason === "string" && <small>Move note: {entry.details.assignmentReason}</small>}{typeof entry.details.reason === "string" && <small>Reason: {entry.details.reason}</small>}</div><time>{relativeTime(entry.occurredAt)}</time></article>)}</div> : <EmptyState>No governed actions have been recorded for this organization yet.</EmptyState>}</section>;
+    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
 }
 
 function AccountSecurity({ session, required = false, onPasswordChanged, onSignOut }: { session: AdminSession; required?: boolean; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
@@ -2064,7 +2195,7 @@ function AdminDirectory({ session }: { session: AdminSession }) {
     catch (caught) { throw caught instanceof Error ? caught : new Error("Could not reset account password."); }
     finally { setBusy(false); }
   };
-  return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners govern pilot access. Role changes and disabled accounts immediately invalidate the affected person’s active browser sessions." />
+  return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners govern access. Role changes and disabled accounts immediately invalidate the affected person’s active browser sessions." />
     <div className="admin-directory__users">{users?.map((user) => <ManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} busy={busy} onSave={save} onReset={resetPassword} />) ?? <div className="skeleton"/>}</div>
     {error && <div className="sign-in-error">{error}</div>}
     <form className="admin-user-form" onSubmit={(event) => void addUser(event)}><h3>Add administrator</h3><p>Use an Operations Administrator for normal data and scanner work. Only nominate another Organization Owner when they need full access governance.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div><button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form>

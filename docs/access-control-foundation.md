@@ -12,6 +12,7 @@ access control.
 | --- | --- | --- | --- |
 | **Organization Owner** | Goodwill corporate authority for the tenant. At least two people should hold this role: the operational program owner and the Chief of IT. | Yes | Yes |
 | **Operations Administrator** | Daily operational and device management. | No | Yes |
+| **Location Manager (proposed)** | Store, Donation Xpress, or warehouse lead who can resolve local exceptions without seeing or changing the wider network. | No | Yes, only for assigned locations |
 | **Read-only reviewer** | Audit, reporting, and exception review without changes. | No | View only |
 | **StackTrack Support** | Time-limited, explicitly approved vendor troubleshooting access. | No | Only the granted scope |
 
@@ -19,6 +20,33 @@ There is no hidden developer super-admin. Goodwill should retain the ability to
 remove the original implementer and all other users. Support access must be
 created by an Organization Owner, expire automatically, and be written to the
 audit log.
+
+### Location-manager operating boundary
+
+The location role is worth adding for rollout, but it should be a scoped role,
+not a weaker copy of an Operations Administrator. A manager should be able to
+
+- see containers, scanners, activity, and open exceptions for assigned
+  locations;
+- disable a scanner that is lost or unsafe and re-enable it after verification;
+- record a local explanation and request a correction when a scan was missed,
+  a container arrived without a receipt, or a scanner was used at the wrong
+  location; and
+- view the outcome of requests they submitted.
+
+The manager should not be able to approve their own correction, edit another
+location, add administrators, change global policy, or erase observations. A
+local change should create a pending, corporate-visible request containing the
+location, scanner/container, reason, before state, proposed state, and the
+original evidence IDs. An Organization Owner (or a separately designated
+corporate approver) decides material changes; the API must enforce the scope
+server-side rather than trusting a hidden UI control.
+
+To activate this role, Goodwill needs to provide the Entra group or HR source
+that identifies a manager and the authoritative mapping from a user to one or
+more location IDs. Until that mapping exists, the console presents this as a
+design-ready governance model and keeps live writes limited to the existing
+corporate roles.
 
 Until a scoped support-grant workflow is introduced, the pilot treats support
 as read-only: it cannot alter scanners, users, or review decisions.
@@ -83,6 +111,23 @@ Only an Organization Owner can approve or reject the request.
 
 Goodwill can change the routine-approval policy after it defines store and
 corporate authority, but material dual control should remain.
+
+## Activity versus audit trail
+
+These views intentionally answer different questions:
+
+- **Activity** is the operational feed: what a scanner observed, where it was,
+  and how movement is progressing. It is useful for a shift lead asking “what
+  happened today?” and for tracing a container’s evidence. It is not a record
+  of who changed the system.
+- **Audit trail** is the governance record: who signed in, renamed or moved a
+  scanner, enabled/disabled a device, requested or decided a correction, and
+  which reason and before/after values were recorded. It is useful for
+  accountability, investigations, and compliance. It should remain append-only
+  even when the operational projection changes.
+
+Reports can join the two by event ID, device ID, location ID, and time window,
+but neither view should replace the other.
 
 This is still a test-pilot password bridge, not the production Entra design.
 

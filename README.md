@@ -62,6 +62,9 @@ GitHub OpenID Connect rather than storing an Azure password in GitHub.
 The proposed Goodwill-owned access model and production authentication boundary
 are documented in the [access-control foundation](docs/access-control-foundation.md).
 
+The report definitions, filter semantics, data-health use cases, and proposed
+location-manager boundary are in the [reporting foundation](docs/reporting-foundation.md).
+
 The test API rate-limits requests globally and limits administrator sign-in
 attempts to five per fifteen minutes per client address. This is a pilot safety
 control; production should enforce equivalent limits at Goodwill's gateway or
