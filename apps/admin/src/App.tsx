@@ -1468,7 +1468,7 @@ function ActivityPage({ data, query, openDetail }: { data: OperationsData; query
         ["Received at", new Date(event.receivedAt).toLocaleString()],
         ["Location", l(event.locationId) ?? "Unknown"],
         ["Event UUID", event.eventId]
-      ]}/><h3 className="detail-section-title">Accuracy evidence</h3><p className="detail-lead">{event.accuracyFlags.length ? event.accuracyFlags.join(" · ") : "No timing, ordering, or reference-data warnings were recorded."}</p></>
+      ]}/><h3 className="detail-section-title">Accuracy evidence</h3><p className="detail-lead">{event.accuracyFlags.length ? event.accuracyFlags.join(" · ") : "No timing, ordering, or reference-data warnings were recorded."}</p><EventEvidence events={[event]} data={data}/></>
     })}><div className="timeline__rail"><span>{index + 1}</span><i /></div><div className="timeline__card">
       <div><Pill tone="blue">{eventLabel(event.eventType)}</Pill><time>{new Date(event.eventAt).toLocaleString()}</time></div>
       <h3>{c(event.containerId)?.label} · {l(event.locationId)}</h3>
@@ -1775,8 +1775,11 @@ function SettingsPage({ data, openDetail, session, onRequestSignIn, onPasswordCh
   ];
   return <><section className="settings-list"><article className="access-settings"><span><ShieldCheck /></span><div><h2>Administrator access</h2><p>{session ? `${session.principal.displayName} is signed in as ${roleLabel(session.principal.role)}. Organization Owners can add daily administrators from this console.` : "Operational changes are protected by a server-side pilot account. Sign in to manage scanners and administrator accounts."}</p></div><button className="secondary" onClick={onRequestSignIn}>{session ? "Manage access" : "Sign in"}</button></article>{settings.map((setting) => <article key={setting.title}><span><setting.icon /></span><div><h2>{setting.title}</h2><p>{setting.text}</p></div><button aria-label={`Open ${setting.title}`} onClick={() => openDetail({
     eyebrow: "Configuration",
+    icon: <setting.icon size={18} />,
+    status: { label: "Pilot policy", tone: "blue" },
+    summary: setting.text,
     title: setting.title,
-    body: <><p className="detail-lead">{setting.text}</p><DetailFacts items={setting.details}/></>
+    body: <><h3 className="detail-section-title">Current policy</h3><DetailFacts items={setting.details}/></>
   })}><ChevronRight /></button></article>)}</section>{session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session && <GovernanceTimeline entries={data.auditEntries} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
 }
 
