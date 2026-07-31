@@ -22,23 +22,34 @@ function Read-PlainSecret([string]$Prompt) {
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
 }
 
-function ConvertTo-Base64Url([byte[]]$Bytes) {
-  [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-}
-
 $adminPassword = Read-PlainSecret "Azure PostgreSQL administrator password"
 $ownerPassword = Read-PlainSecret "Initial Organization Owner password (12+ characters)"
 if ($ownerPassword.Length -lt 12) { throw "Use a password of at least 12 characters." }
 $username = $Username.Trim().ToLowerInvariant()
 if ($username -notmatch '^[a-z0-9._-]{3,64}$') { throw "Username must use 3 to 64 lowercase letters, numbers, periods, underscores, or hyphens." }
 
-$salt = New-Object byte[] 16
-$random = [Security.Cryptography.RandomNumberGenerator]::Create()
-try { $random.GetBytes($salt) } finally { $random.Dispose() }
-$derive = [Security.Cryptography.Rfc2898DeriveBytes]::new($ownerPassword, $salt, 210000, [Security.Cryptography.HashAlgorithmName]::SHA512)
+# The API verifies with Node's crypto implementation. Generate the bootstrap
+# hash with the same implementation so Windows PowerShell/.NET encoding details
+# cannot cause a valid password to be rejected.
+$node = (Get-Command node.exe -ErrorAction Stop).Source
+$nodeHashProgram = @'
+const { randomBytes, pbkdf2Sync } = require("node:crypto");
+const password = process.env.STACKTRACK_BOOTSTRAP_PASSWORD;
+if (!password) process.exit(2);
+const salt = randomBytes(16).toString("base64url");
+const derived = pbkdf2Sync(password, salt, 210000, 32, "sha512").toString("base64url");
+process.stdout.write(`pbkdf2-sha512$210000$${salt}$${derived}`);
+'@
+$env:STACKTRACK_BOOTSTRAP_PASSWORD = $ownerPassword
+$nodeProgramPath = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), ".cjs")
 try {
-  $passwordHash = "pbkdf2-sha512`$210000`$(ConvertTo-Base64Url $salt)`$(ConvertTo-Base64Url $derive.GetBytes(32))"
-} finally { $derive.Dispose() }
+  [System.IO.File]::WriteAllText($nodeProgramPath, $nodeHashProgram, [System.Text.UTF8Encoding]::new($false))
+  $passwordHash = & $node $nodeProgramPath
+  if ($LASTEXITCODE -ne 0 -or -not $passwordHash) { throw "Could not create the password hash with Node.js." }
+} finally {
+  Remove-Item Env:STACKTRACK_BOOTSTRAP_PASSWORD -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $nodeProgramPath -Force -ErrorAction SilentlyContinue
+}
 
 $env:PGPASSWORD = $adminPassword
 $env:PGSSLMODE = "require"
