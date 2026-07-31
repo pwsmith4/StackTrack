@@ -593,4 +593,28 @@ footer > span:first-child { display: none; }
 .danger-button:hover { color: #fff; border-color: #a8463a; background: #a8463a; }
 .admin-directory .panel-title p { font-size: 0; }
 .admin-directory .panel-title p::after { content: "Organization access and role governance."; font-size: 10px; }
+
+/* Settings is an action hub first; policy explanations are deliberately non-interactive. */
+.settings-actions, .settings-reference { overflow: hidden; }
+.settings-action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 18px; }
+.settings-action-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; min-height: 92px; padding: 14px; border: 1px solid var(--line); color: var(--ink); background: #fff; text-align: left; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+.settings-action-card:hover:not(:disabled) { border-color: #9bc9db; box-shadow: 0 7px 18px rgba(0, 41, 79, .08); transform: translateY(-1px); }
+.settings-action-card:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.settings-action-card:disabled { cursor: not-allowed; opacity: .68; background: #fafcfd; }
+.settings-action-card__icon { width: 35px; height: 35px; display: grid; place-items: center; flex: none; color: var(--blue-800); background: #eaf4f9; }
+.settings-action-card--access .settings-action-card__icon { color: #206b54; background: #eaf7ef; }
+.settings-action-card > span:nth-child(2) { min-width: 0; display: grid; gap: 5px; }
+.settings-action-card strong { color: #30414d; font-size: 11px; line-height: 1.25; }
+.settings-action-card small { overflow: hidden; color: #7a8790; font-size: 9px; line-height: 1.45; text-overflow: ellipsis; }
+.settings-action-card__go { display: inline-flex; align-items: center; gap: 3px; color: var(--blue-800); font-size: 9px; font-weight: 800; white-space: nowrap; }
+.settings-action-card:disabled .settings-action-card__go { color: #7a8790; }
+.settings-reference { margin-top: 18px; }
+.settings-reference__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; padding: 18px; background: var(--line); }
+.settings-reference__item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 11px; min-width: 0; padding: 14px; background: #fff; }
+.settings-reference__icon { width: 32px; height: 32px; display: grid; place-items: center; color: var(--blue-800); background: #eef6fa; }
+.settings-reference__item h3 { margin: 0; color: #34414d; font-size: 11px; }
+.settings-reference__item p { margin: 5px 0 0; color: #7a8790; font-size: 9px; line-height: 1.5; }
+.settings-reference__item .pill { margin-top: 1px; }
+@media (max-width: 900px) { .settings-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .settings-action-grid, .settings-reference__grid { grid-template-columns: 1fr; } .settings-action-card { min-height: 82px; } .settings-reference__item { grid-template-columns: auto minmax(0, 1fr); } .settings-reference__item .pill { grid-column: 2; justify-self: start; margin-top: 0; } }
 @media (max-width: 600px) { .detail-drawer__body { padding: 20px; } .detail-drawer__header { padding: 18px 20px; } .detail-drawer__record { margin-inline: 20px; } .detail-drawer__actions { padding-inline: 20px; } .detail-danger-zone { align-items: stretch; flex-direction: column; } .danger-button { width: 100%; } }
