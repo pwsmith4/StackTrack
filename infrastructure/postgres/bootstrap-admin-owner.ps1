@@ -57,8 +57,11 @@ try {
   & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$migrationPath
   if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack admin access migration failed." }
   $sql = if ($ResetExisting) { @"
+GRANT USAGE ON SCHEMA public TO stacktrack_app;
+GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
 INSERT INTO admin_users (tenant_id, username, display_name, role, password_hash, must_change_password)
 VALUES (:'tenant_id'::uuid, :'username', :'display_name', 'organization_owner', :'password_hash', false)
 ON CONFLICT (tenant_id, username) DO UPDATE
@@ -70,8 +73,11 @@ ON CONFLICT (tenant_id, username) DO UPDATE
       support_expires_at = NULL,
       updated_at = clock_timestamp();
 "@ } else { @"
+GRANT USAGE ON SCHEMA public TO stacktrack_app;
+GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
 INSERT INTO admin_users (tenant_id, username, display_name, role, password_hash, must_change_password)
 VALUES (:'tenant_id'::uuid, :'username', :'display_name', 'organization_owner', :'password_hash', false)
 ON CONFLICT (tenant_id, username) DO NOTHING;

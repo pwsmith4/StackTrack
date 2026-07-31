@@ -14,6 +14,10 @@ export interface DeviceTelemetryUpdate {
   readonly pendingOfflineScanCount: number;
 }
 
+export interface DeviceAdministrationActor {
+  readonly userId: string;
+}
+
 export interface DeviceControlResult {
   readonly deviceId: string;
   readonly assignedLocationId: string;
@@ -29,7 +33,8 @@ export interface DeviceAdministration {
   update(
     tenantId: string,
     deviceId: string,
-    update: DeviceControlUpdate
+    update: DeviceControlUpdate,
+    actor?: DeviceAdministrationActor
   ): Promise<DeviceControlResult | null>;
   reportTelemetry(
     tenantId: string,
@@ -68,7 +73,8 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
   public async update(
     tenantId: string,
     deviceId: string,
-    update: DeviceControlUpdate
+    update: DeviceControlUpdate,
+    actor?: DeviceAdministrationActor
   ): Promise<DeviceControlResult | null> {
     return this.tenantTransaction(tenantId, async (client) => {
       const current = await client.query<{
@@ -143,18 +149,20 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
       if (changedLocation) {
         await client.query(
           `INSERT INTO device_assignment_history
-            (tenant_id, device_id, previous_location_id, assigned_location_id, reason, actor_type)
-           VALUES ($1, $2, $3, $4, $5, 'system')`,
-          [tenantId, deviceId, current.rows[0].assigned_location_id, assignedLocationId, assignmentReason]
+            (tenant_id, device_id, previous_location_id, assigned_location_id, reason, actor_type, actor_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [tenantId, deviceId, current.rows[0].assigned_location_id, assignedLocationId, assignmentReason, actor ? "user" : "system", actor?.userId ?? null]
         );
       }
 
       await client.query(
         `INSERT INTO audit_log
-          (tenant_id, actor_type, action, target_type, target_id, details)
-         VALUES ($1, 'system', $2, 'device', $3, $4::jsonb)`,
+          (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
+         VALUES ($1, $2, $3, $4, 'device', $5, $6::jsonb)`,
         [
           tenantId,
+          actor ? "user" : "system",
+          actor?.userId ?? null,
           changedLabel && changedLocation
             ? "device.renamed_and_reassigned"
             : changedLocation && changedAvailability

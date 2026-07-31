@@ -40,7 +40,12 @@ Open:
 - React Native web preview: [http://127.0.0.1:8082](http://127.0.0.1:8082)
 - API/legacy diagnostic lab: [http://127.0.0.1:3000](http://127.0.0.1:3000)
 
-On Windows, `start-local.cmd` launches all three. Every non-health API request currently requires a development tenant header; event submissions also require a development device header. This header mode must never be enabled in production.
+On Windows, `start-local.cmd` launches all three. The mobile test routes use a
+development tenant/device identity pair, while the admin console uses a
+server-issued session. Browser requests are accepted only from the configured
+StackTrack web origins (set `STACKTRACK_ALLOWED_ORIGINS` as a comma-separated
+list if a different local web origin is needed). Development header mode must
+never be enabled in production.
 
 See the [local testing guide](docs/local-testing.md) for seeded labels, offline testing, built-in scenarios, and optional testing from another device on the same private network.
 
@@ -54,6 +59,11 @@ GitHub OpenID Connect rather than storing an Azure password in GitHub.
 
 The proposed Goodwill-owned access model and production authentication boundary
 are documented in the [access-control foundation](docs/access-control-foundation.md).
+
+The test API also rate-limits requests globally and limits administrator sign-in
+attempts to five per fifteen minutes per client address. This is a pilot safety
+control; production should enforce equivalent limits at Goodwill's gateway or
+identity provider as well.
 
 ### Start the PostgreSQL simulation
 
@@ -101,10 +111,12 @@ npm.cmd run release:mobile:minor  # 0.3.1 → 0.4.0
 npm.cmd run release:mobile:major  # 0.3.1 → 1.0.0
 ```
 
-The command updates the Expo manifest, Android build number, package metadata,
-and the version bundled into the app together. Commit those changes with the
-release. The Devices page shows each scanner's reported installed version,
-required version, and any required-update warning.
+The command updates the Expo manifest, Android Gradle version code/name,
+package metadata, and the version bundled into the app together. Commit those
+changes with the release. The Devices page shows each scanner's reported installed version and
+the exact five-digit scanner identifier. Required-version enforcement remains
+available to the mobile/API deployment policy but is intentionally not exposed
+as a routine pilot admin toggle.
 
 GitHub Actions also creates a versioned mobile preview on every qualifying push
 to `main` or `test`. It adds the GitHub run number and short commit hash, such

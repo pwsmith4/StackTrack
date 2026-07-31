@@ -256,7 +256,11 @@ function AppContent() {
     if (!effectiveOnline) return;
     void fetch(`${API_URL}/api/v1/local/devices/${DEVICE_ID}/telemetry`, {
       method: "PATCH",
-      headers: { "content-type": "application/json", "x-stacktrack-tenant-id": TENANT_ID },
+      headers: {
+        "content-type": "application/json",
+        "x-stacktrack-tenant-id": TENANT_ID,
+        "x-stacktrack-device-id": DEVICE_ID
+      },
       body: JSON.stringify({ installationId: INSTALLATION_ID, appVersion: APP_REPORTED_VERSION, pendingOfflineScanCount: pending })
     }).catch(() => undefined);
   }, [effectiveOnline, pending]);
@@ -500,7 +504,7 @@ function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredA
           <View style={styles.scanCopy}><Text style={styles.scanButtonText}>SCAN CONTAINER</Text><Text style={styles.scanButtonSub}>Camera or handheld scanner</Text></View>
           <Icon name="arrow-forward" color="white" />
         </Pressable>
-        <Text style={styles.testHint}>Local test labels: B1001 · B1002 · C2001</Text>
+        <Text style={styles.testHint}>Pilot test labels: B1001 · B1002 · C2001</Text>
       </View>
 
       <View style={styles.syncCard}>

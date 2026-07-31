@@ -7,6 +7,7 @@ const passwordIterations = 210_000;
 const sessionLifetimeMs = 1000 * 60 * 60 * 12;
 
 export type AdminRole = "organization_owner" | "operations_administrator" | "read_only_reviewer" | "support";
+export type ManagedAdminRole = Exclude<AdminRole, "support">;
 
 export interface AdminPrincipal {
   readonly tenantId: string;
@@ -15,6 +16,8 @@ export interface AdminPrincipal {
   readonly displayName: string;
   readonly role: AdminRole;
   readonly supportExpiresAt: string | null;
+  readonly isActive: boolean;
+  readonly mustChangePassword: boolean;
 }
 
 export interface AdminSession {
@@ -26,16 +29,64 @@ export interface AdminSession {
 export interface NewAdminUser {
   readonly username: string;
   readonly displayName: string;
-  readonly role: Exclude<AdminRole, "organization_owner" | "support">;
+  readonly role: ManagedAdminRole;
   readonly temporaryPassword: string;
 }
 
-function rowPrincipal(row: Record<string, unknown>): AdminPrincipal {
+export interface AdminUserUpdate {
+  readonly displayName?: string;
+  readonly role?: ManagedAdminRole;
+  readonly isActive?: boolean;
+}
+
+export interface AuditEntry {
+  readonly auditId: string;
+  readonly occurredAt: string;
+  readonly actorType: "user" | "device" | "system";
+  readonly actorDisplayName: string;
+  readonly action: string;
+  readonly targetType: string;
+  readonly targetId: string | null;
+  readonly details: Record<string, unknown>;
+}
+
+type AdminRow = Record<string, unknown>;
+
+function rowPrincipal(row: AdminRow): AdminPrincipal {
   return {
     tenantId: String(row.tenant_id), userId: String(row.user_id), username: String(row.username),
     displayName: String(row.display_name), role: row.role as AdminRole,
-    supportExpiresAt: row.support_expires_at ? new Date(String(row.support_expires_at)).toISOString() : null
+    supportExpiresAt: row.support_expires_at ? new Date(String(row.support_expires_at)).toISOString() : null,
+    isActive: row.is_active === undefined ? true : Boolean(row.is_active),
+    mustChangePassword: Boolean(row.must_change_password)
   };
+}
+
+function validatePassword(password: string, label = "Password"): void {
+  if (password.length < 12) throw new Error(`${label} must be at least 12 characters.`);
+  if (password.length > 256) throw new Error(`${label} is too long.`);
+}
+
+function validateDisplayName(displayName: string): string {
+  const normalized = displayName.trim();
+  if (normalized.length < 2 || normalized.length > 120) {
+    throw new Error("Display name must contain 2-120 characters.");
+  }
+  return normalized;
+}
+
+function validateUsername(usernameInput: string): string {
+  const username = usernameInput.trim().toLowerCase();
+  if (!/^[a-z0-9._-]{3,64}$/.test(username)) {
+    throw new Error("Username must use 3-64 lowercase letters, numbers, periods, underscores, or hyphens.");
+  }
+  return username;
+}
+
+function validateManagedRole(role: unknown): asserts role is ManagedAdminRole {
+  if (!(["organization_owner", "operations_administrator", "read_only_reviewer"] as const).includes(role as ManagedAdminRole)) {
+    throw new Error("Choose a valid StackTrack administrator role.");
+  }
 }
 
 export async function hashPassword(password: string, salt = randomBytes(16).toString("base64url")): Promise<string> {
@@ -70,31 +121,36 @@ export class PostgresAdminAccess {
     } finally { client.release(); }
   }
 
+  private async audit(client: PoolClient, actor: AdminPrincipal, action: string, targetId: string, details: Record<string, unknown> = {}): Promise<void> {
+    await client.query(
+      `INSERT INTO audit_log (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
+       VALUES ($1,'user',$2,$3,'admin_user',$4,$5::jsonb)`,
+      [this.tenantId, actor.userId, action, targetId, JSON.stringify(details)]
+    );
+  }
+
   public async signIn(usernameInput: string, password: string): Promise<AdminSession | null> {
     const username = usernameInput.trim().toLowerCase();
     return this.transaction(async (client) => {
       const user = await client.query(
-        `SELECT tenant_id, user_id, username, display_name, role, support_expires_at, password_hash
+        `SELECT tenant_id, user_id, username, display_name, role, support_expires_at, is_active, must_change_password, password_hash
            FROM admin_users
           WHERE tenant_id = $1 AND username = $2 AND is_active
             AND (support_expires_at IS NULL OR support_expires_at > clock_timestamp())`,
         [this.tenantId, username]
       );
-      const row = user.rows[0];
-      if (!row?.password_hash || !(await verifyPassword(password, row.password_hash))) return null;
+      const row = user.rows[0] as AdminRow | undefined;
+      if (!row?.password_hash || !(await verifyPassword(password, String(row.password_hash)))) return null;
       const token = randomBytes(32).toString("base64url");
       const tokenHash = createHash("sha256").update(token).digest("hex");
       const expiresAt = new Date(Date.now() + sessionLifetimeMs).toISOString();
       await client.query(
-        `INSERT INTO admin_sessions (tenant_id, user_id, token_sha256, expires_at)
-         VALUES ($1,$2,$3,$4)`, [this.tenantId, row.user_id, tokenHash, expiresAt]
+        `INSERT INTO admin_sessions (tenant_id, user_id, token_sha256, expires_at) VALUES ($1,$2,$3,$4)`,
+        [this.tenantId, row.user_id, tokenHash, expiresAt]
       );
-      await client.query(
-        `INSERT INTO audit_log (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
-         VALUES ($1,'user',$2,'admin.signed_in','admin_user',$2,$3::jsonb)`,
-        [this.tenantId, row.user_id, JSON.stringify({ username, source: "admin_console" })]
-      );
-      return { token, principal: rowPrincipal(row), expiresAt };
+      const principal = rowPrincipal(row);
+      await this.audit(client, principal, "admin.signed_in", principal.userId, { username, source: "admin_console" });
+      return { token, principal, expiresAt };
     });
   }
 
@@ -102,7 +158,7 @@ export class PostgresAdminAccess {
     const tokenHash = createHash("sha256").update(token).digest("hex");
     return this.transaction(async (client) => {
       const found = await client.query(
-        `SELECT u.tenant_id, u.user_id, u.username, u.display_name, u.role, u.support_expires_at
+        `SELECT u.tenant_id, u.user_id, u.username, u.display_name, u.role, u.support_expires_at, u.is_active, u.must_change_password
            FROM admin_sessions s JOIN admin_users u ON u.tenant_id=s.tenant_id AND u.user_id=s.user_id
           WHERE s.tenant_id=$1 AND s.token_sha256=$2 AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
             AND u.is_active AND (u.support_expires_at IS NULL OR u.support_expires_at > clock_timestamp())`,
@@ -114,31 +170,115 @@ export class PostgresAdminAccess {
     });
   }
 
+  public async revokeSession(actor: AdminPrincipal, token: string): Promise<void> {
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    await this.transaction(async (client) => {
+      await client.query(`UPDATE admin_sessions SET revoked_at=clock_timestamp() WHERE tenant_id=$1 AND token_sha256=$2 AND user_id=$3 AND revoked_at IS NULL`, [this.tenantId, tokenHash, actor.userId]);
+      await this.audit(client, actor, "admin.signed_out", actor.userId, { source: "admin_console" });
+    });
+  }
+
+  public async changePassword(actor: AdminPrincipal, token: string, currentPassword: string, nextPassword: string): Promise<void> {
+    validatePassword(nextPassword, "New password");
+    if (currentPassword === nextPassword) throw new Error("Choose a password different from the current password.");
+    const currentTokenHash = createHash("sha256").update(token).digest("hex");
+    const passwordHash = await hashPassword(nextPassword);
+    await this.transaction(async (client) => {
+      const found = await client.query(`SELECT password_hash FROM admin_users WHERE tenant_id=$1 AND user_id=$2 AND is_active FOR UPDATE`, [this.tenantId, actor.userId]);
+      const storedHash = found.rows[0]?.password_hash;
+      if (!storedHash || !(await verifyPassword(currentPassword, String(storedHash)))) {
+        throw new Error("Current password is not valid.");
+      }
+      await client.query(`UPDATE admin_users SET password_hash=$3, must_change_password=false, updated_at=clock_timestamp() WHERE tenant_id=$1 AND user_id=$2`, [this.tenantId, actor.userId, passwordHash]);
+      await client.query(`UPDATE admin_sessions SET revoked_at=clock_timestamp() WHERE tenant_id=$1 AND user_id=$2 AND token_sha256 <> $3 AND revoked_at IS NULL`, [this.tenantId, actor.userId, currentTokenHash]);
+      await this.audit(client, actor, "admin.password_changed", actor.userId, { revokedOtherSessions: true });
+    });
+  }
+
   public async listUsers(): Promise<AdminPrincipal[]> {
     return this.transaction(async (client) => {
-      const result = await client.query(`SELECT tenant_id,user_id,username,display_name,role,support_expires_at FROM admin_users WHERE tenant_id=$1 ORDER BY role, username`, [this.tenantId]);
+      const result = await client.query(`SELECT tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password FROM admin_users WHERE tenant_id=$1 ORDER BY role, username`, [this.tenantId]);
       return result.rows.map(rowPrincipal);
     });
   }
 
+  public async listAuditEntries(limit = 100): Promise<AuditEntry[]> {
+    const safeLimit = Math.max(1, Math.min(limit, 250));
+    return this.transaction(async (client) => {
+      const result = await client.query(
+        `SELECT a.audit_id, a.occurred_at, a.actor_type, a.action, a.target_type, a.target_id, a.details,
+                u.display_name AS actor_display_name
+           FROM audit_log a
+           LEFT JOIN admin_users u ON u.tenant_id=a.tenant_id AND u.user_id=a.actor_id
+          WHERE a.tenant_id=$1
+          ORDER BY a.occurred_at DESC, a.audit_id DESC
+          LIMIT $2`,
+        [this.tenantId, safeLimit]
+      );
+      return result.rows.map((row) => ({
+        auditId: String(row.audit_id), occurredAt: new Date(row.occurred_at as Date | string).toISOString(),
+        actorType: row.actor_type as AuditEntry["actorType"],
+        actorDisplayName: row.actor_display_name ? String(row.actor_display_name) : row.actor_type === "system" ? "StackTrack system" : row.actor_type === "device" ? "Scanner device" : "Unknown administrator",
+        action: String(row.action), targetType: String(row.target_type), targetId: row.target_id ? String(row.target_id) : null,
+        details: (row.details ?? {}) as Record<string, unknown>
+      }));
+    });
+  }
+
   public async createUser(actor: AdminPrincipal, input: NewAdminUser): Promise<AdminPrincipal> {
-    const username = input.username.trim().toLowerCase();
-    if (!/^[a-z0-9._-]{3,64}$/.test(username)) throw new Error("Username must use 3–64 lowercase letters, numbers, periods, underscores, or hyphens.");
-    if (input.temporaryPassword.length < 12) throw new Error("Temporary password must be at least 12 characters.");
+    if (actor.role !== "organization_owner") throw new Error("Only Organization Owners can add administrators.");
+    const username = validateUsername(input.username);
+    const displayName = validateDisplayName(input.displayName);
+    validateManagedRole(input.role);
+    validatePassword(input.temporaryPassword, "Temporary password");
     const passwordHash = await hashPassword(input.temporaryPassword);
     return this.transaction(async (client) => {
       const result = await client.query(
         `INSERT INTO admin_users (tenant_id,username,display_name,role,password_hash,must_change_password)
          VALUES ($1,$2,$3,$4,$5,true)
-         RETURNING tenant_id,user_id,username,display_name,role,support_expires_at`,
-        [this.tenantId, username, input.displayName.trim(), input.role, passwordHash]
+         RETURNING tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password`,
+        [this.tenantId, username, displayName, input.role, passwordHash]
       );
       const user = rowPrincipal(result.rows[0]);
-      await client.query(
-        `INSERT INTO audit_log (tenant_id,actor_type,actor_id,action,target_type,target_id,details)
-         VALUES ($1,'user',$2,'admin.user_created','admin_user',$3,$4::jsonb)`,
-        [this.tenantId, actor.userId, user.userId, JSON.stringify({ username:user.username, role:user.role })]
+      await this.audit(client, actor, "admin.user_created", user.userId, { username:user.username, role:user.role });
+      return user;
+    });
+  }
+
+  public async updateUser(actor: AdminPrincipal, userId: string, input: AdminUserUpdate): Promise<AdminPrincipal> {
+    if (actor.role !== "organization_owner") throw new Error("Only Organization Owners can manage administrator accounts.");
+    if (input.role !== undefined) validateManagedRole(input.role);
+    if (input.displayName !== undefined) validateDisplayName(input.displayName);
+    if (input.role === undefined && input.displayName === undefined && input.isActive === undefined) throw new Error("Choose at least one administrator account change.");
+    return this.transaction(async (client) => {
+      const found = await client.query(`SELECT tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password FROM admin_users WHERE tenant_id=$1 AND user_id=$2 FOR UPDATE`, [this.tenantId, userId]);
+      const target = found.rows[0] as AdminRow | undefined;
+      if (!target) throw new Error("Administrator account was not found.");
+      const existing = rowPrincipal(target);
+      if (existing.userId === actor.userId && (input.role !== undefined || input.isActive === false)) {
+        throw new Error("Use another Organization Owner to change your own role or disable your account.");
+      }
+      const role = input.role ?? existing.role;
+      const isActive = input.isActive ?? existing.isActive;
+      const displayName = input.displayName === undefined ? existing.displayName : validateDisplayName(input.displayName);
+      if (existing.role === "organization_owner" && (role !== "organization_owner" || !isActive)) {
+        const count = await client.query(`SELECT count(*)::int AS count FROM admin_users WHERE tenant_id=$1 AND role='organization_owner' AND is_active AND user_id <> $2`, [this.tenantId, existing.userId]);
+        if (Number(count.rows[0]?.count ?? 0) < 1) throw new Error("StackTrack must retain at least one active Organization Owner.");
+      }
+      const updated = await client.query(
+        `UPDATE admin_users SET display_name=$3, role=$4, is_active=$5, updated_at=clock_timestamp() WHERE tenant_id=$1 AND user_id=$2
+         RETURNING tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password`,
+        [this.tenantId, existing.userId, displayName, role, isActive]
       );
+      if (!isActive || role !== existing.role) {
+        await client.query(`UPDATE admin_sessions SET revoked_at=clock_timestamp() WHERE tenant_id=$1 AND user_id=$2 AND revoked_at IS NULL`, [this.tenantId, existing.userId]);
+      }
+      const user = rowPrincipal(updated.rows[0]);
+      await this.audit(client, actor, "admin.user_updated", user.userId, {
+        before: { displayName: existing.displayName, role: existing.role, isActive: existing.isActive },
+        after: { displayName: user.displayName, role: user.role, isActive: user.isActive },
+        sessionsRevoked: !isActive || role !== existing.role
+      });
       return user;
     });
   }

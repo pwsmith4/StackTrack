@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import {
   InMemoryEventLedger,
   projectContainer,
@@ -9,7 +10,8 @@ import {
 } from "@stacktrack/domain";
 import { localFixtures, type LocalFixtures } from "./local-fixtures.js";
 import type { DeviceAdministration, DeviceControlUpdate, DeviceTelemetryUpdate } from "./device-administration.js";
-import type { AdminPrincipal, NewAdminUser, PostgresAdminAccess } from "./admin-access.js";
+import type { AdminPrincipal, AdminUserUpdate, NewAdminUser, PostgresAdminAccess } from "./admin-access.js";
+import type { PostgresReviewAdministration, ReviewAction } from "./review-administration.js";
 
 export interface AppDependencies {
   readonly ledger?: EventLedger;
@@ -20,6 +22,7 @@ export interface AppDependencies {
   ) => LocalFixtures | null | Promise<LocalFixtures | null>;
   readonly deviceAdministration?: DeviceAdministration;
   readonly adminAccess?: PostgresAdminAccess;
+  readonly reviewAdministration?: PostgresReviewAdministration;
 }
 
 interface ResettableLedger extends EventLedger {
@@ -60,12 +63,37 @@ function publicEvent(event: StoredEvent) {
   return result;
 }
 
-export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
+export async function createApp(dependencies: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const ledger = dependencies.ledger ?? new InMemoryEventLedger();
   const now = dependencies.now ?? (() => new Date());
   const localMode = dependencies.localMode ?? false;
-  const requireAdmin = async (request: FastifyRequest, reply: FastifyReply): Promise<AdminPrincipal | null> => {
+  const browserOrigins = (process.env.STACKTRACK_ALLOWED_ORIGINS ?? [
+    "https://pwsmith4.github.io",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:8081",
+    "http://localhost:8081",
+    "http://127.0.0.1:8082",
+    "http://localhost:8082"
+  ].join(","))
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  // Authentication and administrative routes are deliberately bounded even in
+  // the isolated pilot. Route-specific limits below are tighter where an
+  // action can create access or repeatedly test a password.
+  await app.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: "1 minute",
+    keyGenerator: (request) => request.ip
+  });
+  const requireAdmin = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    options: { allowPendingPasswordChange?: boolean } = {}
+  ): Promise<AdminPrincipal | null> => {
     if (!dependencies.adminAccess) {
       reply.code(503).send({ error: "AdminAccessUnavailable", message: "Administrative sign-in has not been provisioned." });
       return null;
@@ -76,23 +104,36 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       reply.code(401).send({ error: "AdminAuthenticationRequired", message: "Sign in is required for this administrative action." });
       return null;
     }
+    if (principal.mustChangePassword && !options.allowPendingPasswordChange) {
+      reply.code(409).send({
+        error: "PasswordChangeRequired",
+        message: "Change the temporary password before viewing or managing pilot operations."
+      });
+      return null;
+    }
     return principal;
   };
 
-  app.addHook("onSend", async (_request, reply, payload) => {
+  app.addHook("onSend", async (request, reply, payload) => {
     if (localMode) {
-      reply.header("access-control-allow-origin", "*");
-      reply.header(
-        "access-control-allow-headers",
-        "authorization,content-type,cache-control,x-stacktrack-tenant-id,x-stacktrack-device-id"
-      );
-      reply.header("access-control-allow-methods", "GET,POST,PATCH,OPTIONS");
+      const origin = firstHeader(request.headers.origin);
+      if (origin && browserOrigins.includes(origin)) {
+        reply.header("access-control-allow-origin", origin);
+        reply.header("vary", "Origin");
+        reply.header(
+          "access-control-allow-headers",
+          "authorization,content-type,cache-control,x-stacktrack-tenant-id,x-stacktrack-device-id"
+        );
+        reply.header("access-control-allow-methods", "GET,POST,PATCH,OPTIONS");
+      }
     }
     return payload;
   });
 
   if (localMode) {
-    app.post<{ Body: { username?: string; password?: string } }>("/api/v1/local/admin/session", async (request, reply) => {
+    app.post<{ Body: { username?: string; password?: string } }>("/api/v1/local/admin/session", {
+      config: { rateLimit: { max: 5, timeWindow: "15 minutes" } }
+    }, async (request, reply) => {
       if (!dependencies.adminAccess || typeof request.body?.username !== "string" || typeof request.body?.password !== "string") {
         return reply.code(400).send({ error: "InvalidSignIn" });
       }
@@ -108,18 +149,83 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       return reply.send({ items: await dependencies.adminAccess!.listUsers() });
     });
 
+    app.get("/api/v1/local/admin/audit-log", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      return reply.send({ items: await dependencies.adminAccess!.listAuditEntries() });
+    });
+
     app.post<{ Body: NewAdminUser }>("/api/v1/local/admin/users", async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can add administrators." });
       const input = request.body;
-      if (!input || typeof input.username !== "string" || typeof input.displayName !== "string" || typeof input.temporaryPassword !== "string" || !["operations_administrator", "read_only_reviewer"].includes(input.role)) {
+      if (!input || typeof input.username !== "string" || typeof input.displayName !== "string" || typeof input.temporaryPassword !== "string" || !["organization_owner", "operations_administrator", "read_only_reviewer"].includes(input.role)) {
         return reply.code(400).send({ error: "InvalidAdminUser" });
       }
       try {
         return reply.code(201).send({ user: await dependencies.adminAccess!.createUser(principal, input) });
       } catch (error) {
         return reply.code(400).send({ error: "AdminUserRejected", message: error instanceof Error ? error.message : "The user could not be created." });
+      }
+    });
+
+    app.post("/api/v1/local/admin/session/revoke", async (request, reply) => {
+      const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
+      const token = readBearerToken(request);
+      if (!principal || !token) return;
+      await dependencies.adminAccess!.revokeSession(principal, token);
+      return reply.code(204).send();
+    });
+
+    app.patch<{ Body: { currentPassword?: string; newPassword?: string } }>("/api/v1/local/admin/me/password", async (request, reply) => {
+      const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
+      const token = readBearerToken(request);
+      const body = request.body;
+      if (!principal || !token) return;
+      if (typeof body?.currentPassword !== "string" || typeof body.newPassword !== "string") {
+        return reply.code(400).send({ error: "InvalidPasswordChange" });
+      }
+      try {
+        await dependencies.adminAccess!.changePassword(principal, token, body.currentPassword, body.newPassword);
+        return reply.code(204).send();
+      } catch (error) {
+        return reply.code(400).send({ error: "PasswordChangeRejected", message: error instanceof Error ? error.message : "Password could not be changed." });
+      }
+    });
+
+    app.patch<{ Params: { userId: string }; Body: AdminUserUpdate }>("/api/v1/local/admin/users/:userId", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can manage administrator accounts." });
+      const update = request.body;
+      if (!update || (update.displayName !== undefined && typeof update.displayName !== "string") || (update.role !== undefined && !["organization_owner", "operations_administrator", "read_only_reviewer"].includes(update.role)) || (update.isActive !== undefined && typeof update.isActive !== "boolean")) {
+        return reply.code(400).send({ error: "InvalidAdminUserUpdate" });
+      }
+      try {
+        return reply.send({ user: await dependencies.adminAccess!.updateUser(principal, request.params.userId, update) });
+      } catch (error) {
+        return reply.code(400).send({ error: "AdminUserUpdateRejected", message: error instanceof Error ? error.message : "Administrator account could not be updated." });
+      }
+    });
+
+    app.get("/api/v1/local/review-cases", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
+      return reply.send({ items: await dependencies.reviewAdministration.listCases(principal.tenantId) });
+    });
+
+    app.post<{ Params: { reviewCaseId: string }; Body: { action?: ReviewAction; reason?: string } }>("/api/v1/local/review-cases/:reviewCaseId/actions", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
+      const body = request.body;
+      if (!body || !["assigned", "approved", "rejected", "resolved", "reopened"].includes(body.action ?? "") || typeof body.reason !== "string") return reply.code(400).send({ error: "InvalidReviewAction" });
+      try {
+        return reply.send({ item: await dependencies.reviewAdministration.takeAction(principal.tenantId, principal, request.params.reviewCaseId, body.action!, body.reason) });
+      } catch (error) {
+        return reply.code(400).send({ error: "ReviewActionRejected", message: error instanceof Error ? error.message : "Review action could not be recorded." });
       }
     });
 
@@ -282,7 +388,12 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       async (request, reply) => {
         const principal = await requireAdmin(request, reply);
         if (!principal) return;
-        if (principal.role === "read_only_reviewer") return reply.code(403).send({ error: "InsufficientRole", message: "Read-only reviewers cannot change scanners." });
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+          return reply.code(403).send({
+            error: "InsufficientRole",
+            message: "Only Organization Owners and Operations Administrators can change scanners."
+          });
+        }
         const tenantId = principal.tenantId;
         if (!dependencies.deviceAdministration) {
           return reply.code(501).send({ error: "DeviceAdministrationUnavailable" });
@@ -303,7 +414,8 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
           const device = await dependencies.deviceAdministration.update(
             tenantId,
             request.params.deviceId,
-            update
+            update,
+            { userId: principal.userId }
           );
           if (!device) return reply.code(404).send({ error: "NotFound" });
           return reply.send({ device });
@@ -319,8 +431,14 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
     app.patch<{ Params: { deviceId: string }; Body: DeviceTelemetryUpdate }>(
       "/api/v1/local/devices/:deviceId/telemetry",
       async (request, reply) => {
-        const tenantId = readTenantId(request);
-        if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
+        const context = readContext(request);
+        if (!context) return reply.code(401).send({ error: "Unauthorized" });
+        if (context.deviceId !== request.params.deviceId) {
+          return reply.code(403).send({
+            error: "DeviceIdentityMismatch",
+            message: "A scanner can only report telemetry for its own device identifier."
+          });
+        }
         if (!dependencies.deviceAdministration) {
           return reply.code(501).send({ error: "DeviceAdministrationUnavailable" });
         }
@@ -335,7 +453,7 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
           return reply.code(400).send({ error: "InvalidDeviceTelemetry" });
         }
         const device = await dependencies.deviceAdministration.reportTelemetry(
-          tenantId,
+          context.tenantId,
           request.params.deviceId,
           update
         );
