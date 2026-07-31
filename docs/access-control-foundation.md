@@ -20,6 +20,9 @@ remove the original implementer and all other users. Support access must be
 created by an Organization Owner, expire automatically, and be written to the
 audit log.
 
+Until a scoped support-grant workflow is introduced, the pilot treats support
+as read-only: it cannot alter scanners, users, or review decisions.
+
 ## Production authentication design
 
 1. Register StackTrack in Goodwill's Microsoft Entra tenant.

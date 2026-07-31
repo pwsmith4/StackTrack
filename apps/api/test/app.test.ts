@@ -35,6 +35,14 @@ const temporaryPasswordPrincipal: AdminPrincipal = {
   mustChangePassword: true
 };
 
+const supportPrincipal: AdminPrincipal = {
+  ...temporaryPasswordPrincipal,
+  username: "support",
+  role: "support",
+  mustChangePassword: false,
+  supportExpiresAt: "2026-08-01T00:00:00.000Z"
+};
+
 let app: FastifyInstance | undefined;
 
 afterEach(async () => {
@@ -200,6 +208,30 @@ describe("StackTrack API foundation", () => {
     expect(response.statusCode).toBe(403);
     expect(response.json()).toMatchObject({ error: "DeviceIdentityMismatch" });
     expect(reportTelemetry).not.toHaveBeenCalled();
+  });
+
+  it("does not let a support account control a scanner", async () => {
+    const update = vi.fn();
+    const administration: DeviceAdministration = {
+      update,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true
+    };
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(supportPrincipal) } as unknown as PostgresAdminAccess,
+      deviceAdministration: administration
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/local/devices/${deviceId}`,
+      headers: { authorization: `Bearer ${"b".repeat(32)}` },
+      payload: { isActive: false }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("rate limits repeated administrator sign-in attempts", async () => {

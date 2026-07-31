@@ -388,7 +388,12 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       async (request, reply) => {
         const principal = await requireAdmin(request, reply);
         if (!principal) return;
-        if (principal.role === "read_only_reviewer") return reply.code(403).send({ error: "InsufficientRole", message: "Read-only reviewers cannot change scanners." });
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+          return reply.code(403).send({
+            error: "InsufficientRole",
+            message: "Only Organization Owners and Operations Administrators can change scanners."
+          });
+        }
         const tenantId = principal.tenantId;
         if (!dependencies.deviceAdministration) {
           return reply.code(501).send({ error: "DeviceAdministrationUnavailable" });
