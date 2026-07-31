@@ -31,20 +31,20 @@ audit log.
 5. Device scanners use a separate device credential/provisioning path; an
    administrator sign-in does not turn a scanner into an admin device.
 
-## Local-only development login
+## Pilot password login
 
-For local tests only, a bootstrap user may be created with username `root` and
-password `password`. It must be enabled only through local environment
-configuration, never committed, never included in a GitHub Pages build, and
-never deployed to Azure. The first successful local sign-in should require a
-password change.
+For the isolated Azure test pilot, an Organization Owner can be bootstrapped by
+an administrator-run script that prompts for a password and stores only a
+PBKDF2-SHA-512 password hash in PostgreSQL. The password is never committed or
+put in the GitHub Pages build. The default *username* can be `root`, but the
+password must be a unique 12+ character value, not `password`.
 
 ## Preconditions before activating sign-in
 
 - The Azure test API deployment pipeline must be healthy.
-- The API must stop accepting the current development tenant/device headers for
-  administrative routes.
-- The admin site must be hosted behind an application/API that can verify
-  server-side authentication, rather than relying on static GitHub Pages alone.
+- Administrative write routes must require a verified API session; the API now
+  enforces this for scanner administration and user management.
+- The public static admin site must never contain a password or authorization
+  decision; it only holds a short-lived opaque session token after sign-in.
 - Goodwill must provide its Entra tenant and decide the initial Organization
   Owners.

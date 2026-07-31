@@ -2,12 +2,14 @@ import pg from "pg";
 import { createApp } from "./app.js";
 import { PostgresEventLedger } from "./postgres-ledger.js";
 import { PostgresDeviceAdministration } from "./device-administration.js";
+import { PostgresAdminAccess } from "./admin-access.js";
 
 const { Pool } = pg;
 
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 const databaseUrl = process.env.DATABASE_URL;
 const testMode = process.env.STACKTRACK_TEST_MODE === "true";
+const tenantId = process.env.STACKTRACK_TENANT_ID ?? "10000000-0000-4000-8000-000000000001";
 
 if (!databaseUrl) {
   throw new Error("DATABASE_URL is required when running the cloud API.");
@@ -22,7 +24,8 @@ const app = createApp({
   // Never enable this outside the synthetic Azure test environment.
   localMode: testMode,
   referenceData: (tenantId) => ledger.referenceData(tenantId),
-  deviceAdministration: new PostgresDeviceAdministration(pool)
+  deviceAdministration: new PostgresDeviceAdministration(pool),
+  adminAccess: new PostgresAdminAccess(pool, tenantId)
 });
 app.addHook("onClose", () => pool.end());
 
