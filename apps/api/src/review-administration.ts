@@ -33,12 +33,11 @@ export class PostgresReviewAdministration {
     const result = await client.query(
       `SELECT rc.review_case_id, rc.container_id, c.container_label, rc.reason_code, rc.evidence_event_ids, rc.opened_at,
               latest.action::text AS latest_action, latest.occurred_at AS latest_action_at, latest.reason AS latest_action_reason,
-              count(actions.review_action_id)::int AS action_count
+              action_summary.action_count
          FROM review_cases rc JOIN containers c ON c.tenant_id=rc.tenant_id AND c.container_id=rc.container_id
-         LEFT JOIN review_case_actions actions ON actions.tenant_id=rc.tenant_id AND actions.review_case_id=rc.review_case_id
          LEFT JOIN LATERAL (SELECT action, occurred_at, reason FROM review_case_actions WHERE tenant_id=rc.tenant_id AND review_case_id=rc.review_case_id ORDER BY occurred_at DESC, review_action_id DESC LIMIT 1) latest ON true
+         LEFT JOIN LATERAL (SELECT count(*)::int AS action_count FROM review_case_actions WHERE tenant_id=rc.tenant_id AND review_case_id=rc.review_case_id) action_summary ON true
         WHERE rc.tenant_id=$1 ${reviewCaseId ? "AND rc.review_case_id=$2" : ""}
-        GROUP BY rc.review_case_id, c.container_label, latest.action, latest.occurred_at, latest.reason
         ORDER BY COALESCE(latest.occurred_at, rc.opened_at) DESC, rc.opened_at DESC`,
       reviewCaseId ? [tenantId, reviewCaseId] : [tenantId]
     );
