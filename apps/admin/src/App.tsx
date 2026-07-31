@@ -132,14 +132,25 @@ const loadStateLabels: Record<Projection["loadState"], string> = {
 };
 
 const accuracyFlagLabels: Record<string, string> = {
-  ClockSkewWarning: "Clock timing warning",
-  ClockSkewReview: "Clock timing needs review",
-  ClockVerificationStale: "Clock verification is stale",
-  LateArrival: "Late upload",
-  DeviceSequenceGap: "Device sequence gap",
-  DeviceSequenceOutOfOrder: "Device sequence out of order",
-  DeviceSequenceCollision: "Device sequence conflict",
-  StaleReferenceData: "Reference data is stale"
+  ClockSkewWarning: "Scanner clock differs from server time",
+  ClockSkewReview: "Scanner clock needs review",
+  ClockVerificationStale: "Scanner clock check is stale",
+  LateArrival: "Scan uploaded late",
+  DeviceSequenceGap: "Scanner sequence gap",
+  DeviceSequenceOutOfOrder: "Scan arrived out of order",
+  DeviceSequenceCollision: "Duplicate scanner sequence",
+  StaleReferenceData: "Location or scanner reference is stale"
+};
+
+const accuracyFlagDescriptions: Record<string, string> = {
+  ClockSkewWarning: "The scanner clock is slightly different from server time.",
+  ClockSkewReview: "The scanner clock difference is large enough to review before relying on timing.",
+  ClockVerificationStale: "The scanner clock has not been checked recently.",
+  LateArrival: "The scan reached StackTrack after it was recorded on the scanner.",
+  DeviceSequenceGap: "A scanner sequence number is missing from the received history.",
+  DeviceSequenceOutOfOrder: "This scan arrived in a different order than the scanner recorded it.",
+  DeviceSequenceCollision: "Another scan from this scanner used the same sequence number.",
+  StaleReferenceData: "The location or scanner reference was out of date when this scan arrived."
 };
 
 function projectionHealthLabel(value: Projection["health"] | null | undefined): string {
@@ -161,6 +172,10 @@ function humanizeCode(value: string): string {
 
 function accuracyFlagLabel(value: string): string {
   return accuracyFlagLabels[value] ?? humanizeCode(value);
+}
+
+function accuracyFlagDetail(value: string): string {
+  return `${accuracyFlagLabel(value)} — ${accuracyFlagDescriptions[value] ?? "This observation should be reviewed before it is used for a correction."}`;
 }
 
 const pageTitles: Record<Page, { eyebrow: string; title: string; description: string }> = {
@@ -333,6 +348,28 @@ function eventLabel(type: StoredEvent["eventType"]) {
   }[type];
 }
 
+function containerTypeLabel(value?: string | null) {
+  return value ? humanizeCode(value) : "Container";
+}
+
+function eventNarrative(event: StoredEvent, data: OperationsData) {
+  const container = data.fixtures.containers.find((item) => item.containerId === event.containerId);
+  const subject = containerTypeLabel(container?.type);
+  const locationFor = (locationId: string | null | undefined) => data.fixtures.locations.find((item) => item.locationId === locationId)?.name;
+  const location = locationFor(event.locationId) ?? "an unconfirmed location";
+  if (event.eventType === "load_assigned") return `${subject} marked full at ${location}.`;
+  if (event.eventType === "batch_in") return `${subject} received at ${location}.`;
+  if (event.eventType === "emptied") return `${subject} marked empty at ${location}.`;
+  if (event.eventType === "batch_out") {
+    const origin = locationFor(payloadLocationId(event, "sourceLocationId"));
+    const destination = locationFor(payloadLocationId(event, "destinationLocationId"));
+    if (origin && destination) return `${subject} sent from ${origin} to ${destination}.`;
+    if (destination) return `${subject} sent in transit toward ${destination}.`;
+    return `${subject} sent in transit from ${origin ?? "its last confirmed location"}.`;
+  }
+  return `${subject} observed at ${location}.`;
+}
+
 function LocationTypeIcon({ location, size = 18 }: { location: Location; size?: number }) {
   const Icon = location.type === "warehouse" ? Warehouse : location.type === "donation_express" ? HandHeart : Store;
   return <Icon size={size} aria-hidden="true" />;
@@ -475,7 +512,7 @@ function humanizeDetailValue(key: string, value: unknown, data?: OperationsData)
     }
     if (key === "health") return projectionHealthLabel(text as Projection["health"]);
     if (key === "loadState" || key === "load_state") return loadStateLabel(text as Projection["loadState"]);
-    if (key === "accuracyFlag" || key === "accuracyFlags" || key === "warning" || key === "warnings") return accuracyFlagLabel(text);
+    if (key === "accuracyFlag" || key === "accuracyFlags" || key === "warning" || key === "warnings") return accuracyFlagDetail(text);
     if (key === "source") return text.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
     if (key === "impactLevel") return text === "material" ? "Material change" : "Routine change";
     return text;
@@ -525,13 +562,12 @@ function eventPayloadFacts(event: StoredEvent, data: OperationsData): [string, R
 }
 
 function EventEvidence({ events, data }: { events: StoredEvent[]; data: OperationsData }) {
-  const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown";
   return <div className="detail-events">{events.length ? events.map((event) => <article key={event.eventId}>
-    <div><span className="detail-event__label"><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{event.accuracyFlags.length ? <span className="detail-event__warning-count">{event.accuracyFlags.length} warning{event.accuracyFlags.length === 1 ? "" : "s"}</span> : <span className="detail-event__verified"><CheckCircle2 size={12} /> verified</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div>
-    <strong>{locationName(event.locationId)}</strong>
+    <div><span className="detail-event__label"><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{event.accuracyFlags.length ? <span className="detail-event__warning-count">{event.accuracyFlags.length} warning{event.accuracyFlags.length === 1 ? "" : "s"}</span> : <span className="detail-event__verified"><CheckCircle2 size={12} /> no warnings</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div>
+    <strong>{eventNarrative(event, data)}</strong>
     <span className="detail-event__id">{event.eventId} <CopyValueButton value={event.eventId} label="Copy" /></span>
-    <small>{event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagLabel).join(" · ") : "Timing and device order verified"}</small>
-    <details className="detail-event__more"><summary>View scan details</summary><DetailFacts items={[["Device", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Device sequence", String(event.deviceSequence)], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Effective", new Date(event.effectiveAt).toLocaleString()]]}/>{eventPayloadFacts(event, data).length > 0 ? <><span className="readable-details__label">Scan information</span><DetailFacts items={eventPayloadFacts(event, data)} /></> : <p className="detail-empty-note">No additional scan information was recorded.</p>}</details>
+    <small>{event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagDetail).join(" · ") : "No data-quality warnings were recorded."}</small>
+    <details className="detail-event__more"><summary>View scan details</summary><DetailFacts items={[["Device", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Scanner record number", String(event.deviceSequence)], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Effective", new Date(event.effectiveAt).toLocaleString()]]}/>{eventPayloadFacts(event, data).length > 0 ? <><span className="readable-details__label">Scan information</span><DetailFacts items={eventPayloadFacts(event, data)} /></> : <p className="detail-empty-note">No additional scan information was recorded.</p>}</details>
   </article>) : <EmptyState>No observations have been recorded for this item.</EmptyState>}</div>;
 }
 
@@ -1006,7 +1042,7 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
                   <td>{eventLabel(event.eventType)}</td>
                   <td>{locName(event.locationId)}</td>
                   <td>{relativeTime(event.eventAt)}</td>
-                  <td>{event.accuracyFlags.length ? <Pill tone="warn">Check</Pill> : <Pill tone="good">Verified</Pill>}</td>
+                  <td>{event.accuracyFlags.length ? <Pill tone="warn">Check</Pill> : <Pill tone="good">No warnings</Pill>}</td>
                 </tr>
               ))}
             </tbody>
@@ -1509,11 +1545,11 @@ function LocationWorkspacePage({ data, locationId, openDetail, setPage, session 
     eyebrow: "Local scanner observation",
     title: containerFor(event.containerId)?.label ?? "Tracked container",
     icon: <Activity size={18} />,
-    status: event.accuracyFlags.length ? { label: "Review flags", tone: "warn" } : { label: "Verified timing", tone: "good" },
+    status: event.accuracyFlags.length ? { label: "Review flags", tone: "warn" } : { label: "No data-quality warnings", tone: "good" },
     summary: `Observed at ${location.name} by ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "a scanner"}.`,
     recordId: event.eventId,
     recordIdLabel: "Observation ID",
-     body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", location.name], ["Scanner", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Data quality", event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagLabel).join(", ") : "Verified"]]} /><h3 className="detail-section-title">Preserved evidence</h3><EventEvidence events={[event]} data={data} /></>
+     body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", location.name], ["Scanner", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Data quality", event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagDetail).join(", ") : "No data-quality warnings"]]} /><h3 className="detail-section-title">Preserved evidence</h3><EventEvidence events={[event]} data={data} /></>
   });
   const typeLabel = locationTypeLabel(location.type);
   return <div className="location-focused-page">
@@ -1522,7 +1558,7 @@ function LocationWorkspacePage({ data, locationId, openDetail, setPage, session 
     <section className="location-focused-metrics"><article><span className="location-focused-metric__icon location-focused-metric__icon--blue"><Boxes size={18} /></span><div><small>At this location</small><strong>{current.length}</strong><em>Latest projection</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--green"><ArrowRight size={18} /></span><div><small>Arriving</small><strong>{arriving.length}</strong><em>Destination receipt pending</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--orange"><Truck size={18} /></span><div><small>Leaving</small><strong>{leaving.length}</strong><em>Outbound handoff open</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--slate"><Smartphone size={18} /></span><div><small>Scanner coverage</small><strong>{scanners.filter((device) => device.isActive).length}/{scanners.length}</strong><em>{staleScanners.length ? `${staleScanners.length} report stale` : "Reports within 24 hours"}</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--cyan"><Activity size={18} /></span><div><small>Recent scans</small><strong>{scansLastDay}</strong><em>{flaggedScans ? `${flaggedScans} flagged for review` : "No scan-quality flags"}</em></div></article></section>
     <section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Physical workflow</span><h3>What is at, arriving to, and leaving this site</h3><p>Each lane is independent. A container can appear in multiple lanes over time, and a multi-hop route stays tied to its own recorded checkpoints.</p></div><Pill tone="blue">{current.length + arriving.length + leaving.length} active records</Pill></div><div className="workflow-lanes"><LocationWorkflowLane title="At this location" subtitle="Official current projection" tone="here" items={current} data={data} onOpen={openContainer} /><LocationWorkflowLane title="Arriving here" subtitle="Open handoffs with this destination" tone="arriving" items={arriving} data={data} onOpen={openContainer} /><LocationWorkflowLane title="Leaving here" subtitle="Open handoffs from this origin" tone="leaving" items={leaving} data={data} onOpen={openContainer} /></div></section>
     <div className="location-focused-columns"><section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Local devices</span><h3>Scanner readiness</h3><p>Use Devices for changes; this summary makes local coverage visible without leaving the workspace.</p></div><button className="secondary" onClick={() => setPage("devices")}>Open Devices <ChevronRight size={14} /></button></div>{scanners.length ? <div className="location-scanner-list">{scanners.map((device) => <button key={device.deviceId} onClick={() => openDetail(deviceDetail(device, data))}><span className="location-scanner-list__icon"><Smartphone size={16} /></span><span><strong>{device.label}</strong><small>Scanner {scannerNumber(device.deviceId)} · {device.reportedAppVersion ?? "Version not reported"}</small></span><span className="location-scanner-list__state"><Pill tone={device.isActive ? "good" : "warn"}>{device.isActive ? "Enabled" : "Disabled"}</Pill><small>{relativeTime(device.lastReportedAt)}</small></span><ChevronRight size={14} /></button>)}</div> : <EmptyState>No scanners are assigned to this location.</EmptyState>}</section><section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Local attention</span><h3>Reviews and recent observations</h3><p>{openReviews.length ? "These review items are linked to evidence recorded at this location." : "The latest scanner activity is clear for this location."}</p></div><div className="location-focused-section__header-actions"><button className="secondary" onClick={() => setPage("activity")}>Activity <ChevronRight size={14} /></button>{openReviews.length > 0 && <button className="secondary" onClick={() => setPage("exceptions")}>Review queue <ChevronRight size={14} /></button>}</div></div>{openReviews.length > 0 && <div className="location-review-list">{openReviews.slice(0, 4).map((item) => <button key={item.reviewCaseId} onClick={() => setPage("exceptions")}><span className="location-review-list__icon"><AlertTriangle size={15} /></span><span><strong>{item.containerLabel}</strong><small>{humanizeCode(item.reasonCode)} · opened {relativeTime(item.openedAt)}</small></span><Pill tone="warn">Needs review</Pill><ChevronRight size={14} /></button>)}</div>}<div className="location-activity-list">{localEvents.slice(0, 5).map((event) => <button key={event.eventId} onClick={() => openEvent(event)}><span><strong>{eventLabel(event.eventType)}</strong><small>{containerFor(event.containerId)?.label ?? "Container"} · {data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Scanner"}</small></span><time>{relativeTime(event.eventAt)}</time><ChevronRight size={14} /></button>)}{localEvents.length === 0 && <div className="location-focused-empty">No scanner observations have been recorded at this location.</div>}</div></section></div>
-    <section className="location-focused-health panel"><div><span className="eyebrow">Location health</span><h3>Trust signals for this site</h3><p>These signals describe evidence freshness, not the physical condition of containers.</p></div><div className="location-health-grid"><span><strong>{flaggedScans}</strong><small>Flagged observations</small><em>{flaggedScans ? "Review timing or device order" : "No scan flags"}</em></span><span><strong>{openReviews.length}</strong><small>Open reviews</small><em>{openReviews.length ? "Corporate decision may be needed" : "No local review queue"}</em></span><span><strong>{staleScanners.length}</strong><small>Stale scanners</small><em>{staleScanners.length ? "Confirm power and connectivity" : "All scanners reported recently"}</em></span><span><strong>{localEvents.length}</strong><small>Total observations</small><em>Retained in the immutable ledger</em></span></div></section>
+     <section className="location-focused-health panel"><div><span className="eyebrow">Location health</span><h3>Trust signals for this site</h3><p>These signals describe evidence freshness, not the physical condition of containers.</p></div><div className="location-health-grid"><span><strong>{flaggedScans}</strong><small>Flagged observations</small><em>{flaggedScans ? "Review scan timing or scanner order" : "No scan flags"}</em></span><span><strong>{openReviews.length}</strong><small>Open reviews</small><em>{openReviews.length ? "Corporate decision may be needed" : "No local review queue"}</em></span><span><strong>{staleScanners.length}</strong><small>Stale scanners</small><em>{staleScanners.length ? "Confirm power and connectivity" : "All scanners reported recently"}</em></span><span><strong>{localEvents.length}</strong><small>Total observations</small><em>Retained in the immutable ledger</em></span></div></section>
   </div>;
 }
 
@@ -1872,7 +1908,7 @@ function LegacyExceptionsPage({ data, openDetail }: { data: OperationsData; open
           <div><Pill tone="warn">Major correction</Pill><span>{relativeTime(projection.lastReceivedAt)}</span></div>
           <h2>{containerName(projection.containerId)} has two active load assignments</h2>
           <p>The second load was accepted as evidence but was not applied to the official state. A corporate data steward should confirm which load remains active.</p>
-          <div className="evidence"><span><strong>{projection.conflicts.length}</strong> conflict</span><span><strong>{projection.appliedEventIds?.length ?? 0}</strong> applied events</span><span><strong>{projection.warnings.length}</strong> timing warnings</span></div>
+          <div className="evidence"><span><strong>{projection.conflicts.length}</strong> conflict</span><span><strong>{projection.appliedEventIds?.length ?? 0}</strong> applied events</span><span><strong>{projection.warnings.length}</strong> data-quality warnings</span></div>
         </div>
         <div className="exception-card__actions"><button className="primary" onClick={() => openDetail({
           eyebrow: "Controlled correction",
@@ -2258,13 +2294,13 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
       return <article className={`clickable-timeline ${relationship ? "clickable-timeline--linked" : ""}`} key={event.eventId} onClick={() => openDetail({
         eyebrow: "Scanner observation",
         icon: <FileClock size={18} />,
-        status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "Timing verified", tone: "good" },
+        status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "No data-quality warnings", tone: "good" },
         summary: "A physical observation received from a shared scanner. Use this feed for movement history; use Audit trail for administrator actions.",
         recordId: event.eventId,
         recordIdLabel: "Event UUID",
         title: `${container?.label ?? "Unknown container"} · ${eventLabel(event.eventType)}`,
          body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Handoff", routeText ?? "Not a location handoff"], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
-       })}><div className="timeline__rail"><span>{index + 1}</span></div><div className="timeline__card"><div className="timeline__card-heading"><span><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{relationship && <span className="timeline__relationship"><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"} · {location}</h3><p><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />{routeText}</span>} · received {relativeTime(event.receivedAt)} · {event.accuracyFlags.length ? `${event.accuracyFlags.length} warning` : "timing verified"}</p></div></article>;
+       })}><div className="timeline__rail"><span>{index + 1}</span></div><div className="timeline__card"><div className="timeline__card-heading"><span><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{relationship && <span className="timeline__relationship"><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"} · {location}</h3><p><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />{routeText}</span>} · received {relativeTime(event.receivedAt)} · {event.accuracyFlags.length ? `${event.accuracyFlags.length} warning` : "no data-quality warnings"}</p></div></article>;
     })}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
     {events.length > 100 && <p className="activity-limit-note">Showing the newest 100 matching observations. Use the filters to narrow the feed further.</p>}
   </section>;
@@ -2282,7 +2318,7 @@ function LegacyActivityPage({ data, query, openDetail }: { data: OperationsData;
     <article className="clickable-timeline" key={event.eventId} onClick={() => openDetail({
       eyebrow: "Immutable ledger event",
       icon: <FileClock size={18} />,
-      status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "Timing verified", tone: "good" },
+      status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "No data-quality warnings", tone: "good" },
       summary: "The original scanner observation is preserved exactly as received by StackTrack.",
       recordId: event.eventId,
       recordIdLabel: "Event UUID",
@@ -2292,11 +2328,11 @@ function LegacyActivityPage({ data, query, openDetail }: { data: OperationsData;
         ["Received at", new Date(event.receivedAt).toLocaleString()],
         ["Location", l(event.locationId) ?? "Unknown"],
         ["Event UUID", event.eventId]
-        ]}/><h3 className="detail-section-title">Accuracy evidence</h3><p className="detail-lead">{event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagLabel).join(" · ") : "No timing, ordering, or reference-data warnings were recorded."}</p><EventEvidence events={[event]} data={data}/></>
+        ]}/><h3 className="detail-section-title">Accuracy evidence</h3><p className="detail-lead">{event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagDetail).join(" · ") : "No data-quality warnings were recorded."}</p><EventEvidence events={[event]} data={data}/></>
     })}><div className="timeline__rail"><span>{index + 1}</span><i /></div><div className="timeline__card">
       <div><Pill tone="blue">{eventLabel(event.eventType)}</Pill><time>{new Date(event.eventAt).toLocaleString()}</time></div>
       <h3>{c(event.containerId)?.label} · {l(event.locationId)}</h3>
-      <p>Event {event.eventId.slice(0, 8)} · received {relativeTime(event.receivedAt)} · {event.accuracyFlags.length ? `${event.accuracyFlags.length} warning` : "timing verified"}</p>
+      <p>Event {event.eventId.slice(0, 8)} · received {relativeTime(event.receivedAt)} · {event.accuracyFlags.length ? `${event.accuracyFlags.length} warning` : "no data-quality warnings"}</p>
     </div></article>
   ))}</div></section>;
 }
@@ -2480,7 +2516,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
     icon: <CircleHelp size={18} />,
     summary: "Data health describes evidence quality and operational follow-up. It is not a claim that every physical container is correct.",
     body: <div className="health-definition-list">
-      <article><Pill tone={integrityPercent >= 98 ? "good" : "warn"}>{integrityPercent >= 98 ? "Strong" : "Review"}</Pill><div><strong>Observation integrity — {integrityPercent}%</strong><p>Share of scanner observations with no timing, sequence, or device-order flags. A flagged event is retained; it means an administrator should verify context before relying on it for a correction.</p><small>Use case: find late uploads, duplicate scans, or offline devices that may make movement appear out of order.</small></div></article>
+      <article><Pill tone={integrityPercent >= 98 ? "good" : "warn"}>{integrityPercent >= 98 ? "Strong" : "Review"}</Pill><div><strong>Observation integrity — {integrityPercent}%</strong><p>Share of scanner observations without timestamp or scanner-order issues. A flagged event is retained; it means an administrator should verify the circumstances before relying on it for a correction.</p><small>Use case: find late uploads, duplicate scans, or offline devices that may make movement appear out of order.</small></div></article>
       <article><Pill tone={reviewCount ? "warn" : "good"}>{reviewCount ? "Open" : "Clear"}</Pill><div><strong>Containers needing review — {reviewCount}</strong><p>Containers whose projection has conflicting evidence or an unresolved exception. The latest valid projection remains visible while the original events stay immutable.</p><small>Use case: decide whether a controlled correction is needed; never delete the conflicting scan.</small></div></article>
       <article><Pill tone={deviceFreshnessPercent >= 90 ? "good" : "warn"}>{deviceFreshnessPercent >= 90 ? "Fresh" : "Stale"}</Pill><div><strong>Scanner freshness — {deviceFreshnessPercent}%</strong><p>Share of matching scanners that have reported in the last 24 hours. A stale scanner may be powered off, offline, moved, or unable to send telemetry.</p><small>Use case: call a location before trusting a quiet period as proof that no containers moved.</small></div></article>
       <article><Pill tone={unobservedContainers === null ? "muted" : unobservedContainers ? "warn" : "good"}>{unobservedContainers === null ? "Broader scope" : unobservedContainers ? "Check" : "Complete"}</Pill><div><strong>Registration coverage — {unobservedContainers === null ? "—" : unobservedContainers}</strong><p>Registered containers without any accepted observation. This check is intentionally tenant-wide because an unobserved container has no event location or date to join to a filtered scope.</p><small>Use case: clear event filters, then verify labels and provisioning instead of inventing a location.</small></div></article>
@@ -2491,11 +2527,11 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
     eyebrow: "Filtered observation",
     title: containerLabel(event.containerId),
     icon: <Activity size={18} />,
-    status: event.accuracyFlags.length ? { label: "Review flags", tone: "warn" } : { label: "Verified timing", tone: "good" },
+    status: event.accuracyFlags.length ? { label: "Review flags", tone: "warn" } : { label: "No data-quality warnings", tone: "good" },
     summary: "A single immutable scanner observation from the report scope.",
     recordId: event.eventId,
     recordIdLabel: "Event ID",
-      body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", locationName(event.locationId)], ["Scanner", `${deviceName(event.deviceId)} (${scannerNumber(event.deviceId)})`], ["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Latency", `${latencySeconds(event)} seconds`], ["Data flags", event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagLabel).join(", ") : "None"]]}/><h3 className="detail-section-title">Evidence</h3><EventEvidence events={[event]} data={data}/></>
+      body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", locationName(event.locationId)], ["Scanner", `${deviceName(event.deviceId)} (${scannerNumber(event.deviceId)})`], ["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Latency", `${latencySeconds(event)} seconds`], ["Data flags", event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagDetail).join(", ") : "None"]]}/><h3 className="detail-section-title">Evidence</h3><EventEvidence events={[event]} data={data}/></>
   });
   const reports = [
     { id: "movement", icon: Activity, title: "Movement ledger", text: "Every accepted container observation, with scanner, location, receipt latency, and data flags.", count: filteredEvents.length, tag: "Ready" },
@@ -2512,7 +2548,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   ] as const;
   const openReport = (report: typeof reports[number]) => {
     if (report.id === "movement") {
-      downloadCsv("stacktrack-movement-ledger.csv", [["Event ID", "Container", "Observation", "Location", "Scanner", "Observed at", "Received at", "Latency seconds", "Data flags"], ...filteredEvents.map((event) => [event.eventId, containerLabel(event.containerId), eventLabel(event.eventType), locationName(event.locationId), deviceName(event.deviceId), event.eventAt, event.receivedAt, latencySeconds(event), event.accuracyFlags.map(accuracyFlagLabel).join("; ")])]);
+      downloadCsv("stacktrack-movement-ledger.csv", [["Event ID", "Container", "Observation", "Location", "Scanner", "Observed at", "Received at", "Latency seconds", "Data flags"], ...filteredEvents.map((event) => [event.eventId, containerLabel(event.containerId), eventLabel(event.eventType), locationName(event.locationId), deviceName(event.deviceId), event.eventAt, event.receivedAt, latencySeconds(event), event.accuracyFlags.map(accuracyFlagDetail).join("; ")])]);
       return;
     }
     if (report.id === "loads") {
@@ -2520,7 +2556,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       return;
     }
     if (report.id === "exceptions") {
-      downloadCsv("stacktrack-data-quality-exceptions.csv", [["Container", "Health", "Current location", "Conflicts", "Projection warnings", "Flagged observations", "Last observed"], ...filteredProjections.map((projection) => [containerLabel(projection.containerId), projectionHealthLabel(projection.health), locationName(projection.locationId), projection.conflicts.map((item) => humanizeCode(item.reason)).join("; "), projection.warnings.map(accuracyFlagLabel).join("; "), filteredEvents.filter((event) => event.containerId === projection.containerId && event.accuracyFlags.length).length, projection.lastObservedAt ?? ""]) , ...flaggedEvents.filter((event) => !filteredProjections.some((projection) => projection.containerId === event.containerId)).map((event) => [containerLabel(event.containerId), "Observation flag", locationName(event.locationId), "", event.accuracyFlags.map(accuracyFlagLabel).join("; "), 1, event.eventAt])]);
+      downloadCsv("stacktrack-data-quality-exceptions.csv", [["Container", "Health", "Current location", "Conflicts", "Projection warnings", "Flagged observations", "Last observed"], ...filteredProjections.map((projection) => [containerLabel(projection.containerId), projectionHealthLabel(projection.health), locationName(projection.locationId), projection.conflicts.map((item) => humanizeCode(item.reason)).join("; "), projection.warnings.map(accuracyFlagLabel).join("; "), filteredEvents.filter((event) => event.containerId === projection.containerId && event.accuracyFlags.length).length, projection.lastObservedAt ?? ""]) , ...flaggedEvents.filter((event) => !filteredProjections.some((projection) => projection.containerId === event.containerId)).map((event) => [containerLabel(event.containerId), "Observation flag", locationName(event.locationId), "", event.accuracyFlags.map(accuracyFlagDetail).join("; "), 1, event.eventAt])]);
       return;
     }
     if (report.id === "corrections") {
@@ -2569,16 +2605,16 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       </div>
       {draftDateError && <p className="report-filter-error">{draftDateError}</p>}
     </section>
-    <div className="report-signal-grid"><article><span><Activity size={17} /></span><div><small>Observations in scope</small><strong>{filteredEvents.length}</strong><em>{flaggedEvents.length ? `${flaggedEvents.length} with data flags` : "No timing or order flags"}</em></div></article><article><span><Truck size={17} /></span><div><small>Movement in scope</small><strong>{transitCount}</strong><em>{transitCount ? "Receipt still needed" : "No active transit"}</em></div></article><article><span><AlertTriangle size={17} /></span><div><small>Needs review</small><strong>{reviewCount + warningCount}</strong><em>{reviewCount ? `${reviewCount} require a decision` : "No open projection conflicts"}</em></div></article><article><span><Smartphone size={17} /></span><div><small>Scanner freshness</small><strong>{deviceFreshnessPercent}%</strong><em>{staleDevices.length ? `${staleDevices.length} stale over 24 hours` : "All scanners reported recently"}</em></div></article></div>
+    <div className="report-signal-grid"><article><span><Activity size={17} /></span><div><small>Observations in scope</small><strong>{filteredEvents.length}</strong><em>{flaggedEvents.length ? `${flaggedEvents.length} with data flags` : "No data-quality flags"}</em></div></article><article><span><Truck size={17} /></span><div><small>Movement in scope</small><strong>{transitCount}</strong><em>{transitCount ? "Receipt still needed" : "No active transit"}</em></div></article><article><span><AlertTriangle size={17} /></span><div><small>Needs review</small><strong>{reviewCount + warningCount}</strong><em>{reviewCount ? `${reviewCount} require a decision` : "No open projection conflicts"}</em></div></article><article><span><Smartphone size={17} /></span><div><small>Scanner freshness</small><strong>{deviceFreshnessPercent}%</strong><em>{staleDevices.length ? `${staleDevices.length} stale over 24 hours` : "All scanners reported recently"}</em></div></article></div>
     <div className="report-grid">{reports.map((report) => <article className="report-card report-card--expanded" key={report.title}><div className="report-card__top"><span><report.icon /></span><Pill tone={report.tag === "Ready" ? "good" : "muted"}>{report.tag}</Pill></div><h2>{report.title}</h2><p>{report.text}</p><div className="report-card__count">{report.count === null ? "—" : report.count}<small>{report.id === "movement" ? "events" : report.id === "locations" ? "locations" : report.id === "devices" ? "scanners" : report.id === "transit" ? "containers" : report.id === "routes" ? "route segments" : report.id === "latency" ? "scanner groups" : report.id === "governance" ? "actions" : "rows"} in scope</small></div><button onClick={() => openReport(report)}>{report.tag === "Ready" ? "Download filtered CSV" : "View integration plan"} <ArrowRight size={16} /></button></article>)}</div>
     <section className="panel data-health">
       <PanelTitle title="Data health" subtitle="Evidence quality signals, separated from physical-state decisions." action="How to read this" onClick={openHealthDetail} />
-      <div className="health-score"><div className="health-score__value">{integrityPercent}%</div><div><strong>Observation integrity</strong><p>{flaggedEvents.length ? `${flaggedEvents.length} observations carry timing, sequence, or device-order flags.` : "Every observation in this scope is free of timing and order flags."}</p></div><button className="secondary" onClick={openHealthDetail}><CircleHelp size={14} /> Definitions</button></div>
+      <div className="health-score"><div className="health-score__value">{integrityPercent}%</div><div><strong>Observation integrity</strong><p>{flaggedEvents.length ? `${flaggedEvents.length} observations carry data-quality flags.` : "Every observation in this scope is free of data-quality flags."}</p></div><button className="secondary" onClick={openHealthDetail}><CircleHelp size={14} /> Definitions</button></div>
       <div className="health-bar"><span style={{ width: `${Math.max(5, integrityPercent)}%` }} /></div>
        <div className="health-stats"><span><b>{filteredEvents.length}</b> events in scope</span><span><b>{flaggedEvents.length}</b> flagged observations</span><span><b>{reviewCount}</b> projection conflicts</span><span><b>{filteredCorrections.filter((item) => item.status === "pending").length}</b> pending corrections</span><span><b>{lateUploadCount}</b> uploads over 15 min</span></div>
        <div className="health-check-grid"><article><span><ShieldCheck size={16} /></span><div><strong>Integrity</strong><p>Are event timestamps and device order trustworthy?</p></div><Pill tone={integrityPercent >= 98 ? "good" : "warn"}>{integrityPercent >= 98 ? "Strong" : "Review"}</Pill></article><article><span><AlertTriangle size={16} /></span><div><strong>Projection decisions</strong><p>Are any containers waiting for a governed decision?</p></div><Pill tone={reviewCount ? "warn" : "good"}>{reviewCount ? `${reviewCount} open` : "Clear"}</Pill></article><article><span><Wifi size={16} /></span><div><strong>Scanner freshness</strong><p>Can quiet locations be trusted to have reported recently?</p></div><Pill tone={deviceFreshnessPercent >= 90 ? "good" : "warn"}>{deviceFreshnessPercent}% fresh</Pill></article><article><span><Boxes size={16} /></span><div><strong>Registration coverage</strong><p>Which tracked containers have never produced evidence?</p></div><Pill tone={unobservedContainers === null ? "muted" : unobservedContainers ? "warn" : "good"}>{unobservedContainers === null ? "Clear filters" : unobservedContainers ? `${unobservedContainers} unobserved` : "Complete"}</Pill></article><article><span><Clock3 size={16} /></span><div><strong>Upload latency</strong><p>Are delayed uploads explained by offline work?</p></div><Pill tone={lateUploadCount ? "warn" : "good"}>{lateUploadCount ? `${lateUploadCount} late` : "Normal"}</Pill></article></div>
     </section>
-    <section className="panel report-preview"><PanelTitle title="Filtered event preview" subtitle={`${filteredEvents.length} immutable observations match the current scope. Select a row to inspect its evidence.`} action="Download movement ledger" onClick={() => openReport(reports[0]!)} />{filteredEvents.length ? <div className="table-wrap"><table><thead><tr><th>Observation</th><th>Container</th><th>Location</th><th>Scanner</th><th>Observed</th><th>Quality</th></tr></thead><tbody>{filteredEvents.slice(0, 12).map((event) => <tr className="clickable-row" key={event.eventId} onClick={() => openObservation(event)}><td><strong>{eventLabel(event.eventType)}</strong><small>{event.eventId.slice(0, 12)}…</small></td><td>{containerLabel(event.containerId)}</td><td>{locationName(event.locationId)}</td><td>{scannerNumber(event.deviceId)} · {deviceName(event.deviceId)}</td><td>{relativeTime(event.eventAt)}</td><td>{event.accuracyFlags.length ? <Pill tone="warn">Review flags</Pill> : <Pill tone="good">Verified</Pill>}</td></tr>)}</tbody></table></div> : <EmptyState>No observations match this report scope. Clear a filter or widen the date range.</EmptyState>}{filteredEvents.length > 12 && <p className="report-preview__more">Showing the newest 12 here; the download contains all {filteredEvents.length} matching observations.</p>}</section>
+    <section className="panel report-preview"><PanelTitle title="Filtered event preview" subtitle={`${filteredEvents.length} immutable observations match the current scope. Select a row to inspect its evidence.`} action="Download movement ledger" onClick={() => openReport(reports[0]!)} />{filteredEvents.length ? <div className="table-wrap"><table><thead><tr><th>Observation</th><th>Container</th><th>Location</th><th>Scanner</th><th>Observed</th><th>Quality</th></tr></thead><tbody>{filteredEvents.slice(0, 12).map((event) => <tr className="clickable-row" key={event.eventId} onClick={() => openObservation(event)}><td><strong>{eventLabel(event.eventType)}</strong><small>{event.eventId.slice(0, 12)}…</small></td><td>{containerLabel(event.containerId)}</td><td>{locationName(event.locationId)}</td><td>{scannerNumber(event.deviceId)} · {deviceName(event.deviceId)}</td><td>{relativeTime(event.eventAt)}</td><td>{event.accuracyFlags.length ? <Pill tone="warn">Review flags</Pill> : <Pill tone="good">No warnings</Pill>}</td></tr>)}</tbody></table></div> : <EmptyState>No observations match this report scope. Clear a filter or widen the date range.</EmptyState>}{filteredEvents.length > 12 && <p className="report-preview__more">Showing the newest 12 here; the download contains all {filteredEvents.length} matching observations.</p>}</section>
   </div>;
 }
 
@@ -3086,7 +3122,7 @@ function ReviewCaseCard({ reviewCase, data, session, onAction, onEvidence }: { r
   const act = async (action: ReviewAction) => { setError(null); setBusy(true); try { await onAction(action, reason); setReason(""); } catch (caught) { setError(caught instanceof Error ? caught.message : "Review decision could not be recorded."); } finally { setBusy(false); } };
   const projection = data.projections[reviewCase.containerId];
   const route = getContainerRouteContext(reviewCase.containerId, data);
-  return <article className={`exception-card ${isClosed ? "exception-card--closed" : ""}`}><div className="exception-card__icon"><AlertTriangle size={22} /></div><div className="exception-card__body"><div><Pill tone={isClosed ? "muted" : "warn"}>{reviewStatusLabel(reviewCase.status)}</Pill><span>{relativeTime(reviewCase.lastActionAt ?? reviewCase.openedAt)}</span></div><h2>{reviewCase.containerLabel} needs a review decision</h2><p>{humanizeCode(reviewCase.reasonCode)} · {projection?.conflicts.length ?? 0} current projection conflicts · {reviewCase.evidenceEventIds.length} preserved evidence event{reviewCase.evidenceEventIds.length === 1 ? "" : "s"}. {route.inTransit ? `Currently in transit from ${route.origin?.name ?? "an unconfirmed origin"} to ${route.destination?.name ?? "an unconfirmed destination"}.` : route.currentLocation ? `Last confirmed at ${route.currentLocation.name}.` : "Current location is not confirmed."}</p><div className="evidence"><span><strong>{reviewCase.actionCount}</strong> recorded actions</span><span><strong>{projection?.appliedEventIds.length ?? 0}</strong> applied events</span><span><strong>{projection?.warnings.length ?? 0}</strong> timing warnings</span></div>{reviewCase.lastActionReason && <div className="review-last-action"><strong>Latest reason:</strong> {reviewCase.lastActionReason}</div>}{manages && <label className="review-reason"><span>Decision reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder="State what was verified and who should act next." /></label>}{error && <div className="sign-in-error">{error}</div>}</div><div className="exception-card__actions"><button className="secondary" onClick={onEvidence}>View evidence</button>{manages && !isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("assigned")}>{busy ? "Recording…" : "Assign review"}</button>}{canResolve && !isClosed && <button className="primary" disabled={busy || reason.trim().length < 8} onClick={() => void act("resolved")}>{busy ? "Recording…" : "Resolve case"}</button>}{canResolve && isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("reopened")}>{busy ? "Recording…" : "Reopen case"}</button>}</div></article>;
+  return <article className={`exception-card ${isClosed ? "exception-card--closed" : ""}`}><div className="exception-card__icon"><AlertTriangle size={22} /></div><div className="exception-card__body"><div><Pill tone={isClosed ? "muted" : "warn"}>{reviewStatusLabel(reviewCase.status)}</Pill><span>{relativeTime(reviewCase.lastActionAt ?? reviewCase.openedAt)}</span></div><h2>{reviewCase.containerLabel} needs a review decision</h2><p>{humanizeCode(reviewCase.reasonCode)} · {projection?.conflicts.length ?? 0} current projection conflicts · {reviewCase.evidenceEventIds.length} preserved evidence event{reviewCase.evidenceEventIds.length === 1 ? "" : "s"}. {route.inTransit ? `Currently in transit from ${route.origin?.name ?? "an unconfirmed origin"} to ${route.destination?.name ?? "an unconfirmed destination"}.` : route.currentLocation ? `Last confirmed at ${route.currentLocation.name}.` : "Current location is not confirmed."}</p><div className="evidence"><span><strong>{reviewCase.actionCount}</strong> recorded actions</span><span><strong>{projection?.appliedEventIds.length ?? 0}</strong> applied events</span><span><strong>{projection?.warnings.length ?? 0}</strong> data-quality warnings</span></div>{reviewCase.lastActionReason && <div className="review-last-action"><strong>Latest reason:</strong> {reviewCase.lastActionReason}</div>}{manages && <label className="review-reason"><span>Decision reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder="State what was verified and who should act next." /></label>}{error && <div className="sign-in-error">{error}</div>}</div><div className="exception-card__actions"><button className="secondary" onClick={onEvidence}>View evidence</button>{manages && !isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("assigned")}>{busy ? "Recording…" : "Assign review"}</button>}{canResolve && !isClosed && <button className="primary" disabled={busy || reason.trim().length < 8} onClick={() => void act("resolved")}>{busy ? "Recording…" : "Resolve case"}</button>}{canResolve && isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("reopened")}>{busy ? "Recording…" : "Reopen case"}</button>}</div></article>;
 }
 
 function ExceptionsPage({ data, openDetail, session, refresh }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession; refresh: () => Promise<void> }) {
