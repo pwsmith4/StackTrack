@@ -4,6 +4,7 @@ import { createApp } from "../src/app.js";
 import type { DeviceAdministration } from "../src/device-administration.js";
 import type { AdminPrincipal, PostgresAdminAccess } from "../src/admin-access.js";
 import type { CorrectionAdministration } from "../src/correction-administration.js";
+import type { LocationAdministration } from "../src/location-administration.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const deviceId = "22222222-2222-4222-8222-222222222222";
@@ -327,6 +328,79 @@ describe("StackTrack API foundation", () => {
       ownerPrincipal,
       expect.objectContaining({ impactLevel: "material" })
     );
+  });
+
+  it("requires an owner for retirement and delegates location changes with dependency review", async () => {
+    const dependencies = {
+      location: {
+        locationId: "66666666-6666-4666-8666-666666666666",
+        name: "Midtown Store",
+        type: "store_backroom",
+        isActive: true
+      },
+      devices: [{ deviceId, label: "Scanner 1", isActive: true }],
+      currentContainerCount: 2,
+      loadCodeCount: 4,
+      observationCount: 9
+    };
+    const locationAdministration: LocationAdministration = {
+      dependencies: vi.fn().mockResolvedValue(dependencies),
+      create: vi.fn().mockResolvedValue(dependencies.location),
+      retire: vi.fn().mockResolvedValue({
+        location: { ...dependencies.location, isActive: false },
+        movedDeviceCount: 1,
+        replacementLocationId: null,
+        unknownLocationId: "99999999-9999-4999-8999-999999999999",
+        dependencies
+      })
+    };
+    const authenticate = vi.fn().mockResolvedValue(ownerPrincipal);
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate } as unknown as PostgresAdminAccess,
+      locationAdministration
+    });
+    const authorization = { authorization: `Bearer ${"l".repeat(32)}` };
+    const preview = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/locations/66666666-6666-4666-8666-666666666666/dependencies",
+      headers: authorization
+    });
+    const retirement = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/locations/66666666-6666-4666-8666-666666666666/retire",
+      headers: authorization,
+      payload: { moveDevicesToUnknown: true, confirmation: "Midtown Store" }
+    });
+
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json()).toMatchObject({ currentContainerCount: 2, devices: [{ deviceId }] });
+    expect(retirement.statusCode).toBe(200);
+    expect(locationAdministration.retire).toHaveBeenCalledWith(
+      tenantId,
+      { userId: ownerPrincipal.userId },
+      "66666666-6666-4666-8666-666666666666",
+      { moveDevicesToUnknown: true, confirmation: "Midtown Store" }
+    );
+  });
+
+  it("does not let a read-only administrator add a location", async () => {
+    const create = vi.fn();
+    const locationAdministration = { create } as unknown as LocationAdministration;
+    const readOnly = { ...ownerPrincipal, role: "read_only_reviewer" as const };
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(readOnly) } as unknown as PostgresAdminAccess,
+      locationAdministration
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/locations",
+      headers: { authorization: `Bearer ${"m".repeat(32)}` },
+      payload: { name: "Folsom Store", type: "store_backroom" }
+    });
+    expect(response.statusCode).toBe(403);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("requires an owner and delegates administrator password resets", async () => {

@@ -14,6 +14,31 @@ export interface Location {
   locationId: string;
   name: string;
   type: "donation_express" | "store_backroom" | "warehouse" | "in_transit";
+  isActive?: boolean;
+}
+
+export type ManagedLocationType = Exclude<Location["type"], "in_transit">;
+
+export interface LocationDependencyDevice {
+  deviceId: string;
+  label: string;
+  isActive: boolean;
+}
+
+export interface LocationDependencySummary {
+  location: Location;
+  devices: LocationDependencyDevice[];
+  currentContainerCount: number;
+  loadCodeCount: number;
+  observationCount: number;
+}
+
+export interface LocationRetireResult {
+  location: Location;
+  movedDeviceCount: number;
+  replacementLocationId: string | null;
+  unknownLocationId: string | null;
+  dependencies: LocationDependencySummary;
 }
 
 export interface Device {
@@ -183,6 +208,45 @@ export async function updateDevice(
 ): Promise<Device> {
   const response = await patchJson<{ device: Device }>(`/api/v1/local/devices/${deviceId}`, update, session);
   return response.device;
+}
+
+export async function getLocationDependencies(
+  session: AdminSession,
+  locationId: string
+): Promise<LocationDependencySummary> {
+  return getJson<LocationDependencySummary>(
+    `/api/v1/local/locations/${locationId}/dependencies`,
+    session
+  );
+}
+
+export async function createLocation(
+  session: AdminSession,
+  input: { name: string; type: ManagedLocationType }
+): Promise<Location> {
+  const response = await postJson<{ location: Location }>(
+    "/api/v1/local/locations",
+    input,
+    session
+  );
+  return response.location;
+}
+
+export async function retireLocation(
+  session: AdminSession,
+  locationId: string,
+  input: {
+    replacementLocationId?: string;
+    moveDevicesToUnknown?: boolean;
+    confirmation: string;
+  }
+): Promise<LocationRetireResult> {
+  const response = await postJson<{ result: LocationRetireResult }>(
+    `/api/v1/local/locations/${locationId}/retire`,
+    input,
+    session
+  );
+  return response.result;
 }
 
 export async function signIn(username: string, password: string): Promise<AdminSession> {

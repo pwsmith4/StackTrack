@@ -42,8 +42,10 @@ import {
   ApiRequestError,
   changeOwnPassword,
   correctionRequestAction,
+  createLocation,
   createCorrectionRequest,
   createAdminUser,
+  getLocationDependencies,
   listAdminUsers,
   loadOperationsData,
   resetAdminPassword,
@@ -53,6 +55,7 @@ import {
   signIn,
   updateAdminUser,
   updateDevice,
+  retireLocation,
   type AdminPrincipal,
   type AdminSession,
   type AuditEntry,
@@ -64,6 +67,8 @@ import {
   type DeviceAssignment,
   type Fixtures,
   type Location,
+  type LocationDependencySummary,
+  type ManagedLocationType,
   type OperationsWarning,
   type Projection,
   type ReviewCase,
@@ -729,7 +734,7 @@ function PageContent({
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} setPage={setPage} />;
+  if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
@@ -1252,6 +1257,10 @@ function locationTypeLabel(type: Location["type"]) {
   return type === "donation_express" ? "Donation Xpress" : type === "warehouse" ? "Warehouse" : type === "in_transit" ? "In transit" : "Store";
 }
 
+function isUnknownLocation(location: Location): boolean {
+  return location.name.trim().toLowerCase() === "unknown location";
+}
+
 function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, onSelect }: { metrics: LocationMetric[]; movingCount: number; movingReviewCount: number; onSelect: (locationId: string) => void }) {
   const collection = metrics.filter(({ location }) => location.type === "store_backroom" || location.type === "donation_express");
   const warehouses = metrics.filter(({ location }) => location.type === "warehouse");
@@ -1281,15 +1290,16 @@ function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, onSe
   </section>;
 }
 
-function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; openDetail: OpenDetail; setPage: (page: Page) => void }) {
-  const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
+function LocationsPage({ data, openDetail, setPage, refresh, session }: { data: OperationsData; openDetail: OpenDetail; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null }) {
+  const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
+  const retiredLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive === false && !isUnknownLocation(location));
   const [selectedLocationId, setSelectedLocationId] = useState(physicalLocations[0]?.locationId ?? "");
   const [locationQuery, setLocationQuery] = useState("");
   const [locationTypeFilter, setLocationTypeFilter] = useState<"all" | Location["type"]>("all");
   const [locationHealthFilter, setLocationHealthFilter] = useState<"all" | "attention">("all");
   const [locationSort, setLocationSort] = useState<"work" | "containers" | "activity" | "alphabetical">("work");
   const selected = physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0];
-  if (!selected) return <EmptyState>No operating locations are available.</EmptyState>;
+  if (!selected) return <><LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} /><EmptyState>No active operating locations are available. Add a location or restore the operating plan before reviewing workflow.</EmptyState></>;
 
   const transitId = data.fixtures.locations.find((location) => location.type === "in_transit")?.locationId;
   const container = (id: string) => data.fixtures.containers.find((item) => item.containerId === id);
@@ -1379,7 +1389,157 @@ function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; op
         <LocationWorkflowLane title="Containers leaving" subtitle="In transit after departing this location" tone="leaving" items={leaving} data={data} onOpen={openContainer} />
       </div>
     </section>
+    <LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} retiredLocations={retiredLocations} />
   </>;
+}
+
+function LocationAdministrationPanel({
+  data,
+  session,
+  refresh,
+  setPage,
+  retiredLocations
+}: {
+  data: OperationsData;
+  session: AdminSession | null;
+  refresh: () => Promise<void>;
+  setPage: (page: Page) => void;
+  retiredLocations?: Location[];
+}) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [locationName, setLocationName] = useState("");
+  const [locationType, setLocationType] = useState<ManagedLocationType>("store_backroom");
+  const [retireLocationId, setRetireLocationId] = useState("");
+  const [dependencies, setDependencies] = useState<LocationDependencySummary | null>(null);
+  const [retireTarget, setRetireTarget] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const activeLocations = data.fixtures.locations.filter(
+    (location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location)
+  );
+  const retired = retiredLocations ?? data.fixtures.locations.filter(
+    (location) => location.type !== "in_transit" && location.isActive === false && !isUnknownLocation(location)
+  );
+  const principal = session?.principal;
+  const canCreate = principal?.role === "organization_owner" || principal?.role === "operations_administrator";
+  const canRetire = principal?.role === "organization_owner";
+  const selectedRetireLocation = activeLocations.find((location) => location.locationId === retireLocationId);
+  const selectedTargetLocation = activeLocations.find((location) => location.locationId === retireTarget);
+  const targetIsUnknown = retireTarget === "unknown";
+  const hasDevices = Boolean(dependencies?.devices.length);
+
+  const resetRetirement = () => {
+    setDependencies(null);
+    setRetireTarget("");
+    setConfirmation("");
+    setError(null);
+  };
+
+  const inspectDependencies = async () => {
+    if (!session || !retireLocationId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      setDependencies(await getLocationDependencies(session, retireLocationId));
+      setRetireTarget("");
+      setConfirmation("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Location dependencies could not be loaded.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitCreate = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!session || !canCreate) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await createLocation(session, { name: locationName.trim(), type: locationType });
+      setLocationName("");
+      setCreateOpen(false);
+      await refresh();
+      setNotice("Location added. It is now available in scanner assignment and workflow views.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Location could not be added.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitRetire = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!session || !canRetire || !selectedRetireLocation || !dependencies) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await retireLocation(session, selectedRetireLocation.locationId, {
+        confirmation: confirmation.trim(),
+        ...(targetIsUnknown
+          ? { moveDevicesToUnknown: true }
+          : selectedTargetLocation
+            ? { replacementLocationId: selectedTargetLocation.locationId }
+            : {})
+      });
+      await refresh();
+      setRetireLocationId("");
+      resetRetirement();
+      setNotice(
+        result.movedDeviceCount
+          ? `${selectedRetireLocation.name} was retired and ${result.movedDeviceCount} scanner${result.movedDeviceCount === 1 ? " was" : "s were"} moved safely.`
+          : `${selectedRetireLocation.name} was retired. Its scan and load history remains available for audit.`
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Location could not be retired.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <section className="location-admin-panel panel">
+    <div className="location-admin-panel__header">
+      <div>
+        <span className="eyebrow">Location administration</span>
+        <h2>Keep the operating map intentional.</h2>
+        <p>Add a new operating site or retire one that has closed. Retirement preserves every historical scan; it never deletes a location that an old record depends on.</p>
+      </div>
+      {canCreate && <button className="primary" onClick={() => { setCreateOpen((value) => !value); setError(null); }}>{createOpen ? <X size={15} /> : <Building2 size={15} />}{createOpen ? "Close form" : "Add location"}</button>}
+    </div>
+    {notice && <div className="location-admin-notice"><CheckCircle2 size={17} /><span>{notice}</span></div>}
+    {error && <div className="location-admin-notice location-admin-notice--error"><AlertTriangle size={17} /><span>{error}</span></div>}
+    {createOpen && canCreate && <form className="location-create-form" onSubmit={(event) => void submitCreate(event)}>
+      <div><strong>Add an operating location</strong><small>The name is shown to scanners and administrators. “In transit” is a system handoff and cannot be added here.</small></div>
+      <label><span>Location name</span><input value={locationName} onChange={(event) => setLocationName(event.target.value)} placeholder="Example: Folsom Store" maxLength={120} disabled={busy} autoFocus /></label>
+      <label><span>Location type</span><select value={locationType} onChange={(event) => setLocationType(event.target.value as ManagedLocationType)} disabled={busy}><option value="store_backroom">Store</option><option value="donation_express">Donation Xpress</option><option value="warehouse">Warehouse</option></select></label>
+      <button className="primary" type="submit" disabled={busy || locationName.trim().length < 2}>{busy ? "Adding…" : "Add location"}</button>
+    </form>}
+    <div className="location-admin-panel__body">
+      <div className="location-admin-stat"><span><Building2 size={17} /></span><div><strong>{activeLocations.length}</strong><small>active operating locations</small></div></div>
+      <div className="location-admin-stat"><span><ScrollText size={17} /></span><div><strong>{retired.length}</strong><small>retired names retained in history</small></div></div>
+      <div className="location-admin-policy"><ShieldCheck size={17} /><div><strong>Retirement is deliberately rare.</strong><p>Before retiring a site, update its scanners where possible. If a scanner cannot be updated immediately, the controlled fallback is <b>Unknown location</b>; no observation is silently reassigned.</p></div></div>
+    </div>
+    {canRetire && <form className="location-retire-form" onSubmit={(event) => void submitRetire(event)}>
+      <div className="location-retire-form__heading"><div><strong>Retire a location</strong><small>First inspect its dependencies. The final action requires the exact location name and Organization Owner approval.</small></div><Pill tone="warn">High impact</Pill></div>
+      <div className="location-retire-form__controls"><label><span>Location to retire</span><select value={retireLocationId} onChange={(event) => { setRetireLocationId(event.target.value); resetRetirement(); }} disabled={busy}><option value="">Select an active location</option>{activeLocations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label><button className="secondary" type="button" disabled={busy || !retireLocationId} onClick={() => void inspectDependencies()}>{busy ? "Checking…" : "Check dependencies"}</button></div>
+      {dependencies && selectedRetireLocation && <div className="location-dependency-review">
+        <div className="location-dependency-review__headline"><div><span className="eyebrow">Before you retire {selectedRetireLocation.name}</span><strong>Review what will be affected.</strong></div><button className="icon-button" type="button" aria-label="Clear dependency review" onClick={resetRetirement}><X size={16} /></button></div>
+        <div className="location-dependency-grid"><div><b>{dependencies.devices.length}</b><span>assigned scanners</span></div><div><b>{dependencies.currentContainerCount}</b><span>containers last observed here</span></div><div><b>{dependencies.loadCodeCount}</b><span>load codes created here</span></div><div><b>{dependencies.observationCount}</b><span>immutable observations</span></div></div>
+        {hasDevices && <div className="location-retire-warning"><AlertTriangle size={18} /><div><strong>Scanners are still assigned to this location.</strong><p>Move them individually from the Devices page when possible. If one cannot be updated, choose a destination below so it remains usable without claiming it is at a closed site.</p><button className="secondary" type="button" onClick={() => setPage("devices")}><Smartphone size={14} /> Open scanner administration</button></div></div>}
+        {!hasDevices && <div className="location-retire-safe"><CheckCircle2 size={17} /><span>No scanners are assigned. Historical container observations and load codes will remain linked to this location name.</span></div>}
+        <label className="location-retire-destination"><span>Remaining scanner destination {hasDevices ? "(required)" : "(optional)"}</span><select value={retireTarget} onChange={(event) => setRetireTarget(event.target.value)} disabled={busy}><option value="">Move scanners first (recommended)</option><option value="unknown">Unknown location</option>{activeLocations.filter((location) => location.locationId !== selectedRetireLocation.locationId).map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label>
+        <div className="location-retire-history-note"><ScrollText size={16} /><span><strong>History is preserved.</strong> {dependencies.currentContainerCount ? `${dependencies.currentContainerCount} container${dependencies.currentContainerCount === 1 ? " remains" : "s remain"} recorded against this name;` : "No containers are currently observed here;"} the original scan events and load-code origins will not be edited.</span></div>
+        <label className="location-retire-confirm"><span>Type “{selectedRetireLocation.name}” to confirm</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder={selectedRetireLocation.name} disabled={busy} /></label>
+        <button className="primary location-retire-button" type="submit" disabled={busy || confirmation.trim() !== selectedRetireLocation.name || (hasDevices && !retireTarget)}>{busy ? "Retiring…" : "Retire this location"}</button>
+      </div>}
+    </form>}
+    {retired.length > 0 && <div className="location-retired-list"><div><strong>Retired location names</strong><small>Kept so historical records stay understandable; they are not available for new scanner assignments.</small></div><div>{retired.map((location) => <span key={location.locationId}><MapPin size={13} />{location.name}<Pill tone="muted">Retired</Pill></span>)}</div></div>}
+  </section>;
 }
 
 function LocationWorkflowLane({ title, subtitle, tone, items, data, onOpen }: { title: string; subtitle: string; tone: "here" | "arriving" | "leaving"; items: Projection[]; data: OperationsData; onOpen: (projection: Projection) => void }) {
@@ -1851,7 +2011,7 @@ function LegacyActivityPage({ data, query, openDetail }: { data: OperationsData;
 function DevicesPage({ data, query, openDetail, refresh, session, onRequestSignIn }: { data: OperationsData; query: string; openDetail: OpenDetail; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; tone: "success" | "error" } | null>(null);
-  const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
+  const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false);
   const matchingDevices = data.fixtures.devices.filter((device) => {
     const assignedLocation = data.fixtures.locations.find((location) => location.locationId === device.assignedLocationId)?.name ?? "";
     const previousLocations = data.fixtures.deviceAssignments
@@ -2491,7 +2651,7 @@ function DeviceCard({ device, data, operatingLocations, busy, canManage, onSave,
   const assignmentChanged = assignedLocationId !== device.assignedLocationId;
   const labelChanged = label.trim() !== device.label;
   const locked = busy || !canManage;
-  return <article className="device-card"><div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div><h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name ?? "Unassigned"}</p>{!canManage && <div className="device-read-only">Read-only access: scanner controls are unavailable.</div>}<label className="device-location-control"><span>Scanner name</span><div className="device-name-input"><input value={label} onChange={(event) => setLabel(event.target.value)} disabled={locked} placeholder="Example: Scanner 1" /><button className="secondary" disabled={locked || !labelChanged || label.trim().length < 2} onClick={() => void onSave(device, { label: label.trim() })}>{busy ? "Saving…" : "Save name"}</button></div></label><dl><div><dt>Scanner ID</dt><dd className="device-id">{scannerNumber(device.deviceId)}</dd></div><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>StackTrack version</dt><dd>{device.reportedAppVersion ?? "Not reported"}</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>Last app report</dt><dd>{relativeTime(device.lastReportedAt)}</dd></div></dl><label className="device-location-control"><span>Move scanner to</span><select value={assignedLocationId} disabled={locked} onChange={(event) => setAssignedLocationId(event.target.value)}>{operatingLocations.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}</select></label>{assignmentChanged && <label className="device-location-control"><span>Reason (optional)</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Scanner moved with the Midtown store team." disabled={locked} /></label>}{assignmentChanged && <button className="primary device-save-assignment" disabled={locked} onClick={() => void onSave(device, { assignedLocationId, ...(reason.trim() ? { assignmentReason: reason.trim() } : {}) })}>{busy ? "Saving…" : "Record scanner move"}</button>}<div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={locked} onClick={() => void onSave(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={onDetails}>Details <ChevronRight size={16} /></button></div></article>;
+  return <article className="device-card"><div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div><h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name ?? "Unassigned"}</p>{!canManage && <div className="device-read-only">Read-only access: scanner controls are unavailable.</div>}<label className="device-location-control"><span>Scanner name</span><div className="device-name-input"><input value={label} onChange={(event) => setLabel(event.target.value)} disabled={locked} placeholder="Example: Scanner 1" /><button className="secondary" disabled={locked || !labelChanged || label.trim().length < 2} onClick={() => void onSave(device, { label: label.trim() })}>{busy ? "Saving…" : "Save name"}</button></div></label><dl><div className="device-id-row"><dt>Scanner ID</dt><dd className="device-id">{scannerNumber(device.deviceId)}</dd></div><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>StackTrack version</dt><dd>{device.reportedAppVersion ?? "Not reported"}</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>Last app report</dt><dd>{relativeTime(device.lastReportedAt)}</dd></div></dl><label className="device-location-control"><span>Move scanner to</span><select value={assignedLocationId} disabled={locked} onChange={(event) => setAssignedLocationId(event.target.value)}>{operatingLocations.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}</select></label>{assignmentChanged && <label className="device-location-control"><span>Reason (optional)</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Scanner moved with the Midtown store team." disabled={locked} /></label>}{assignmentChanged && <button className="primary device-save-assignment" disabled={locked} onClick={() => void onSave(device, { assignedLocationId, ...(reason.trim() ? { assignmentReason: reason.trim() } : {}) })}>{busy ? "Saving…" : "Record scanner move"}</button>}<div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={locked} onClick={() => void onSave(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={onDetails}>Details <ChevronRight size={16} /></button></div></article>;
 }
 
 function BrokenExceptionsPage({ data, openDetail, session, refresh }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession; refresh: () => Promise<void> }) {

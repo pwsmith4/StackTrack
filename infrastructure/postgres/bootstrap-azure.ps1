@@ -74,6 +74,7 @@ ALTER ROLE stacktrack_app WITH LOGIN PASSWORD :'app_password';
 GRANT CONNECT ON DATABASE stacktrack TO stacktrack_app;
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
+GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack_app;
 GRANT UPDATE (device_label, assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack_app;
 GRANT UPDATE (required_app_version) ON devices TO stacktrack_app;
 GRANT UPDATE (last_reported_at, reported_app_version, pending_offline_scan_count) ON device_installations TO stacktrack_app;
