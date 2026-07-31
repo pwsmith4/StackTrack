@@ -282,4 +282,50 @@ export class PostgresAdminAccess {
       return user;
     });
   }
+
+  public async resetUserPassword(
+    actor: AdminPrincipal,
+    userId: string,
+    temporaryPassword: string
+  ): Promise<AdminPrincipal> {
+    if (actor.role !== "organization_owner") {
+      throw new Error("Only Organization Owners can reset administrator passwords.");
+    }
+    if (actor.userId === userId) {
+      throw new Error("Use your own account security form to change your password.");
+    }
+    validatePassword(temporaryPassword, "Temporary password");
+    const passwordHash = await hashPassword(temporaryPassword);
+    return this.transaction(async (client) => {
+      const found = await client.query(
+        `SELECT tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password
+           FROM admin_users
+          WHERE tenant_id=$1 AND user_id=$2
+          FOR UPDATE`,
+        [this.tenantId, userId]
+      );
+      const target = found.rows[0] as AdminRow | undefined;
+      if (!target) throw new Error("Administrator account was not found.");
+      if (!Boolean(target.is_active)) throw new Error("Enable the administrator account before issuing a password.");
+      await client.query(
+        `UPDATE admin_users
+            SET password_hash=$3, must_change_password=true, updated_at=clock_timestamp()
+          WHERE tenant_id=$1 AND user_id=$2`,
+        [this.tenantId, userId, passwordHash]
+      );
+      await client.query(
+        `UPDATE admin_sessions
+            SET revoked_at=clock_timestamp()
+          WHERE tenant_id=$1 AND user_id=$2 AND revoked_at IS NULL`,
+        [this.tenantId, userId]
+      );
+      const user = rowPrincipal({ ...target, must_change_password: true });
+      await this.audit(client, actor, "admin.password_reset", user.userId, {
+        username: user.username,
+        sessionsRevoked: true,
+        mustChangePassword: true
+      });
+      return user;
+    });
+  }
 }

@@ -36,6 +36,9 @@ local-only example and must never be used in Azure.
 - The Devices page records the signed-in administrator whenever a scanner is
   renamed, moved, enabled, or disabled. A scanner-move reason is optional for
   this pilot, but the action itself is never silent.
+- An Organization Owner can issue a new temporary password for an active
+  administrator from the same directory. The reset revokes every existing
+  session and requires a private password at next sign-in.
 - The Needs review page records every decision as an append-only action with a
   required reason. Only an Organization Owner can resolve a material case.
 

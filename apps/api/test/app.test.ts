@@ -313,6 +313,35 @@ describe("StackTrack API foundation", () => {
     );
   });
 
+  it("requires an owner and delegates administrator password resets", async () => {
+    const resetUserPassword = vi.fn().mockResolvedValue({
+      ...temporaryPasswordPrincipal,
+      mustChangePassword: true
+    });
+    app = await createApp({
+      localMode: true,
+      adminAccess: {
+        authenticate: vi.fn().mockResolvedValue(ownerPrincipal),
+        resetUserPassword
+      } as unknown as PostgresAdminAccess
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/local/admin/users/${temporaryPasswordPrincipal.userId}/password-reset`,
+      headers: { authorization: `Bearer ${"d".repeat(32)}` },
+      payload: { temporaryPassword: "a-new-temporary-password" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ user: { mustChangePassword: true } });
+    expect(resetUserPassword).toHaveBeenCalledWith(
+      ownerPrincipal,
+      temporaryPasswordPrincipal.userId,
+      "a-new-temporary-password"
+    );
+  });
+
   it("rate limits repeated administrator sign-in attempts", async () => {
     const signIn = vi.fn().mockResolvedValue(null);
     app = await createApp({ localMode: true, adminAccess: { signIn } as unknown as PostgresAdminAccess });

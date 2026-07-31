@@ -250,6 +250,15 @@ export async function updateAdminUser(session: AdminSession, userId: string, upd
   return response.user;
 }
 
+export async function resetAdminPassword(session: AdminSession, userId: string, temporaryPassword: string): Promise<AdminPrincipal> {
+  const response = await postJson<{ user: AdminPrincipal }>(
+    `/api/v1/local/admin/users/${userId}/password-reset`,
+    { temporaryPassword },
+    session
+  );
+  return response.user;
+}
+
 export async function reviewCaseAction(session: AdminSession, reviewCaseId: string, action: ReviewAction, reason: string): Promise<ReviewCase> {
   const response = await postJson<{ item: ReviewCase }>(`/api/v1/local/review-cases/${reviewCaseId}/actions`, { action, reason }, session);
   return response.item;

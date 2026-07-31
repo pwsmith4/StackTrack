@@ -215,6 +215,27 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     });
 
+    app.post<{ Params: { userId: string }; Body: { temporaryPassword?: string } }>(
+      "/api/v1/local/admin/users/:userId/password-reset",
+      { config: { rateLimit: { max: 20, timeWindow: "15 minutes" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (principal.role !== "organization_owner") {
+          return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can reset administrator passwords." });
+        }
+        const temporaryPassword = request.body?.temporaryPassword;
+        if (typeof temporaryPassword !== "string" || temporaryPassword.length < 12 || temporaryPassword.length > 256) {
+          return reply.code(400).send({ error: "InvalidTemporaryPassword", message: "Temporary password must contain 12-256 characters." });
+        }
+        try {
+          return reply.send({ user: await dependencies.adminAccess!.resetUserPassword(principal, request.params.userId, temporaryPassword) });
+        } catch (error) {
+          return reply.code(400).send({ error: "PasswordResetRejected", message: error instanceof Error ? error.message : "The administrator password could not be reset." });
+        }
+      }
+    );
+
     app.get("/api/v1/local/review-cases", async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
