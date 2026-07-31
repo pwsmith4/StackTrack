@@ -18,10 +18,7 @@ The executable baseline centers on an immutable event ledger, deterministic cont
   7 shared scanners, 302 immutable observations, and seeded accuracy-review cases
 - Baseline assumptions and unanswered-decision register
 
-This is not production-ready yet. Scanner and test-data routes still use a
-synthetic pilot tenant header, but scanner administration and administrator
-management now require a server-issued pilot session. Production will replace
-the temporary password pilot bridge with Goodwill Microsoft Entra sign-in.
+This is not production-ready yet. Authentication is intentionally represented by development headers until Goodwill provides an Entra tenant, device provisioning policy, and production Azure environment.
 
 ## Run locally
 
@@ -40,30 +37,13 @@ Open:
 - React Native web preview: [http://127.0.0.1:8082](http://127.0.0.1:8082)
 - API/legacy diagnostic lab: [http://127.0.0.1:3000](http://127.0.0.1:3000)
 
-On Windows, `start-local.cmd` launches all three. The mobile test routes use a
-development tenant/device identity pair, while the admin console uses a
-server-issued session. Browser requests are accepted only from the configured
-StackTrack web origins (set `STACKTRACK_ALLOWED_ORIGINS` as a comma-separated
-list if a different local web origin is needed). Development header mode must
-never be enabled in production.
+On Windows, `start-local.cmd` launches all three. Every non-health API request currently requires a development tenant header; event submissions also require a development device header. This header mode must never be enabled in production.
 
 See the [local testing guide](docs/local-testing.md) for seeded labels, offline testing, built-in scenarios, and optional testing from another device on the same private network.
 
 The repository contains the website, mobile app, API, database infrastructure,
 and shared packages. See the [deployment layout](docs/deployment.md) before
 publishing the admin site through GitHub Pages.
-
-For branch-based API deployment to Azure Container Apps, see the
-[automatic Azure deployment setup](docs/azure-github-deployment.md). It uses
-GitHub OpenID Connect rather than storing an Azure password in GitHub.
-
-The proposed Goodwill-owned access model and production authentication boundary
-are documented in the [access-control foundation](docs/access-control-foundation.md).
-
-The test API also rate-limits requests globally and limits administrator sign-in
-attempts to five per fifteen minutes per client address. This is a pilot safety
-control; production should enforce equivalent limits at Goodwill's gateway or
-identity provider as well.
 
 ### Start the PostgreSQL simulation
 
@@ -111,12 +91,10 @@ npm.cmd run release:mobile:minor  # 0.3.1 → 0.4.0
 npm.cmd run release:mobile:major  # 0.3.1 → 1.0.0
 ```
 
-The command updates the Expo manifest, Android Gradle version code/name,
-package metadata, and the version bundled into the app together. Commit those
-changes with the release. The Devices page shows each scanner's reported installed version and
-the exact five-digit scanner identifier. Required-version enforcement remains
-available to the mobile/API deployment policy but is intentionally not exposed
-as a routine pilot admin toggle.
+The command updates the Expo manifest, Android build number, package metadata,
+and the version bundled into the app together. Commit those changes with the
+release. The Devices page shows each scanner's reported installed version,
+required version, and any required-update warning.
 
 GitHub Actions also creates a versioned mobile preview on every qualifying push
 to `main` or `test`. It adds the GitHub run number and short commit hash, such
@@ -139,13 +117,6 @@ npm.cmd run db:azure:bootstrap -- -ServerName "your-server.postgres.database.azu
 The command prompts for both passwords, applies the schema, creates the
 non-admin `stacktrack_app` API login, and loads synthetic test data. It does
 not save passwords in the repository.
-
-### Enable pilot administrator access
-
-Once the test API is deployed, create the first Organization Owner with the
-separate password-prompted command in the
-[administrator access setup guide](docs/admin-access-setup.md). This enables
-the admin website's sign-in, scanner controls, and administrator directory.
 
 ## First API slice
 

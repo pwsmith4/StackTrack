@@ -1,8 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createApp } from "../src/app.js";
 import type { DeviceAdministration } from "../src/device-administration.js";
-import type { AdminPrincipal, PostgresAdminAccess } from "../src/admin-access.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const deviceId = "22222222-2222-4222-8222-222222222222";
@@ -24,25 +23,6 @@ const event = {
   eventAt: "2026-07-22T12:00:00.000Z"
 };
 
-const temporaryPasswordPrincipal: AdminPrincipal = {
-  tenantId,
-  userId: "88888888-8888-4888-8888-888888888888",
-  username: "new-admin",
-  displayName: "New Administrator",
-  role: "operations_administrator",
-  supportExpiresAt: null,
-  isActive: true,
-  mustChangePassword: true
-};
-
-const supportPrincipal: AdminPrincipal = {
-  ...temporaryPasswordPrincipal,
-  username: "support",
-  role: "support",
-  mustChangePassword: false,
-  supportExpiresAt: "2026-08-01T00:00:00.000Z"
-};
-
 let app: FastifyInstance | undefined;
 
 afterEach(async () => {
@@ -52,7 +32,7 @@ afterEach(async () => {
 
 describe("StackTrack API foundation", () => {
   it("accepts an event and returns its projected state", async () => {
-    app = await createApp({ now: () => new Date("2026-07-22T12:00:01.000Z") });
+    app = createApp({ now: () => new Date("2026-07-22T12:00:01.000Z") });
 
     const submission = await app.inject({
       method: "POST",
@@ -87,7 +67,7 @@ describe("StackTrack API foundation", () => {
   });
 
   it("returns a stable response for an idempotent replay", async () => {
-    app = await createApp({ now: () => new Date("2026-07-22T12:00:01.000Z") });
+    app = createApp({ now: () => new Date("2026-07-22T12:00:01.000Z") });
 
     await app.inject({
       method: "POST",
@@ -112,7 +92,7 @@ describe("StackTrack API foundation", () => {
       reportTelemetry: async () => null,
       isScannerEnabled: async () => false
     };
-    app = await createApp({ deviceAdministration: disabledScanner });
+    app = createApp({ deviceAdministration: disabledScanner });
 
     const response = await app.inject({
       method: "POST",
@@ -126,7 +106,7 @@ describe("StackTrack API foundation", () => {
   });
 
   it("does not trust unscoped requests", async () => {
-    app = await createApp();
+    app = createApp();
     const response = await app.inject({
       method: "GET",
       url: `/api/v1/containers/${containerId}/state`
@@ -135,8 +115,8 @@ describe("StackTrack API foundation", () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it("keeps administrator reference data behind an authenticated session", async () => {
-    app = await createApp({ localMode: true });
+  it("exposes local reference data only when local mode is enabled", async () => {
+    app = createApp({ localMode: true });
     const fixtures = await app.inject({
       method: "GET",
       url: "/api/v1/local/reference-data",
@@ -145,126 +125,7 @@ describe("StackTrack API foundation", () => {
       }
     });
 
-    expect(fixtures.statusCode).toBe(503);
-
-    const mobileReferenceData = await app.inject({
-      method: "GET",
-      url: "/api/v1/mobile/reference-data",
-      headers: {
-        "x-stacktrack-tenant-id": "10000000-0000-4000-8000-000000000001",
-        "x-stacktrack-device-id": deviceId
-      }
-    });
-    expect(mobileReferenceData.statusCode).toBe(200);
-    expect(mobileReferenceData.json().containers).toHaveLength(11);
-  });
-
-  it("requires a temporary administrator password to be changed before operational data is returned", async () => {
-    const changePassword = vi.fn().mockResolvedValue(undefined);
-    const access = {
-      authenticate: vi.fn().mockResolvedValue(temporaryPasswordPrincipal),
-      changePassword
-    } as unknown as PostgresAdminAccess;
-    app = await createApp({ localMode: true, adminAccess: access });
-    const authorization = { authorization: `Bearer ${"a".repeat(32)}` };
-
-    const protectedData = await app.inject({
-      method: "GET",
-      url: "/api/v1/local/reference-data",
-      headers: authorization
-    });
-    const passwordChange = await app.inject({
-      method: "PATCH",
-      url: "/api/v1/local/admin/me/password",
-      headers: authorization,
-      payload: { currentPassword: "temporary-password", newPassword: "a-private-password" }
-    });
-
-    expect(protectedData.statusCode).toBe(409);
-    expect(protectedData.json()).toMatchObject({ error: "PasswordChangeRequired" });
-    expect(passwordChange.statusCode).toBe(204);
-    expect(changePassword).toHaveBeenCalledOnce();
-  });
-
-  it("rejects telemetry that claims a different scanner identity", async () => {
-    const reportTelemetry = vi.fn();
-    const administration: DeviceAdministration = {
-      update: async () => null,
-      reportTelemetry,
-      isScannerEnabled: async () => true
-    };
-    app = await createApp({ localMode: true, deviceAdministration: administration });
-
-    const response = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/local/devices/${deviceId}/telemetry`,
-      headers: {
-        "x-stacktrack-tenant-id": tenantId,
-        "x-stacktrack-device-id": "33333333-3333-4333-8333-333333333333"
-      },
-      payload: { installationId: "33333333-3333-4333-8333-333333333333", appVersion: "0.3.2", pendingOfflineScanCount: 0 }
-    });
-
-    expect(response.statusCode).toBe(403);
-    expect(response.json()).toMatchObject({ error: "DeviceIdentityMismatch" });
-    expect(reportTelemetry).not.toHaveBeenCalled();
-  });
-
-  it("does not let a support account control a scanner", async () => {
-    const update = vi.fn();
-    const administration: DeviceAdministration = {
-      update,
-      reportTelemetry: async () => null,
-      isScannerEnabled: async () => true
-    };
-    app = await createApp({
-      localMode: true,
-      adminAccess: { authenticate: vi.fn().mockResolvedValue(supportPrincipal) } as unknown as PostgresAdminAccess,
-      deviceAdministration: administration
-    });
-
-    const response = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/local/devices/${deviceId}`,
-      headers: { authorization: `Bearer ${"b".repeat(32)}` },
-      payload: { isActive: false }
-    });
-
-    expect(response.statusCode).toBe(403);
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it("rate limits repeated administrator sign-in attempts", async () => {
-    const signIn = vi.fn().mockResolvedValue(null);
-    app = await createApp({ localMode: true, adminAccess: { signIn } as unknown as PostgresAdminAccess });
-    const responses = [];
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      responses.push(await app.inject({
-        method: "POST",
-        url: "/api/v1/local/admin/session",
-        payload: { username: "root", password: "incorrect-password" }
-      }));
-    }
-
-    expect(responses.slice(0, 5).every((response) => response.statusCode === 401)).toBe(true);
-    expect(responses[5]?.statusCode).toBe(429);
-    expect(signIn).toHaveBeenCalledTimes(5);
-  });
-
-  it("only emits CORS access headers for approved StackTrack browser origins", async () => {
-    app = await createApp({ localMode: true });
-    const request = {
-      method: "GET" as const,
-      url: "/api/v1/mobile/reference-data",
-      headers: {
-        "x-stacktrack-tenant-id": "10000000-0000-4000-8000-000000000001",
-        "x-stacktrack-device-id": deviceId
-      }
-    };
-    const allowed = await app.inject({ ...request, headers: { ...request.headers, origin: "https://pwsmith4.github.io" } });
-    const rejected = await app.inject({ ...request, headers: { ...request.headers, origin: "https://untrusted.example" } });
-
-    expect(allowed.headers["access-control-allow-origin"]).toBe("https://pwsmith4.github.io");
-    expect(rejected.headers["access-control-allow-origin"]).toBeUndefined();
+    expect(fixtures.statusCode).toBe(200);
+    expect(fixtures.json().containers).toHaveLength(11);
   });
 });
