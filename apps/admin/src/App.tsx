@@ -1235,10 +1235,58 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
   );
 }
 
+type LocationMetric = {
+  location: Location;
+  current: Projection[];
+  arriving: Projection[];
+  leaving: Projection[];
+  eventsLastDay: number;
+  flaggedEvents: number;
+  scanners: Device[];
+  staleScanners: number;
+  needsReview: number;
+};
+
+function locationTypeLabel(type: Location["type"]) {
+  return type === "donation_express" ? "Donation Xpress" : type === "warehouse" ? "Warehouse" : type === "in_transit" ? "In transit" : "Store";
+}
+
+function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, onSelect }: { metrics: LocationMetric[]; movingCount: number; movingReviewCount: number; onSelect: (locationId: string) => void }) {
+  const collection = metrics.filter(({ location }) => location.type === "store_backroom" || location.type === "donation_express");
+  const warehouses = metrics.filter(({ location }) => location.type === "warehouse");
+  const sortByWork = (left: LocationMetric, right: LocationMetric) => (right.current.length + right.arriving.length + right.leaving.length + right.needsReview) - (left.current.length + left.arriving.length + left.leaving.length + left.needsReview);
+  const collectionPreview = [...collection].sort(sortByWork).slice(0, 6);
+  const warehousePreview = [...warehouses].sort(sortByWork).slice(0, 6);
+  const currentCount = metrics.reduce((total, metric) => total + metric.current.length, 0);
+  const attentionCount = metrics.reduce((total, metric) => total + metric.needsReview, movingReviewCount);
+  const activeScanners = metrics.reduce((total, metric) => total + metric.scanners.filter((device) => device.isActive).length, 0);
+  const renderLocationNode = (metric: LocationMetric) => <button className="location-flow-node" key={metric.location.locationId} onClick={() => onSelect(metric.location.locationId)}>
+    <span className={`location-flow-node__icon location-flow-node__icon--${metric.location.type}`}><LocationTypeIcon location={metric.location} size={16} /></span>
+    <span className="location-flow-node__body"><strong>{metric.location.name}</strong><small>{metric.current.length} here · {metric.arriving.length} inbound</small></span>
+    <span className="location-flow-node__stats"><b>{metric.eventsLastDay}</b><small>24h scans</small></span>
+    {metric.needsReview > 0 && <Pill tone="warn">{metric.needsReview} review</Pill>}
+    <ChevronRight size={15} />
+  </button>;
+  return <section className="location-network panel">
+    <div className="location-network__header"><PanelTitle title="Network flow" subtitle="A top-to-bottom view of where work is concentrated, moving, and waiting for attention." /><span className="location-network__hint">Select any location node to focus the workspace below.</span></div>
+    <div className="location-network__summary"><span><b>{metrics.length}</b><small>operating locations</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>in transit</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>needs review</small></span></div>
+    <div className="location-flow-stack">
+      <div className="location-flow-stage location-flow-stage--collection"><header><div><span className="eyebrow">Stage 1</span><h3>Collection sites</h3><p>Stores and Donation Xpress locations where containers enter the network.</p></div><strong>{collection.length}<small>locations</small></strong></header><div className="location-flow-stage__nodes">{collectionPreview.map(renderLocationNode)}{collection.length > collectionPreview.length && <span className="location-flow-stage__more">+ {collection.length - collectionPreview.length} more in the directory below</span>}</div></div>
+      <div className="location-flow-connector"><ArrowRight size={18} /><span>{movingCount ? `${movingCount} containers currently moving between locations` : "No active transfers recorded"}</span><ArrowRight size={18} /></div>
+      <div className="location-flow-stage location-flow-stage--transit"><header><div><span className="eyebrow">Stage 2</span><h3>In transit</h3><p>The handoff boundary between origin and destination.</p></div><strong>{movingCount}<small>containers</small></strong></header><div className="location-flow-transit-card"><span className="location-flow-transit-card__icon"><Truck size={20} /></span><div><strong>{movingCount ? "Routes are active" : "Network is quiet"}</strong><p>{movingCount ? "Each active route remains linked to its origin, destination, and receipt scan." : "A sent-in-transit scan will appear here when a route begins."}</p></div>{movingReviewCount > 0 && <Pill tone="warn">{movingReviewCount} review</Pill>}</div></div>
+      <div className="location-flow-connector"><ArrowRight size={18} /><span>Receiving confirms the container’s next official location</span><ArrowRight size={18} /></div>
+      <div className="location-flow-stage location-flow-stage--warehouse"><header><div><span className="eyebrow">Stage 3</span><h3>Processing sites</h3><p>Warehouses where loads are received, sorted, and prepared for the next handoff.</p></div><strong>{warehouses.length}<small>locations</small></strong></header><div className="location-flow-stage__nodes">{warehousePreview.map(renderLocationNode)}{warehouses.length > warehousePreview.length && <span className="location-flow-stage__more">+ {warehouses.length - warehousePreview.length} more in the directory below</span>}</div></div>
+    </div>
+  </section>;
+}
+
 function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; openDetail: OpenDetail; setPage: (page: Page) => void }) {
   const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
   const [selectedLocationId, setSelectedLocationId] = useState(physicalLocations[0]?.locationId ?? "");
   const [locationQuery, setLocationQuery] = useState("");
+  const [locationTypeFilter, setLocationTypeFilter] = useState<"all" | Location["type"]>("all");
+  const [locationHealthFilter, setLocationHealthFilter] = useState<"all" | "attention">("all");
+  const [locationSort, setLocationSort] = useState<"work" | "containers" | "activity" | "alphabetical">("work");
   const selected = physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0];
   if (!selected) return <EmptyState>No operating locations are available.</EmptyState>;
 
@@ -1259,11 +1307,41 @@ function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; op
     return { destination, origin, departure };
   };
   const projections = Object.values(data.projections).filter(Boolean) as Projection[];
-  const matchingLocations = physicalLocations.filter((location) =>
-    `${location.name} ${location.type.replaceAll("_", " ")}`.toLowerCase().includes(locationQuery.trim().toLowerCase())
-  );
-  const current = projections.filter((projection) => projection.locationId === selected.locationId);
+  const metricsFor = (location: Location): LocationMetric => {
+    const current = projections.filter((projection) => projection.locationId === location.locationId);
+    const moving = projections.filter((projection) => projection.locationId === transitId);
+    const arriving = moving.filter((projection) => routeFor(projection).destination?.locationId === location.locationId);
+    const leaving = moving.filter((projection) => routeFor(projection).origin?.locationId === location.locationId);
+    const locationEvents = data.events.filter((event) => event.locationId === location.locationId);
+    const scanners = data.fixtures.devices.filter((device) => device.assignedLocationId === location.locationId);
+    return {
+      location,
+      current,
+      arriving,
+      leaving,
+      eventsLastDay: locationEvents.filter((event) => Date.now() - Date.parse(event.receivedAt) <= 24 * 60 * 60 * 1000).length,
+      flaggedEvents: locationEvents.filter((event) => event.accuracyFlags.length > 0).length,
+      scanners,
+      staleScanners: scanners.filter((device) => !device.lastReportedAt || Date.now() - Date.parse(device.lastReportedAt) > 24 * 60 * 60 * 1000).length,
+      needsReview: current.filter((projection) => projection.health === "needs_review").length
+    };
+  };
+  const locationMetrics = physicalLocations.map(metricsFor);
+  const selectedMetric = locationMetrics.find((metric) => metric.location.locationId === selected.locationId)!;
   const moving = projections.filter((projection) => projection.locationId === transitId);
+  const movingReviewCount = moving.filter((projection) => projection.health === "needs_review").length;
+  const locationSearch = locationQuery.trim().toLowerCase();
+  const matchingMetrics = locationMetrics
+    .filter((metric) => locationTypeFilter === "all" || metric.location.type === locationTypeFilter)
+    .filter((metric) => locationHealthFilter === "all" || metric.needsReview > 0 || metric.flaggedEvents > 0 || metric.staleScanners > 0)
+    .filter((metric) => !locationSearch || `${metric.location.name} ${locationTypeLabel(metric.location.type)}`.toLowerCase().includes(locationSearch))
+    .sort((left, right) => {
+      if (locationSort === "alphabetical") return left.location.name.localeCompare(right.location.name);
+      if (locationSort === "containers") return right.current.length - left.current.length;
+      if (locationSort === "activity") return right.eventsLastDay - left.eventsLastDay;
+      return (right.current.length + right.arriving.length + right.leaving.length + right.needsReview) - (left.current.length + left.arriving.length + left.leaving.length + left.needsReview);
+    });
+  const current = projections.filter((projection) => projection.locationId === selected.locationId);
   const arriving = moving.filter((projection) => routeFor(projection).destination?.locationId === selected.locationId);
   const leaving = moving.filter((projection) => routeFor(projection).origin?.locationId === selected.locationId);
   const openContainer = (projection: Projection) => openDetail({
@@ -1278,19 +1356,22 @@ function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; op
   });
 
   return <>
+    <LocationNetworkOverview metrics={locationMetrics} movingCount={moving.length} movingReviewCount={movingReviewCount} onSelect={setSelectedLocationId} />
     <section className="location-selector panel">
-      <div className="location-selector__heading"><PanelTitle title="Operating locations" subtitle="Choose one location to see its current and planned container involvement." /><label className="location-search"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="Search locations" aria-label="Search locations" /></label></div>
-      <div className="location-selector__list">{matchingLocations.map((location) => {
-        const count = projections.filter((projection) => projection.locationId === location.locationId).length;
-        return <button key={location.locationId} className={location.locationId === selected.locationId ? "active" : ""} onClick={() => setSelectedLocationId(location.locationId)}><span className={`location-type-icon location-type-icon--${location.type}`}><LocationTypeIcon location={location} /></span><span><b>{location.name}</b><small>{location.type === "donation_express" ? "Donation Xpress" : location.type === "warehouse" ? "Warehouse" : "Store"} · {count} currently here</small></span><ChevronRight size={17} /></button>;
-      })}{matchingLocations.length === 0 && <div className="location-selector__empty">No locations match “{locationQuery}”.</div>}</div>
+      <div className="location-selector__heading"><PanelTitle title="Location directory" subtitle="Search, sort, and filter every physical location before opening its operating picture." /><div className="location-directory-tools"><label className="location-search"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="Search locations" aria-label="Search locations" /></label><select value={locationTypeFilter} onChange={(event) => setLocationTypeFilter(event.target.value as typeof locationTypeFilter)} aria-label="Filter by location type"><option value="all">All location types</option><option value="store_backroom">Stores</option><option value="donation_express">Donation Xpress</option><option value="warehouse">Warehouses</option></select><select value={locationHealthFilter} onChange={(event) => setLocationHealthFilter(event.target.value as typeof locationHealthFilter)} aria-label="Filter locations needing attention"><option value="all">All locations</option><option value="attention">Needs attention</option></select><select value={locationSort} onChange={(event) => setLocationSort(event.target.value as typeof locationSort)} aria-label="Sort locations"><option value="work">Sort by active work</option><option value="containers">Sort by containers here</option><option value="activity">Sort by 24h activity</option><option value="alphabetical">Sort A–Z</option></select></div></div>
+      <div className="location-directory-summary"><span>Showing <b>{matchingMetrics.length}</b> of {physicalLocations.length} locations</span><span>{matchingMetrics.reduce((total, metric) => total + metric.current.length, 0)} containers in the filtered view</span><span>{matchingMetrics.reduce((total, metric) => total + metric.needsReview, 0)} need review</span></div>
+      <div className="location-selector__list">{matchingMetrics.map((metric) => {
+        const location = metric.location;
+        return <button key={location.locationId} className={`location-directory-card ${location.locationId === selected.locationId ? "active" : ""}`} onClick={() => setSelectedLocationId(location.locationId)}><span className={`location-type-icon location-type-icon--${location.type}`}><LocationTypeIcon location={location} /></span><span className="location-directory-card__body"><b>{location.name}</b><small>{locationTypeLabel(location.type)} · {metric.scanners.length} scanner{metric.scanners.length === 1 ? "" : "s"}</small><span className="location-directory-card__stats"><span><strong>{metric.current.length}</strong> here</span><span><strong>{metric.arriving.length}</strong> in</span><span><strong>{metric.leaving.length}</strong> out</span><span><strong>{metric.eventsLastDay}</strong> scans</span></span></span><span className="location-directory-card__status">{metric.needsReview > 0 ? <Pill tone="warn">{metric.needsReview} review</Pill> : metric.staleScanners > 0 ? <Pill tone="warn">{metric.staleScanners} stale</Pill> : <Pill tone="good">Operating</Pill>}<ChevronRight size={17} /></span></button>;
+      })}{matchingMetrics.length === 0 && <div className="location-selector__empty">No locations match the current search and filters.</div>}</div>
     </section>
 
     <section className="location-workspace panel">
       <div className="location-workspace__head">
-        <div><span className="eyebrow">Selected operating location</span><h2><span className={`location-title-icon location-title-icon--${selected.type}`}><LocationTypeIcon location={selected} size={20} /></span>{selected.name}</h2><p>One place to review containers physically here, inbound, and outbound without mixing simultaneous routes together.</p><button className="secondary location-details-button" onClick={() => openDetail(locationDetail(selected, data, setPage, openDetail))}><MapPin size={15} /> Location details</button></div>
+        <div><span className="eyebrow">Selected operating location</span><h2><span className={`location-title-icon location-title-icon--${selected.type}`}><LocationTypeIcon location={selected} size={20} /></span>{selected.name}</h2><p>One place to review containers physically here, inbound, and outbound without mixing simultaneous routes together.</p><div className="location-workspace__actions"><button className="secondary location-details-button" onClick={() => openDetail(locationDetail(selected, data, setPage, openDetail))}><MapPin size={15} /> Location details</button><button className="secondary location-details-button" onClick={() => setPage("activity")}><Activity size={15} /> View activity</button></div></div>
         <div className="location-workspace__counts"><span><b>{current.length}</b> here</span><span><b>{arriving.length}</b> arriving</span><span><b>{leaving.length}</b> leaving</span></div>
       </div>
+      <div className="location-workspace__signals"><article><span className="location-workspace__signal-icon location-workspace__signal-icon--blue"><Boxes size={17} /></span><div><small>Current containers</small><strong>{current.length}</strong><em>{current.length ? "Officially assigned here" : "No confirmed containers"}</em></div></article><article><span className="location-workspace__signal-icon location-workspace__signal-icon--green"><ArrowRight size={17} /></span><div><small>Inbound / outbound</small><strong>{arriving.length} / {leaving.length}</strong><em>Recorded route involvement</em></div></article><article><span className="location-workspace__signal-icon location-workspace__signal-icon--orange"><AlertTriangle size={17} /></span><div><small>Attention</small><strong>{selectedMetric.needsReview + selectedMetric.flaggedEvents}</strong><em>{selectedMetric.needsReview ? "Containers need a decision" : selectedMetric.flaggedEvents ? "Flagged observations" : "No active flags"}</em></div></article><article><span className="location-workspace__signal-icon location-workspace__signal-icon--slate"><Wifi size={17} /></span><div><small>Scanner coverage</small><strong>{selectedMetric.scanners.filter((device) => device.isActive).length} / {selectedMetric.scanners.length}</strong><em>{selectedMetric.staleScanners ? `${selectedMetric.staleScanners} stale report${selectedMetric.staleScanners === 1 ? "" : "s"}` : `${selectedMetric.eventsLastDay} scans in 24 hours`}</em></div></article></div>
       <div className="workflow-lanes">
         <LocationWorkflowLane title="Containers at this location" subtitle="Official current state is this location" tone="here" items={current} data={data} onOpen={openContainer} />
         <LocationWorkflowLane title="Containers arriving" subtitle="In transit with this location as the recorded destination" tone="arriving" items={arriving} data={data} onOpen={openContainer} />
