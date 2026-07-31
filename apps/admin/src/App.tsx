@@ -797,11 +797,6 @@ export function App() {
             <button className="icon-button" onClick={() => void refresh()} aria-label="Refresh data">
               <RefreshCw size={18} className={loading ? "spin" : ""} />
             </button>
-            <button className="icon-button" aria-label="Help" onClick={() => setDetail({
-              eyebrow: "StackTrack help",
-              title: "Using the operations console",
-              body: <><p className="detail-lead">Search for a container or load code, use the left navigation for operational views, and open any record for its immutable evidence history.</p><div className="help-steps"><span><b>1</b> Scan in the mobile app</span><span><b>2</b> Refresh the console</span><span><b>3</b> Review state and evidence</span><span><b>4</b> Request a governed correction when evidence is wrong</span></div><div className="detail-callout"><ShieldCheck size={20}/><span>Approved corrections never delete the original scan. Material changes require a second Organization Owner, and a newer physical scan automatically becomes authoritative.</span></div></>
-            })}><CircleHelp size={18} /></button>
           </div>
         </header>
 
