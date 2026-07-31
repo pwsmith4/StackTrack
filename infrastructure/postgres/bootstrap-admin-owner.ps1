@@ -32,7 +32,8 @@ $username = $Username.Trim().ToLowerInvariant()
 if ($username -notmatch '^[a-z0-9._-]{3,64}$') { throw "Username must use 3 to 64 lowercase letters, numbers, periods, underscores, or hyphens." }
 
 $salt = New-Object byte[] 16
-[Security.Cryptography.RandomNumberGenerator]::Fill($salt)
+$random = [Security.Cryptography.RandomNumberGenerator]::Create()
+try { $random.GetBytes($salt) } finally { $random.Dispose() }
 $derive = [Security.Cryptography.Rfc2898DeriveBytes]::new($ownerPassword, $salt, 210000, [Security.Cryptography.HashAlgorithmName]::SHA512)
 try {
   $passwordHash = "pbkdf2-sha512`$210000`$(ConvertTo-Base64Url $salt)`$(ConvertTo-Base64Url $derive.GetBytes(32))"
