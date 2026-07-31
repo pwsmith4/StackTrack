@@ -266,13 +266,19 @@ export function App() {
   // The pilot console opens on the sign-in surface. A user may close it only
   // to inspect read-only operational data; all administrative writes stay
   // locked until the API verifies a session.
-  const [signInOpen, setSignInOpen] = useState(true);
+  const [signInOpen, setSignInOpen] = useState(() => !session);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
+    if (!session) {
+      setData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      setData(await loadOperationsData());
+      setData(await loadOperationsData(session));
       setError(null);
       setLastRefresh(new Date());
     } catch (caught) {
@@ -280,7 +286,7 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     void refresh();
@@ -319,6 +325,10 @@ export function App() {
   const reviewCount = data
     ? Object.values(data.projections).filter((projection) => projection?.health === "needs_review").length
     : 0;
+
+  if (!session) {
+    return <div className="authentication-shell"><SignInDialog onClose={() => undefined} onSuccess={establishSession} /></div>;
+  }
 
   return (
     <div className="app-shell">
@@ -426,7 +436,7 @@ export function App() {
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
             <PageContent page={page} data={data} query={query} setPage={setPage} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} />
-          ) : null}
+          ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
           <span><ShieldCheck size={15} /> Pilot test environment • append-only audit foundation</span>
@@ -442,10 +452,10 @@ export function App() {
 function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase(); }
 function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
 
-function SignInDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess: (session: AdminSession) => void }) {
+function SignInDialog({ onClose: _onClose, onSuccess }: { onClose: () => void; onSuccess: (session: AdminSession) => void }) {
   const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { onSuccess(await signIn(username, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Sign-in failed."); } finally { setBusy(false); } };
-  return <><button className="detail-scrim" onClick={onClose} aria-label="Close sign in"/><section className="sign-in-dialog" role="dialog" aria-modal="true" aria-label="Administrator sign in"><button className="icon-button sign-in-dialog__close" onClick={onClose} aria-label="Close sign in"><X size={18}/></button><ShieldCheck size={28}/><span className="eyebrow">SECURE PILOT ACCESS</span><h2>Sign in to manage operations.</h2><p>Read-only views stay available. Scanner and administrator changes require a verified account.</p><form onSubmit={(event) => void submit(event)}><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form><small>Production will use Goodwill Microsoft Entra sign-in. This password route is for the isolated test pilot only.</small></section></>;
+  return <section className="sign-in-dialog" role="dialog" aria-modal="true" aria-label="Administrator sign in"><ShieldCheck size={28}/><span className="eyebrow">SECURE PILOT ACCESS</span><h2>Sign in to view operations.</h2><p>Container, route, device, and report data stays unavailable until the StackTrack API verifies an approved account.</p><form onSubmit={(event) => void submit(event)}><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form><small>Production will use Goodwill Microsoft Entra sign-in. This password route is for the isolated test pilot only.</small></section>;
 }
 
 function PageContent({

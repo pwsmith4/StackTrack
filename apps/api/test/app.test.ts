@@ -115,7 +115,7 @@ describe("StackTrack API foundation", () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it("exposes local reference data only when local mode is enabled", async () => {
+  it("keeps administrator reference data behind an authenticated session", async () => {
     app = createApp({ localMode: true });
     const fixtures = await app.inject({
       method: "GET",
@@ -125,7 +125,17 @@ describe("StackTrack API foundation", () => {
       }
     });
 
-    expect(fixtures.statusCode).toBe(200);
-    expect(fixtures.json().containers).toHaveLength(11);
+    expect(fixtures.statusCode).toBe(503);
+
+    const mobileReferenceData = await app.inject({
+      method: "GET",
+      url: "/api/v1/mobile/reference-data",
+      headers: {
+        "x-stacktrack-tenant-id": "10000000-0000-4000-8000-000000000001",
+        "x-stacktrack-device-id": deviceId
+      }
+    });
+    expect(mobileReferenceData.statusCode).toBe(200);
+    expect(mobileReferenceData.json().containers).toHaveLength(11);
   });
 });

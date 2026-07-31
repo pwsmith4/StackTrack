@@ -193,9 +193,10 @@ function AppContent() {
     try {
       // Device availability and assignment are control-plane data.  Bust any
       // intermediary cache so an admin action is visible on the next refresh.
-      const response = await fetch(`${API_URL}/api/v1/local/reference-data?refresh=${Date.now()}`, {
+      const response = await fetch(`${API_URL}/api/v1/mobile/reference-data?refresh=${Date.now()}`, {
         headers: {
           "x-stacktrack-tenant-id": TENANT_ID,
+          "x-stacktrack-device-id": DEVICE_ID,
           "cache-control": "no-cache"
         }
       });

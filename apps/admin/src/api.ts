@@ -85,10 +85,10 @@ function adminHeaders(session?: AdminSession | null) {
   return session ? { authorization: `Bearer ${session.token}` } : {};
 }
 
-async function getJson<T>(path: string): Promise<T> {
+async function getJson<T>(path: string, session: AdminSession): Promise<T> {
   const joiner = path.includes("?") ? "&" : "?";
   const response = await fetch(`${API_URL}${path}${joiner}refresh=${Date.now()}`, {
-    headers: { ...headers, "cache-control": "no-cache" }
+    headers: { ...headers, ...adminHeaders(session), "cache-control": "no-cache" }
   });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json() as Promise<T>;
@@ -147,11 +147,11 @@ export async function createAdminUser(session: AdminSession, input: { username: 
   return ((await response.json()) as { user: AdminPrincipal }).user;
 }
 
-export async function loadOperationsData() {
-  const fixtures = await getJson<Fixtures>("/api/v1/local/reference-data");
+export async function loadOperationsData(session: AdminSession) {
+  const fixtures = await getJson<Fixtures>("/api/v1/local/reference-data", session);
   const [eventsResult, statesResult] = await Promise.all([
-    getJson<{ items: StoredEvent[] }>("/api/v1/local/events"),
-    getJson<{ items: Projection[] }>("/api/v1/containers/states")
+    getJson<{ items: StoredEvent[] }>("/api/v1/local/events", session),
+    getJson<{ items: Projection[] }>("/api/v1/containers/states", session)
   ]);
   const projectionById = new Map(
     statesResult.items.map((projection) => [projection.containerId, projection])

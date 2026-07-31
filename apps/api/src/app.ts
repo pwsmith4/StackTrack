@@ -186,10 +186,10 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
   app.get<{ Params: { containerId: string } }>(
     "/api/v1/containers/:containerId/state",
     async (request, reply) => {
-      const tenantId = readTenantId(request);
-      if (!tenantId) {
-        return reply.code(401).send({ error: "Unauthorized" });
-      }
+      const principal = localMode ? await requireAdmin(request, reply) : null;
+      if (localMode && !principal) return;
+      const tenantId = principal?.tenantId ?? readTenantId(request);
+      if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
 
       const state = await ledger.projectionForContainer(
         tenantId,
@@ -204,10 +204,10 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
   );
 
   app.get("/api/v1/containers/states", async (request, reply) => {
-    const tenantId = readTenantId(request);
-    if (!tenantId) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
+    const principal = localMode ? await requireAdmin(request, reply) : null;
+    if (localMode && !principal) return;
+    const tenantId = principal?.tenantId ?? readTenantId(request);
+    if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
     const events = await ledger.eventsForTenant(tenantId);
     const containerIds = [...new Set(events.map((event) => event.containerId))];
     const items = containerIds
@@ -221,24 +221,31 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
   });
 
   app.get("/api/v1/review-queue", async (request, reply) => {
-    const tenantId = readTenantId(request);
-    if (!tenantId) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
-
+    const principal = localMode ? await requireAdmin(request, reply) : null;
+    if (localMode && !principal) return;
+    const tenantId = principal?.tenantId ?? readTenantId(request);
+    if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
     const items = await ledger.reviewQueue(tenantId);
     return reply.send({ count: items.length, items });
   });
 
   if (localMode) {
-    app.get("/api/v1/local/reference-data", async (request, reply) => {
-      const tenantId = readTenantId(request);
-      if (!tenantId) {
-        return reply.code(401).send({ error: "Unauthorized" });
-      }
+    app.get("/api/v1/mobile/reference-data", async (request, reply) => {
+      const context = readContext(request);
+      if (!context) return reply.code(401).send({ error: "Unauthorized" });
       const fixtures = dependencies.referenceData
-        ? await dependencies.referenceData(tenantId)
-        : tenantId === localFixtures.tenant.tenantId
+        ? await dependencies.referenceData(context.tenantId)
+        : context.tenantId === localFixtures.tenant.tenantId ? localFixtures : null;
+      if (!fixtures) return reply.code(404).send({ error: "NotFound" });
+      return reply.send(fixtures);
+    });
+
+    app.get("/api/v1/local/reference-data", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      const fixtures = dependencies.referenceData
+        ? await dependencies.referenceData(principal.tenantId)
+        : principal.tenantId === localFixtures.tenant.tenantId
           ? localFixtures
           : null;
       if (!fixtures) {
@@ -248,11 +255,9 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
     });
 
     app.get("/api/v1/local/events", async (request, reply) => {
-      const tenantId = readTenantId(request);
-      if (!tenantId) {
-        return reply.code(401).send({ error: "Unauthorized" });
-      }
-      const events = [...(await ledger.eventsForTenant(tenantId))]
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      const events = [...(await ledger.eventsForTenant(principal.tenantId))]
         .sort(
           (left, right) =>
             Date.parse(right.receivedAt) - Date.parse(left.receivedAt)
@@ -262,10 +267,9 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
     });
 
     app.post("/api/v1/local/reset", async (request, reply) => {
-      const tenantId = readTenantId(request);
-      if (tenantId !== localFixtures.tenant.tenantId) {
-        return reply.code(401).send({ error: "Unauthorized" });
-      }
+      const principal = await requireAdmin(request, reply);
+      if (!principal || principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole" });
+      if (principal.tenantId !== localFixtures.tenant.tenantId) return reply.code(401).send({ error: "Unauthorized" });
       if (!isResettable(ledger)) {
         return reply.code(501).send({ error: "ResetUnavailable" });
       }
