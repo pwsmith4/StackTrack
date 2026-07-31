@@ -23,7 +23,6 @@ export interface Device {
   assignedLocationId: string;
   isActive: boolean;
   deactivatedAt: string | null;
-  pendingOfflineScanCount?: number;
   reportedAppVersion: string | null;
   requiredAppVersion?: string;
   lastReportedAt: string | null;
