@@ -2075,7 +2075,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       return;
     }
     if (report.id === "governance") {
-      downloadCsv("stacktrack-governance-actions.csv", [["Audit ID", "Action", "Actor", "Target", "Location", "Occurred at", "Summary"], ...filteredAuditEntries.map((entry) => [entry.auditId, entry.action, entry.actorDisplayName, auditTargetLabel(entry), entry.locationName ?? "", entry.occurredAt, humanizeDetailsText(entry.details, data)])]);
+      downloadCsv("stacktrack-governance-actions.csv", [["Audit ID", "Action", "Actor", "Applies to", "Operating scope", "Occurred at", "Summary"], ...filteredAuditEntries.map((entry) => [entry.auditId, auditActionSentence(entry), entry.actorDisplayName, auditTargetLabel(entry), auditLocationLabel(entry), entry.occurredAt, humanizeDetailsText(entry.details, data)])]);
       return;
     }
     openDetail({ eyebrow: "Planned integration", title: "Microsoft analytics export", icon: <Cloud size={18} />, summary: "The reporting boundary keeps operational writes fast and auditable while making curated data available for corporate analytics.", body: <><p className="detail-lead">PostgreSQL remains the operational source of truth. A scheduled, incremental export can publish append-only event facts and daily aggregates to Microsoft Fabric or Azure Data Lake Storage Gen2 without allowing a lake pipeline to edit scanner state.</p><DetailFacts items={[["Source", "Azure Database for PostgreSQL"], ["Destination", "Microsoft Fabric Lakehouse or ADLS Gen2"], ["Recommended grain", "Immutable event facts plus daily location aggregates"], ["Security boundary", "Read-only export identity"], ["Status", "Awaiting Goodwill Microsoft architecture decisions"]]}/></> });
@@ -2129,8 +2129,66 @@ function auditActionLabel(action: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+const auditActionVerbs: Record<string, string> = {
+  "admin.signed_in": "signed in",
+  "admin.signed_out": "signed out",
+  "admin.password_changed": "changed their password",
+  "admin.user_created": "added an administrator",
+  "admin.user_updated": "updated an administrator",
+  "admin.user_disabled": "disabled an administrator",
+  "admin.user_enabled": "enabled an administrator",
+  "admin.password_reset": "reset an administrator password",
+  "device.renamed": "renamed a scanner",
+  "device.reassigned": "reassigned a scanner",
+  "device.enabled": "enabled a scanner",
+  "device.disabled": "disabled a scanner",
+  "device.updated": "updated scanner settings",
+  "device.required_version_changed": "changed the scanner version policy",
+  "device.renamed_and_reassigned": "renamed and reassigned a scanner",
+  "device.reassigned_and_availability_changed": "reassigned a scanner and changed its availability",
+  "device.renamed_and_availability_changed": "renamed a scanner and changed its availability",
+  "review.assigned": "assigned a review",
+  "review.approved": "approved a review",
+  "review.rejected": "rejected a review",
+  "review.reopened": "reopened a review",
+  "review.resolved": "resolved a review",
+  "correction.requested": "requested a correction",
+  "correction.approved": "approved a correction",
+  "correction.rejected": "rejected a correction",
+  "correction.reopened": "reopened a correction"
+};
+
+const auditTargetTypeLabels: Record<string, string> = {
+  admin_user: "Administrator account",
+  device: "Scanner",
+  container: "Container",
+  review_case: "Review case",
+  correction_request: "Correction request",
+  location: "Location"
+};
+
+const auditTechnicalIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function auditActionSentence(entry: AuditEntry) {
+  const actor = entry.actorDisplayName || (entry.actorType === "device" ? "Scanner device" : entry.actorType === "system" ? "StackTrack system" : "An administrator");
+  const verb = auditActionVerbs[entry.action] ?? `performed ${auditActionLabel(entry.action).toLowerCase()}`;
+  return `${actor} ${verb}`;
+}
+
 function auditTargetLabel(entry: AuditEntry) {
-  return entry.targetLabel || entry.targetId || entry.targetType.replaceAll("_", " ");
+  if (entry.targetLabel && !auditTechnicalIdPattern.test(entry.targetLabel)) {
+    if ((entry.targetType === "review_case" || entry.targetType === "correction_request") && entry.targetLabel !== auditTargetTypeLabels[entry.targetType]) return `Container ${entry.targetLabel}`;
+    return entry.targetLabel;
+  }
+  return auditTargetTypeLabels[entry.targetType] ?? entry.targetType.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function auditLocationLabel(entry: AuditEntry) {
+  return entry.locationName ?? "Goodwill Corporate";
+}
+
+function auditLocationDescription(entry: AuditEntry) {
+  return entry.locationName ? "Location-associated action" : "Corporate administrator action";
 }
 
 function auditDetailSummary(details: Record<string, unknown>) {
@@ -2159,7 +2217,7 @@ function auditEntryDetail(entry: AuditEntry, data: OperationsData): DetailView {
       : "blue";
   return {
     eyebrow: "Governance event",
-    title: auditActionLabel(entry.action),
+    title: auditActionSentence(entry),
     icon: entry.actorType === "user" ? <UserRound size={18} /> : entry.actorType === "device" ? <Smartphone size={18} /> : <ShieldCheck size={18} />,
     status: { label: entry.actorType === "device" ? "Scanner reported" : "Recorded" , tone },
     summary: auditDetailSummary(entry.details) || "An append-only administrative or system action recorded by StackTrack.",
@@ -2167,15 +2225,16 @@ function auditEntryDetail(entry: AuditEntry, data: OperationsData): DetailView {
     recordIdLabel: "Audit event UUID",
     body: <>
       <DetailFacts items={[
-        ["Action", entry.action],
+        ["Action", auditActionSentence(entry)],
         ["Occurred", new Date(entry.occurredAt).toLocaleString()],
         ["Actor", `${entry.actorDisplayName}${entry.actorUsername ? ` · @${entry.actorUsername}` : ""}`],
-        ["Target", `${auditTargetLabel(entry)} · ${entry.targetType.replaceAll("_", " ")}`],
-        ["Location context", entry.locationName ?? "Not associated"]
+        ["Applies to", auditTargetLabel(entry)],
+        ["Operating scope", auditLocationLabel(entry)]
       ]} />
       {entry.details.reason && typeof entry.details.reason === "string" && <div className="detail-callout"><ShieldCheck size={19} /><span><strong>Recorded reason:</strong> {entry.details.reason}</span></div>}
       <h3 className="detail-section-title">What changed</h3>
       <ReadableDetails details={entry.details} data={data} />
+      <details className="audit-technical-details"><summary>Technical references</summary><DetailFacts items={[["Audit action code", entry.action], ["Technical target ID", entry.targetId ? <code className="audit-technical-id">{entry.targetId}</code> : "Not recorded"]]} /></details>
       {evidenceEvents.length > 0 && <><h3 className="detail-section-title">Related operational evidence</h3><EventEvidence events={evidenceEvents} data={data} /></>}
     </>
   };
@@ -2215,10 +2274,10 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
     try {
       const exported = await searchAuditEntries(session, { ...applied, limit: 250, offset: 0 });
       downloadCsv("stacktrack-audit-trail.csv", [
-        ["Occurred at", "Actor", "Username", "Actor type", "Action", "Target type", "Target", "Location", "Summary"],
+        ["Occurred at", "Actor", "Username", "Action", "Applies to", "Operating scope", "Summary", "Audit ID"],
         ...exported.items.map((entry) => [
-          new Date(entry.occurredAt).toISOString(), entry.actorDisplayName, entry.actorUsername ?? "", entry.actorType,
-          entry.action, entry.targetType, auditTargetLabel(entry), entry.locationName ?? "", auditDetailSummary(entry.details)
+          new Date(entry.occurredAt).toISOString(), entry.actorDisplayName, entry.actorUsername ?? "",
+          auditActionSentence(entry), auditTargetLabel(entry), auditLocationLabel(entry), auditDetailSummary(entry.details), entry.auditId
         ])
       ]);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "The audit export could not be created."); }
@@ -2226,15 +2285,15 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   };
   return <section className="audit-page">
     <div className="audit-page__intro"><div><h2>Searchable evidence history</h2><p>Every event is append-only. Filters narrow the server-side audit log without hiding the original observation.</p></div><div className="audit-page__actions"><button className="secondary" onClick={() => void exportResults()} disabled={exporting || !result.total}><Download size={16} />{exporting ? "Preparing…" : "Export up to 250"}</button><span className="audit-page__count">{result.total.toLocaleString()} matching events</span></div></div>
-    <div className="audit-purpose"><span className="audit-purpose__icon"><ScrollText size={18} /></span><div><strong>Governance and accountability</strong><p>Audit trail records administrator sign-ins, scanner controls, role changes, review decisions, and corrections. It answers who changed the system; Activity answers what scanners observed in the field.</p></div></div>
+    <div className="audit-purpose"><span className="audit-purpose__icon"><ScrollText size={18} /></span><div><strong>Governance and accountability</strong><p>Audit trail records administrator sign-ins, scanner controls, role changes, review decisions, and corrections. It answers who changed the system; Activity answers what scanners observed in the field. Rows use plain-language actions, while technical IDs stay inside the detail view.</p></div></div>
     <form className="audit-filter-panel" onSubmit={applyFilters}>
       <div className="audit-filter-panel__header"><div><strong>Filter the trail</strong><span>{activeCount ? `${activeCount} active filter${activeCount === 1 ? "" : "s"}` : "All audit events"}</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!activeCount}>Clear</button><button className="primary" type="submit"><Search size={16} /> Apply filters</button></div></div>
       <div className="audit-filter-grid">
-        <label className="audit-filter--wide">Search text<input value={draft.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Actor, scanner, container, reason, or event ID" /></label>
-        <label>Location<select value={draft.locationId} onChange={(event) => updateFilter("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label>
+        <label className="audit-filter--wide">Search text<input value={draft.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Actor, scanner, container, reason, or action" /></label>
+        <label>Operating location<select value={draft.locationId} onChange={(event) => updateFilter("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label>
         <label>Scanner<select value={draft.deviceId} onChange={(event) => updateFilter("deviceId", event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option key={device.deviceId} value={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label>
         <label>Action group<select value={draft.actionPrefix} onChange={(event) => updateFilter("actionPrefix", event.target.value)}><option value="">All actions</option><option value="admin">Administrator access</option><option value="device">Scanner administration</option><option value="review">Review decisions</option><option value="correction">Corrections</option></select></label>
-        <label>Target type<select value={draft.targetType} onChange={(event) => updateFilter("targetType", event.target.value)}><option value="">All targets</option><option value="device">Scanner</option><option value="container">Container</option><option value="review_case">Review case</option><option value="correction_request">Correction request</option><option value="admin_user">Administrator</option></select></label>
+        <label>Action applies to<select value={draft.targetType} onChange={(event) => updateFilter("targetType", event.target.value)}><option value="">All subjects</option><option value="device">Scanner</option><option value="container">Container</option><option value="review_case">Review case</option><option value="correction_request">Correction request</option><option value="admin_user">Administrator account</option></select></label>
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateFilter("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateFilter("to", event.target.value)} /></label>
       </div>
@@ -2242,11 +2301,11 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
     {error && <div className="api-error"><AlertTriangle size={20} /><span>{error}</span><button onClick={() => void load()}>Retry</button></div>}
     <div className="audit-page__results"><div className="audit-page__results-heading"><div><span className="eyebrow">Append-only record</span><h3>{loading ? "Loading audit events…" : result.total ? `Events ${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)}` : "No matching events"}</h3></div><span>Page {currentPage} of {pageCount}</span></div>
       {!loading && !result.items.length && <EmptyState>No audit events match these filters. Try clearing one filter or widening the date range.</EmptyState>}
-      <div className="audit-results">{result.items.map((entry) => <article className="audit-entry audit-entry--interactive" key={entry.auditId} onClick={() => openDetail(auditEntryDetail(entry, data))}>
-        <div className="audit-entry__header"><div className="audit-entry__headline"><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{auditActionLabel(entry.action)}</strong><span className="audit-entry__action">{entry.action}</span></div></div><div className="audit-entry__time"><strong>{relativeTime(entry.occurredAt)}</strong><time>{new Date(entry.occurredAt).toLocaleString()}</time></div></div>
-        <div className="audit-entry__grid"><div><small>Actor</small><strong>{entry.actorDisplayName}</strong><span>{entry.actorUsername ? `@${entry.actorUsername}` : `${entry.actorType} event`}</span></div><div><small>Target</small><strong>{auditTargetLabel(entry)}</strong><span>{entry.targetType.replaceAll("_", " ")}{entry.targetId && entry.targetLabel ? ` · ${entry.targetId}` : ""}</span></div><div><small>Location context</small><strong>{entry.locationName ?? "Not associated"}</strong><span>{entry.locationId ?? "No location reference"}</span></div></div>
+      <div className="audit-results">{result.items.map((entry) => { const showDetails = () => openDetail(auditEntryDetail(entry, data)); return <article className="audit-entry audit-entry--interactive" key={entry.auditId} role="button" tabIndex={0} onClick={showDetails} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showDetails(); } }}>
+        <div className="audit-entry__header"><div className="audit-entry__headline"><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{auditActionSentence(entry)}</strong><span className="audit-entry__action">Select for the full record</span></div></div><div className="audit-entry__time"><strong>{relativeTime(entry.occurredAt)}</strong><time>{new Date(entry.occurredAt).toLocaleString()}</time></div></div>
+        <div className="audit-entry__grid"><div><small>Actor</small><strong>{entry.actorDisplayName}</strong><span>{entry.actorUsername ? `@${entry.actorUsername}` : `${entry.actorType} event`}</span></div><div><small>Applies to</small><strong>{auditTargetLabel(entry)}</strong><span>Open details for evidence</span></div><div><small>Operating scope</small><strong>{auditLocationLabel(entry)}</strong><span>{auditLocationDescription(entry)}</span></div></div>
         {auditDetailSummary(entry.details) && <p className="audit-entry__summary">{auditDetailSummary(entry.details)}</p>}
-      </article>)}</div>
+      </article>; })}</div>
       <div className="audit-page__pagination"><button className="secondary" disabled={pageIndex === 0 || loading} onClick={() => setPageIndex((current) => Math.max(0, current - 1))}>Previous</button><span>{result.total ? `${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)} of ${result.total}` : "0 events"}</span><button className="secondary" disabled={loading || (pageIndex + 1) * result.limit >= result.total} onClick={() => setPageIndex((current) => current + 1)}>Next</button></div>
     </div>
   </section>;
