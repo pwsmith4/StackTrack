@@ -130,7 +130,7 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
     description: "Stores, Donation Xpress sites, warehouses, and in-transit inventory."
   },
   exceptions: {
-    eyebrow: "Accuracy center",
+    eyebrow: "Review queue",
     title: "Needs review",
     description: "Contradictory or unusual observations remain visible until resolved."
   },
@@ -140,14 +140,14 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
     description: "Request and approve official-state changes without erasing original scans."
   },
   activity: {
-    eyebrow: "Append-only ledger",
+    eyebrow: "Operational feed",
     title: "Activity",
-    description: "Every observation, in the order StackTrack received it."
+    description: "Follow physical scanner observations and container movement as it happens."
   },
   audit: {
     eyebrow: "Governance evidence",
     title: "Audit trail",
-    description: "Search every administrator, scanner, review, correction, and access action with its full context."
+    description: "Investigate who changed what, when, and why across administrator and control actions."
   },
   devices: {
     eyebrow: "Field hardware",
@@ -162,7 +162,7 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
   settings: {
     eyebrow: "Configuration",
     title: "Settings",
-    description: "Prototype policies and environment connections."
+    description: "Access policies, scanner behavior, and integration boundaries."
   }
 };
 
@@ -440,8 +440,8 @@ export function App() {
       : connectionState === "degraded"
         ? "API connected with warnings"
         : API_URL.includes("127.0.0.1") || API_URL.includes("localhost")
-          ? "Local API connected"
-          : "Azure test API connected";
+          ? "API connected"
+          : "Cloud API connected";
 
   if (!session) {
     return <div className="authentication-shell"><SignInDialog onClose={() => undefined} onSuccess={establishSession} /></div>;
@@ -464,11 +464,11 @@ export function App() {
           <span>Current organization</span>
           <button onClick={() => setDetail({
             eyebrow: "Environment",
-            title: "Goodwill pilot environment",
-            body: <><p className="detail-lead">This organization is the isolated PostgreSQL pilot tenant. It contains generated test data only and remains separate from the stable baseline.</p><DetailFacts items={[["Tenant", data?.fixtures.tenant.name ?? "Goodwill Pilot"], ["Environment", isCloudEnvironment ? "Azure testing" : "Local development"], ["Database", isCloudEnvironment ? "Azure Database for PostgreSQL" : "Local PostgreSQL"], ["Authentication", "Server-verified pilot administrator session"]]}/></>
+            title: "Goodwill operations",
+            body: <><p className="detail-lead">The organization workspace for container movement, scanner administration, and governed operational decisions.</p><DetailFacts items={[["Organization", data?.fixtures.tenant.name ?? "Goodwill Operations"], ["Data service", isCloudEnvironment ? "Cloud PostgreSQL service" : "PostgreSQL service"], ["Authentication", "Server-verified administrator session"]]}/></>
           })}>
             <span className="site-dot">M</span>
-            <span><strong>Goodwill Pilot</strong><small>{isCloudEnvironment ? "Azure test environment" : "Local environment"}</small></span>
+            <span><strong>Goodwill Operations</strong><small>Container tracking workspace</small></span>
             <ChevronRight size={16} />
           </button>
         </div>
@@ -493,11 +493,11 @@ export function App() {
           </button>
           {isCloudEnvironment ? (
             <button onClick={() => setDetail({
-              eyebrow: "Field testing",
+              eyebrow: "Field operations",
               title: "Open the Android scanner",
-              body: <><p className="detail-lead">The React Native scanner runs in the Android emulator or on a provisioned handheld. It connects directly to the Azure testing API; the admin website does not embed the scanner UI.</p><DetailFacts items={[["Launcher", "start-cloud-mobile.cmd"], ["API", "Azure test environment"], ["Device identity", "Scanner ID 00001"], ["Admin verification", "Devices page"]]}/></>
+              body: <><p className="detail-lead">The React Native scanner runs on a provisioned handheld or emulator and reports directly to the StackTrack service. The admin website does not embed the scanner UI.</p><DetailFacts items={[["Launcher", "Mobile scanner application"], ["Service", "StackTrack operations API"], ["Device identity", "Scanner ID 00001"], ["Admin verification", "Devices page"]]}/></>
             })}>
-              <MonitorSmartphone size={19} /><span>Mobile test guide</span><ChevronRight size={14} />
+              <MonitorSmartphone size={19} /><span>Mobile scanner guide</span><ChevronRight size={14} />
             </button>
           ) : (
             <a href="http://127.0.0.1:8082" target="_blank" rel="noreferrer">
@@ -506,7 +506,7 @@ export function App() {
           )}
           <button className="user-card" onClick={() => session ? setDetail({
             eyebrow: "Signed-in profile", title: session.principal.displayName, icon: <UserRound size={18} />, status: { label: roleLabel(session.principal.role), tone: session.principal.role === "organization_owner" ? "blue" : "good" }, summary: "Your verified administrator identity and current browser session.", recordId: session.principal.userId, recordIdLabel: "Administrator ID",
-            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically. Access is scoped to the Goodwill pilot tenant and every administrative change is attributed to this account.</p><h3 className="detail-section-title">Account access</h3><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", "Goodwill Local pilot tenant"]]}/><h3 className="detail-section-title">Session security</h3><div className="profile-security-card"><CheckCircle2 size={18}/><div><strong>Server-verified session</strong><span>Expires {new Date(session.expiresAt).toLocaleString()}</span><small>Signing out revokes this browser session on the server.</small></div></div><div className="detail-danger-zone"><div><strong>End this session</strong><p>Sign out when you leave this workstation. You can sign back in with your administrator account.</p></div><button className="danger-button" onClick={() => void signOut()}>Sign out</button></div></>
+            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically. Every administrative change is attributed to this account.</p><h3 className="detail-section-title">Account access</h3><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", "Goodwill operations"]]}/><h3 className="detail-section-title">Session security</h3><div className="profile-security-card"><CheckCircle2 size={18}/><div><strong>Server-verified session</strong><span>Expires {new Date(session.expiresAt).toLocaleString()}</span><small>Signing out revokes this browser session on the server.</small></div></div><div className="detail-danger-zone"><div><strong>End this session</strong><p>Sign out when you leave this workstation. You can sign back in with your administrator account.</p></div><button className="danger-button" onClick={() => void signOut()}>Sign out</button></div></>
           }) : setSignInOpen(true)}>
             <span className="avatar">{session ? initials(session.principal.displayName) : "?"}</span>
             <span><strong>{session ? session.principal.displayName : "Admin sign in"}</strong><small>{session ? roleLabel(session.principal.role) : "Operational changes locked"}</small></span>
@@ -549,7 +549,7 @@ export function App() {
                   ref={searchRef}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder={page === "audit" ? "Use the audit filters below" : page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : "Search label or code"}
+                  placeholder={page === "audit" ? "Use the audit filters below" : page === "activity" ? "Search container, event, scanner, or location" : page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : "Search label or code"}
                   aria-label="Search"
                 />
                 <kbd>⌘ K</kbd>
@@ -561,7 +561,7 @@ export function App() {
           {error && (
             <div className="api-error">
               <Cloud size={22} />
-              <span><strong>The test API request failed.</strong> {error} API: {API_URL}</span>
+              <span><strong>The operations service request failed.</strong> {error}</span>
               <button onClick={() => void refresh()}>Try again</button>
             </div>
           )}
@@ -584,6 +584,7 @@ export function App() {
         </div>
         <footer>
           <span><ShieldCheck size={15} /> Pilot test environment • append-only audit foundation</span>
+          <span>Goodwill operations · governed event history</span>
           <span>Last refreshed {lastRefresh.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
         </footer>
       </main>
@@ -599,7 +600,7 @@ function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: 
 function SignInDialog({ onClose: _onClose, onSuccess }: { onClose: () => void; onSuccess: (session: AdminSession) => void }) {
   const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { onSuccess(await signIn(username, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Sign-in failed."); } finally { setBusy(false); } };
-  return <section className="sign-in-dialog" role="dialog" aria-modal="true" aria-label="Administrator sign in"><div className="sign-in-dialog__brand"><Mark /></div><div className="sign-in-dialog__icon"><ShieldCheck size={25}/></div><span className="eyebrow">SECURE PILOT ACCESS</span><h2>Sign in to view operations.</h2><p>Container, route, device, and report data stays unavailable until the StackTrack API verifies an approved account.</p><div className="sign-in-dialog__trust"><span><CheckCircle2 size={14}/> Server-verified access</span><span><ShieldCheck size={14}/> Audit-ready changes</span></div><form onSubmit={(event) => void submit(event)}><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form><small>Production will use Goodwill Microsoft Entra sign-in. This password route is for the isolated test pilot only.</small></section>;
+  return <section className="sign-in-dialog" role="dialog" aria-modal="true" aria-label="Administrator sign in"><div className="sign-in-dialog__brand"><Mark /></div><div className="sign-in-dialog__icon"><ShieldCheck size={25}/></div><span className="eyebrow">SECURE ADMIN ACCESS</span><h2>Sign in to view operations.</h2><p>Container, route, device, and report data stays unavailable until the StackTrack API verifies an approved account.</p><div className="sign-in-dialog__trust"><span><CheckCircle2 size={14}/> Server-verified access</span><span><ShieldCheck size={14}/> Audit-ready changes</span></div><form onSubmit={(event) => void submit(event)}><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form><small>Use your approved Goodwill administrator account. Access is recorded and expires automatically.</small></section>;
 }
 
 function PageContent({
@@ -631,7 +632,7 @@ function PageContent({
   if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} setPage={setPage} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
-  if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
+  if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
   if (page === "audit") return <AuditTrailPage data={data} session={session!} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
@@ -690,6 +691,12 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
       ? [`+${transitLabels.length - 6} more`]
       : [])
   ].join(", ");
+  const activeDevices = data.fixtures.devices.filter((device) => device.isActive);
+  const staleDevices = activeDevices.filter((device) => !device.lastReportedAt || Date.now() - Date.parse(device.lastReportedAt) > 24 * 60 * 60 * 1000);
+  const observationsLastDay = data.events.filter((event) => Date.now() - Date.parse(event.receivedAt) <= 24 * 60 * 60 * 1000).length;
+  const pendingOfflineScans = data.fixtures.devices.reduce((total, device) => total + (device.pendingOfflineScanCount ?? 0), 0);
+  const availableLoadCodes = data.events.filter((event) => event.eventType === "load_assigned" && data.projections[event.containerId]?.activeLoadCodeId === event.loadCodeId).length;
+  const unobservedContainers = data.fixtures.containers.filter((container) => !data.projections[container.containerId]).length;
 
   return (
     <>
@@ -700,9 +707,19 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
         <Metric icon={<AlertTriangle />} label="Needs attention" value={review + pendingCorrections.length} detail={review + pendingCorrections.length ? "Review or approval required" : "No open exceptions"} tone={review + pendingCorrections.length ? "orange" : "green"} />
       </div>
 
+      <section className="panel operations-pulse">
+        <PanelTitle title="Operations pulse" subtitle="Signals that help administrators prioritize today’s work" />
+        <div className="pulse-grid">
+          <button className="pulse-card pulse-card--blue" onClick={() => setPage("devices")}><span className="pulse-card__icon"><Wifi size={18} /></span><span><small>Scanner coverage</small><strong>{activeDevices.length} of {data.fixtures.devices.length} enabled</strong><em>{staleDevices.length ? `${staleDevices.length} need a check-in` : "All enabled scanners reported recently"}</em></span><ChevronRight size={16} /></button>
+          <button className="pulse-card pulse-card--cyan" onClick={() => setPage("activity")}><span className="pulse-card__icon"><Activity size={18} /></span><span><small>Recent observations</small><strong>{observationsLastDay} in the last 24 hours</strong><em>Open Activity to trace movement and scanner timing</em></span><ChevronRight size={16} /></button>
+          <button className={`pulse-card ${pendingOfflineScans ? "pulse-card--orange" : "pulse-card--green"}`} onClick={() => setPage("devices")}><span className="pulse-card__icon"><Clock3 size={18} /></span><span><small>Offline backlog</small><strong>{pendingOfflineScans} scan{pendingOfflineScans === 1 ? "" : "s"} waiting to sync</strong><em>{pendingOfflineScans ? "Review Devices for the affected scanner" : "No queued scans reported"}</em></span><ChevronRight size={16} /></button>
+          <button className="pulse-card pulse-card--navy" onClick={() => setPage("loads")}><span className="pulse-card__icon"><PackageCheck size={18} /></span><span><small>Load codes ready</small><strong>{availableLoadCodes} available for handoff</strong><em>{unobservedContainers ? `${unobservedContainers} containers have no observation yet` : "Every tracked container has history"}</em></span><ChevronRight size={16} /></button>
+        </div>
+      </section>
+
       <div className="dashboard-grid">
         <section className="panel network-panel">
-          <PanelTitle title="Pilot route flow" subtitle="Live movement on a representative store-to-warehouse route" action="View all locations" onClick={() => setPage("locations")} />
+          <PanelTitle title="Route flow" subtitle="Live movement on a representative store-to-warehouse route" action="View all locations" onClick={() => setPage("locations")} />
           <div className="flow">
             {physicalLocations.map((location, index) => {
               const count = projections.filter((item) => item.locationId === location.locationId).length;
@@ -740,10 +757,6 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
               <span>{inTransit ? `${transitPreview} remain in transit until a destination receipt is scanned.` : "All tracked containers have a confirmed physical location."}</span>
             </div>
             <Pill tone={inTransit ? "blue" : "good"}>{inTransit ? "Moving" : "Clear"}</Pill>
-          </div>
-          <div className="accuracy-note">
-            <ShieldCheck size={22} />
-            <div><strong>Accuracy-first state</strong><span>StackTrack never erases conflicting scans. It applies the latest valid event and keeps contradictory evidence for review.</span></div>
           </div>
         </section>
 
@@ -1010,7 +1023,7 @@ function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; op
   const [selectedLocationId, setSelectedLocationId] = useState(physicalLocations[0]?.locationId ?? "");
   const [locationQuery, setLocationQuery] = useState("");
   const selected = physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0];
-  if (!selected) return <EmptyState>No pilot locations are available.</EmptyState>;
+  if (!selected) return <EmptyState>No operating locations are available.</EmptyState>;
 
   const transitId = data.fixtures.locations.find((location) => location.type === "in_transit")?.locationId;
   const container = (id: string) => data.fixtures.containers.find((item) => item.containerId === id);
@@ -1037,7 +1050,7 @@ function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; op
   const arriving = moving.filter((projection) => routeFor(projection).destination?.locationId === selected.locationId);
   const leaving = moving.filter((projection) => routeFor(projection).origin?.locationId === selected.locationId);
   const openContainer = (projection: Projection) => openDetail({
-    eyebrow: "Pilot route container",
+    eyebrow: "Route container",
     title: container(projection.containerId)?.label ?? "Tracked container",
     body: <><DetailFacts items={[
       ["Current state", projection.loadState],
@@ -1049,7 +1062,7 @@ function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; op
 
   return <>
     <section className="location-selector panel">
-      <div className="location-selector__heading"><PanelTitle title="Pilot locations" subtitle="Choose one operating location to see its current and planned container involvement." /><label className="location-search"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="Search locations" aria-label="Search locations" /></label></div>
+      <div className="location-selector__heading"><PanelTitle title="Operating locations" subtitle="Choose one location to see its current and planned container involvement." /><label className="location-search"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="Search locations" aria-label="Search locations" /></label></div>
       <div className="location-selector__list">{matchingLocations.map((location) => {
         const count = projections.filter((projection) => projection.locationId === location.locationId).length;
         return <button key={location.locationId} className={location.locationId === selected.locationId ? "active" : ""} onClick={() => setSelectedLocationId(location.locationId)}><span className={`location-type-icon location-type-icon--${location.type}`}><LocationTypeIcon location={location} /></span><span><b>{location.name}</b><small>{location.type === "donation_express" ? "Donation Xpress" : location.type === "warehouse" ? "Warehouse" : "Store"} · {count} currently here</small></span><ChevronRight size={17} /></button>;
@@ -1446,7 +1459,66 @@ function CorrectionsPage({
   );
 }
 
-function ActivityPage({ data, query, openDetail }: { data: OperationsData; query: string; openDetail: OpenDetail }) {
+type ActivityWindow = "all" | "today" | "7d" | "30d";
+
+function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; setPage: (page: Page) => void }) {
+  const [eventFilter, setEventFilter] = useState<"all" | StoredEvent["eventType"]>("all");
+  const [locationFilter, setLocationFilter] = useState("");
+  const [deviceFilter, setDeviceFilter] = useState("");
+  const [windowFilter, setWindowFilter] = useState<ActivityWindow>("all");
+  const containerName = (id: string) => data.fixtures.containers.find((item) => item.containerId === id)?.label ?? "Unknown container";
+  const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown location";
+  const deviceFor = (id: string) => data.fixtures.devices.find((item) => item.deviceId === id);
+  const searchTerm = query.trim().toLowerCase();
+  const cutoff = windowFilter === "today" ? Date.now() - 24 * 60 * 60 * 1000 : windowFilter === "7d" ? Date.now() - 7 * 24 * 60 * 60 * 1000 : windowFilter === "30d" ? Date.now() - 30 * 24 * 60 * 60 * 1000 : null;
+  const events = data.events.filter((event) => {
+    const device = deviceFor(event.deviceId);
+    const searchable = [
+      containerName(event.containerId),
+      eventLabel(event.eventType),
+      event.eventType,
+      event.eventId,
+      event.loadCodeId ?? "",
+      String(event.payload.displayLoadCode ?? ""),
+      String(event.payload.goodsType ?? ""),
+      String(event.payload.secondaryValue ?? ""),
+      locationName(event.locationId),
+      device?.label ?? "",
+      scannerNumber(event.deviceId),
+      event.accuracyFlags.join(" ")
+    ].join(" ").toLowerCase();
+    return (eventFilter === "all" || event.eventType === eventFilter) &&
+      (!searchTerm || searchable.includes(searchTerm)) &&
+      (!locationFilter || event.locationId === locationFilter) &&
+      (!deviceFilter || event.deviceId === deviceFilter) &&
+      (cutoff === null || Date.parse(event.eventAt) >= cutoff);
+  });
+  const clearFilters = () => { setEventFilter("all"); setLocationFilter(""); setDeviceFilter(""); setWindowFilter("all"); };
+  const hasFilters = Boolean(searchTerm || locationFilter || deviceFilter || windowFilter !== "all" || eventFilter !== "all");
+  return <section className="panel activity-page">
+    <div className="activity-purpose"><div><span className="eyebrow">Operational feed</span><strong>Physical observations from scanners</strong><p>Use Activity to trace where a container was scanned and how the movement unfolded. For administrator changes, sign-ins, device controls, and approvals, use Audit trail.</p></div><button className="secondary" onClick={() => setPage("audit")}><ScrollText size={15} /> Open audit trail</button></div>
+    <div className="toolbar"><div className="filter-tabs">{(["all", "load_assigned", "batch_out", "batch_in", "emptied"] as const).map((value) => <button key={value} className={eventFilter === value ? "active" : ""} onClick={() => setEventFilter(value)}>{value === "all" ? "All events" : eventLabel(value)}</button>)}</div><span className="date-chip">{events.length} shown</span></div>
+    <div className="activity-filters"><label>Location<select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label>Scanner<select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option value={device.deviceId} key={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label><label>Time window<select value={windowFilter} onChange={(event) => setWindowFilter(event.target.value as ActivityWindow)}><option value="all">All available</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>{hasFilters && <button className="secondary activity-filters__clear" onClick={clearFilters}>Clear filters</button>}</div>
+    {searchTerm && <p className="activity-search-summary">Searching event IDs, load codes, goods, containers, scanners, locations, and warning text for <strong>“{query.trim()}”</strong>.</p>}
+    {events.length ? <div className="timeline">{events.slice(0, 100).map((event, index) => {
+      const container = data.fixtures.containers.find((item) => item.containerId === event.containerId);
+      const location = locationName(event.locationId);
+      return <article className="clickable-timeline" key={event.eventId} onClick={() => openDetail({
+        eyebrow: "Scanner observation",
+        icon: <FileClock size={18} />,
+        status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "Timing verified", tone: "good" },
+        summary: "A physical observation received from a shared scanner. Use this feed for movement history; use Audit trail for administrator actions.",
+        recordId: event.eventId,
+        recordIdLabel: "Event UUID",
+        title: `${container?.label ?? "Unknown container"} · ${eventLabel(event.eventType)}`,
+        body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
+      })}><div className="timeline__rail"><span>{index + 1}</span><i /></div><div className="timeline__card"><div><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"} · {location}</h3><p>{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`} · received {relativeTime(event.receivedAt)} · {event.accuracyFlags.length ? `${event.accuracyFlags.length} warning` : "timing verified"}</p></div></article>;
+    })}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
+    {events.length > 100 && <p className="activity-limit-note">Showing the newest 100 matching observations. Use the filters to narrow the feed further.</p>}
+  </section>;
+}
+
+function LegacyActivityPage({ data, query, openDetail }: { data: OperationsData; query: string; openDetail: OpenDetail }) {
   const [eventFilter, setEventFilter] = useState<"all" | StoredEvent["eventType"]>("all");
   const c = (id: string) => data.fixtures.containers.find((item) => item.containerId === id);
   const l = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name;
@@ -1619,7 +1691,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   };
   return <>
     <div className="report-grid">{reports.map((report) => <article className="report-card" key={report.title}><span><report.icon /></span><Pill tone={report.tag === "Ready" ? "good" : "muted"}>{report.tag}</Pill><h2>{report.title}</h2><p>{report.text}</p><button onClick={() => openReport(report)}>{report.tag === "Ready" ? "Download CSV" : "View plan"} <ArrowRight size={16} /></button></article>)}</div>
-    <section className="panel data-health"><PanelTitle title="Data health" subtitle="Quality signals across the testing dataset" /><div className="health-bar"><span style={{ width: `${Math.max(5, Math.round((data.events.filter((item) => item.accuracyFlags.length === 0).length / Math.max(1, data.events.length)) * 100))}%` }} /></div><div className="health-stats"><span><b>{data.events.length}</b> ledger events</span><span><b>{data.events.filter((item) => item.accuracyFlags.length === 0).length}</b> timing verified</span><span><b>{Object.values(data.projections).filter((item) => item?.health === "needs_review").length}</b> open exceptions</span><span><b>{data.correctionRequests.filter((item) => item.status === "pending").length}</b> pending corrections</span></div></section>
+    <section className="panel data-health"><PanelTitle title="Data health" subtitle="Quality signals across tracked operations" /><div className="health-bar"><span style={{ width: `${Math.max(5, Math.round((data.events.filter((item) => item.accuracyFlags.length === 0).length / Math.max(1, data.events.length)) * 100))}%` }} /></div><div className="health-stats"><span><b>{data.events.length}</b> ledger events</span><span><b>{data.events.filter((item) => item.accuracyFlags.length === 0).length}</b> timing verified</span><span><b>{Object.values(data.projections).filter((item) => item?.health === "needs_review").length}</b> open exceptions</span><span><b>{data.correctionRequests.filter((item) => item.status === "pending").length}</b> pending corrections</span></div></section>
   </>;
 }
 
@@ -1740,6 +1812,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   };
   return <section className="audit-page">
     <div className="audit-page__intro"><div><h2>Searchable evidence history</h2><p>Every event is append-only. Filters narrow the server-side audit log without hiding the original observation.</p></div><div className="audit-page__actions"><button className="secondary" onClick={() => void exportResults()} disabled={exporting || !result.total}><Download size={16} />{exporting ? "Preparing…" : "Export up to 250"}</button><span className="audit-page__count">{result.total.toLocaleString()} matching events</span></div></div>
+    <div className="audit-purpose"><span className="audit-purpose__icon"><ScrollText size={18} /></span><div><strong>Governance and accountability</strong><p>Audit trail records administrator sign-ins, scanner controls, role changes, review decisions, and corrections. It answers who changed the system; Activity answers what scanners observed in the field.</p></div></div>
     <form className="audit-filter-panel" onSubmit={applyFilters}>
       <div className="audit-filter-panel__header"><div><strong>Filter the trail</strong><span>{activeCount ? `${activeCount} active filter${activeCount === 1 ? "" : "s"}` : "All audit events"}</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!activeCount}>Clear</button><button className="primary" type="submit"><Search size={16} /> Apply filters</button></div></div>
       <div className="audit-filter-grid">
@@ -1769,14 +1842,14 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
 function SettingsPage({ data, openDetail, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
   const settings = [
     { icon: UserRound, title: "Roles & approvals", text: "Operations Administrators can request corrections; Organization Owners approve them with dual control for material changes.", details: [["Operations Administrator", "Request official-state corrections"], ["Organization Owner", "Approve or reject corrections"], ["Material change", "A different owner must approve"]] as [string, string][] },
-    { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners receive their assigned operating location and availability from the administration service.", details: [["Identity", "One installation UUID per physical device"], ["Assignment", "Exactly one operating location"], ["Pilot", "Fixed scanner identity; remote controls active"]] as [string, string][] },
+    { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners receive their assigned operating location and availability from the administration service.", details: [["Identity", "One installation UUID per physical device"], ["Assignment", "Exactly one operating location"], ["Control", "Fixed scanner identity; remote controls active"]] as [string, string][] },
     { icon: Wifi, title: "Offline behavior", text: "Scans queue locally, preserve device order, and synchronize when connectivity returns.", details: [["Local queue", "AsyncStorage on the scanner"], ["Ordering", "Device installation + monotonic sequence"], ["Conflict handling", "Accept evidence and flag review"]] as [string, string][] },
-    { icon: Cloud, title: "Integrations", text: "Production-system, Entra ID, and analytics connections remain outside the pilot boundary.", details: [["Production system API", "Pending access"], ["Microsoft Entra ID", "Pilot password bridge active"], ["Analytics", "Fabric / Data Lake decision pending"]] as [string, string][] }
+    { icon: Cloud, title: "Integrations", text: "Production-system, Entra ID, and analytics connections are managed separately from scanner operations.", details: [["Production system API", "Connection pending"], ["Microsoft Entra ID", "Administrator sign-in"], ["Analytics", "Fabric / Data Lake decision pending"]] as [string, string][] }
   ];
   return <><section className="settings-list"><article className="access-settings"><span><ShieldCheck /></span><div><h2>Administrator access</h2><p>{session ? `${session.principal.displayName} is signed in as ${roleLabel(session.principal.role)}. Organization Owners can add daily administrators from this console.` : "Operational changes are protected by a server-side pilot account. Sign in to manage scanners and administrator accounts."}</p></div><button className="secondary" onClick={onRequestSignIn}>{session ? "Manage access" : "Sign in"}</button></article>{settings.map((setting) => <article key={setting.title}><span><setting.icon /></span><div><h2>{setting.title}</h2><p>{setting.text}</p></div><button aria-label={`Open ${setting.title}`} onClick={() => openDetail({
     eyebrow: "Configuration",
     icon: <setting.icon size={18} />,
-    status: { label: "Pilot policy", tone: "blue" },
+    status: { label: "Configured policy", tone: "blue" },
     summary: setting.text,
     title: setting.title,
     body: <><h3 className="detail-section-title">Current policy</h3><DetailFacts items={setting.details}/></>
@@ -1785,7 +1858,7 @@ function SettingsPage({ data, openDetail, session, onRequestSignIn, onPasswordCh
 
 function GovernanceTimeline({ entries }: { entries: AuditEntry[] }) {
   const actionLabel = (action: string) => action.replace(/^admin\.|^device\.|^review\./, "").replaceAll("_", " ").replaceAll(".", " ");
-  return <section className="governance-timeline"><PanelTitle title="Governance timeline" subtitle="Recent system, scanner, access, and review actions. This is an operational view of the append-only audit log." />{entries.length ? <div className="governance-timeline__list">{entries.slice(0, 20).map((entry) => <article key={entry.auditId}><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{actionLabel(entry.action)}</strong><p>{entry.actorDisplayName} · {entry.targetType.replaceAll("_", " ")}</p>{typeof entry.details.assignmentReason === "string" && <small>Move note: {entry.details.assignmentReason}</small>}{typeof entry.details.reason === "string" && <small>Reason: {entry.details.reason}</small>}</div><time>{relativeTime(entry.occurredAt)}</time></article>)}</div> : <EmptyState>No governed actions have been recorded in this test tenant yet.</EmptyState>}</section>;
+  return <section className="governance-timeline"><PanelTitle title="Governance timeline" subtitle="Recent system, scanner, access, and review actions." />{entries.length ? <div className="governance-timeline__list">{entries.slice(0, 20).map((entry) => <article key={entry.auditId}><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{actionLabel(entry.action)}</strong><p>{entry.actorDisplayName} · {entry.targetType.replaceAll("_", " ")}</p>{typeof entry.details.assignmentReason === "string" && <small>Move note: {entry.details.assignmentReason}</small>}{typeof entry.details.reason === "string" && <small>Reason: {entry.details.reason}</small>}</div><time>{relativeTime(entry.occurredAt)}</time></article>)}</div> : <EmptyState>No governed actions have been recorded for this organization yet.</EmptyState>}</section>;
 }
 
 function AccountSecurity({ session, required = false, onPasswordChanged, onSignOut }: { session: AdminSession; required?: boolean; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
@@ -1815,7 +1888,7 @@ function LegacyAdminDirectory({ session }: { session: AdminSession }) {
   const refreshUsers = useCallback(async () => { try { setUsers(await listAdminUsers(session)); setError(null); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load accounts."); } }, [session]);
   useEffect(() => { void refreshUsers(); }, [refreshUsers]);
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); try { await createAdminUser(session, { displayName, username, temporaryPassword, role }); setDisplayName(""); setUsername(""); setTemporaryPassword(""); await refreshUsers(); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); } finally { setBusy(false); } };
-  return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners control who can manage the pilot." /><div className="admin-directory__users">{users?.map((user) => <article key={user.userId}><span className="avatar">{initials(user.displayName)}</span><div><strong>{user.displayName}</strong><small>@{user.username}</small></div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill></article>) ?? <div className="skeleton"/>}</div><form className="admin-user-form" onSubmit={(event) => void submit(event)}><h3>Add administrator</h3><p>New accounts must change their temporary password before production use.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form></section>;
+  return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners control who can manage operations." /><div className="admin-directory__users">{users?.map((user) => <article key={user.userId}><span className="avatar">{initials(user.displayName)}</span><div><strong>{user.displayName}</strong><small>@{user.username}</small></div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill></article>) ?? <div className="skeleton"/>}</div><form className="admin-user-form" onSubmit={(event) => void submit(event)}><h3>Add administrator</h3><p>New accounts must change their temporary password before receiving access.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form></section>;
 }
 
 function AdminDirectory({ session }: { session: AdminSession }) {
@@ -1915,7 +1988,6 @@ function ReviewCaseCard({ reviewCase, data, session, onAction, onEvidence }: { r
 function ExceptionsPage({ data, openDetail, session, refresh }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession; refresh: () => Promise<void> }) {
   const activeCases = data.reviewCases.filter((item) => !["resolved", "approved", "rejected"].includes(item.status));
   return <section className="panel exceptions-panel">
-    <div className="accuracy-summary"><span><ShieldCheck size={25} /></span><div><strong>Evidence is preserved; disposition is append-only.</strong><p>Each review decision is tied to its signed-in administrator, includes a reason, and never rewrites the scans that created the case.</p></div></div>
     <div className="review-summary"><span><b>{activeCases.length}</b> active cases</span><span><b>{data.reviewCases.length - activeCases.length}</b> completed history</span><span>Organization Owners can resolve material cases.</span></div>
     {data.reviewCases.length === 0 ? <EmptyState>No review cases have been created from the current scan history.</EmptyState> : data.reviewCases.map((item) => <ReviewCaseCard key={item.reviewCaseId} reviewCase={item} data={data} session={session} onAction={async (action, reason) => { await reviewCaseAction(session, item.reviewCaseId, action, reason); await refresh(); }} onEvidence={() => openDetail({
       eyebrow: "Preserved evidence",
