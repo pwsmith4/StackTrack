@@ -3,6 +3,10 @@ export const API_URL =
 
 export const TENANT_ID = "10000000-0000-4000-8000-000000000001";
 
+export class ApiRequestError extends Error {
+  public constructor(readonly status: number, message: string) { super(message); this.name = "ApiRequestError"; }
+}
+
 export interface Location {
   locationId: string;
   name: string;
@@ -30,6 +34,14 @@ export interface DeviceAssignment {
   reason: string;
   occurredAt: string;
 }
+
+export type AdminRole = "organization_owner" | "operations_administrator" | "read_only_reviewer" | "support";
+export type ManagedAdminRole = Exclude<AdminRole, "support">;
+export interface AdminPrincipal { tenantId: string; userId: string; username: string; displayName: string; role: AdminRole; supportExpiresAt: string | null; isActive: boolean; mustChangePassword: boolean; }
+export interface AdminSession { token: string; principal: AdminPrincipal; expiresAt: string; }
+export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; action: string; targetType: string; targetId: string | null; details: Record<string, unknown>; }
+export type ReviewAction = "assigned" | "approved" | "rejected" | "resolved" | "reopened";
+export interface ReviewCase { reviewCaseId: string; containerId: string; containerLabel: string; reasonCode: string; evidenceEventIds: string[]; openedAt: string; status: "opened" | ReviewAction; lastActionAt: string | null; lastActionReason: string | null; actionCount: number; }
 
 export interface Container {
   containerId: string;
@@ -76,46 +88,135 @@ export interface Projection {
 }
 
 const headers = { "x-stacktrack-tenant-id": TENANT_ID };
+const readRetryDelaysMs = [750, 2_000, 5_000];
+const retryableReadStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
 
-async function getJson<T>(path: string): Promise<T> {
+function adminHeaders(session?: AdminSession | null) {
+  return session ? { authorization: `Bearer ${session.token}` } : {};
+}
+
+async function readWithRetry(path: string, session: AdminSession): Promise<Response> {
   const joiner = path.includes("?") ? "&" : "?";
-  const response = await fetch(`${API_URL}${path}${joiner}refresh=${Date.now()}`, {
-    headers: { ...headers, "cache-control": "no-cache" }
-  });
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const url = `${API_URL}${path}${joiner}refresh=${Date.now()}`;
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { ...headers, ...adminHeaders(session), "cache-control": "no-cache" }
+      });
+      if (!retryableReadStatuses.has(response.status) || attempt >= readRetryDelaysMs.length) {
+        return response;
+      }
+    } catch (error) {
+      if (attempt >= readRetryDelaysMs.length) throw error;
+    }
+
+    await new Promise((resolve) => globalThis.setTimeout(resolve, readRetryDelaysMs[attempt]));
+  }
+}
+
+async function getJson<T>(path: string, session: AdminSession): Promise<T> {
+  const response = await readWithRetry(path, session);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new ApiRequestError(response.status, detail?.message ?? `${response.status} ${response.statusText}`);
+  }
   return response.json() as Promise<T>;
 }
 
-async function patchJson<T>(path: string, body: unknown): Promise<T> {
+async function patchJson<T>(path: string, body: unknown, session?: AdminSession | null): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     method: "PATCH",
-    headers: { ...headers, "content-type": "application/json" },
+    headers: { ...headers, ...adminHeaders(session), "content-type": "application/json" },
     body: JSON.stringify(body)
   });
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { message?: string } | null;
     throw new Error(detail?.message ?? `${response.status} ${response.statusText}`);
   }
-  return response.json() as Promise<T>;
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
 export async function updateDevice(
   deviceId: string,
   update: {
+    label?: string;
     assignedLocationId?: string;
     isActive?: boolean;
     assignmentReason?: string;
-  }
+  },
+  session: AdminSession
 ): Promise<Device> {
-  const response = await patchJson<{ device: Device }>(`/api/v1/local/devices/${deviceId}`, update);
+  const response = await patchJson<{ device: Device }>(`/api/v1/local/devices/${deviceId}`, update, session);
   return response.device;
 }
 
-export async function loadOperationsData() {
-  const fixtures = await getJson<Fixtures>("/api/v1/local/reference-data");
-  const [eventsResult, statesResult] = await Promise.all([
-    getJson<{ items: StoredEvent[] }>("/api/v1/local/events"),
-    getJson<{ items: Projection[] }>("/api/v1/containers/states")
+export async function signIn(username: string, password: string): Promise<AdminSession> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/session`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password })
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? "Sign-in failed.");
+  }
+  return response.json() as Promise<AdminSession>;
+}
+
+async function postJson<T>(path: string, body: unknown, session: AdminSession): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, { method: "POST", headers: { ...adminHeaders(session), "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new ApiRequestError(response.status, detail?.message ?? `${response.status} ${response.statusText}`);
+  }
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+}
+
+export async function revokeAdminSession(session: AdminSession): Promise<void> {
+  await postJson<void>("/api/v1/local/admin/session/revoke", {}, session);
+}
+
+export async function changeOwnPassword(session: AdminSession, currentPassword: string, newPassword: string): Promise<void> {
+  await patchJson<void>("/api/v1/local/admin/me/password", { currentPassword, newPassword }, session);
+}
+
+export async function listAdminUsers(session: AdminSession): Promise<AdminPrincipal[]> {
+  const response = await readWithRetry("/api/v1/local/admin/users", session);
+  if (!response.ok) throw new Error("Could not load administrator accounts.");
+  return ((await response.json()) as { items: AdminPrincipal[] }).items;
+}
+
+export async function listAuditEntries(session: AdminSession): Promise<AuditEntry[]> {
+  const response = await readWithRetry("/api/v1/local/admin/audit-log", session);
+  if (!response.ok) throw new ApiRequestError(response.status, "Could not load the governance timeline.");
+  return ((await response.json()) as { items: AuditEntry[] }).items;
+}
+
+export async function createAdminUser(session: AdminSession, input: { username: string; displayName: string; role: ManagedAdminRole; temporaryPassword: string }): Promise<AdminPrincipal> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/users`, { method: "POST", headers: { ...adminHeaders(session), "content-type": "application/json" }, body: JSON.stringify(input) });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? "Could not create the administrator.");
+  }
+  return ((await response.json()) as { user: AdminPrincipal }).user;
+}
+
+export async function updateAdminUser(session: AdminSession, userId: string, update: { displayName?: string; role?: ManagedAdminRole; isActive?: boolean }): Promise<AdminPrincipal> {
+  const response = await patchJson<{ user: AdminPrincipal }>(`/api/v1/local/admin/users/${userId}`, update, session);
+  return response.user;
+}
+
+export async function reviewCaseAction(session: AdminSession, reviewCaseId: string, action: ReviewAction, reason: string): Promise<ReviewCase> {
+  const response = await postJson<{ item: ReviewCase }>(`/api/v1/local/review-cases/${reviewCaseId}/actions`, { action, reason }, session);
+  return response.item;
+}
+
+export async function loadOperationsData(session: AdminSession) {
+  const fixtures = await getJson<Fixtures>("/api/v1/local/reference-data", session);
+  const [eventsResult, statesResult, reviewCasesResult, auditResult] = await Promise.all([
+    getJson<{ items: StoredEvent[] }>("/api/v1/local/events", session),
+    getJson<{ items: Projection[] }>("/api/v1/containers/states", session),
+    getJson<{ items: ReviewCase[] }>("/api/v1/local/review-cases", session),
+    listAuditEntries(session)
   ]);
   const projectionById = new Map(
     statesResult.items.map((projection) => [projection.containerId, projection])
@@ -123,6 +224,8 @@ export async function loadOperationsData() {
   return {
     fixtures,
     events: eventsResult.items,
+    reviewCases: reviewCasesResult.items,
+    auditEntries: auditResult,
     projections: Object.fromEntries(
       fixtures.containers.map((container) => [
         container.containerId,

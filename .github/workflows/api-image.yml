@@ -37,6 +37,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha
+            type=raw,value=${{ github.sha }}
       - name: Build and publish
         uses: docker/build-push-action@v6
         with:
@@ -52,16 +53,26 @@ jobs:
     # intentionally separate, so a test push cannot update production.
     environment:
       name: ${{ github.ref_name == 'main' && 'production' || 'test' }}
-    if: >-
-      vars.AZURE_CLIENT_ID != '' &&
-      vars.AZURE_TENANT_ID != '' &&
-      vars.AZURE_SUBSCRIPTION_ID != '' &&
-      vars.AZURE_RESOURCE_GROUP != '' &&
-      vars.AZURE_CONTAINER_APP_NAME != ''
     permissions:
       contents: read
       id-token: write
     steps:
+      - name: Verify Azure deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP AZURE_CONTAINER_APP_NAME; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Missing GitHub environment variable::Add ${name} to the '${{ github.ref_name == 'main' && 'production' || 'test' }}' GitHub Environment before deploying."
+              exit 1
+            fi
+          done
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
       - name: Sign in to Azure with GitHub OpenID Connect
         uses: azure/login@v2
         with:
@@ -72,7 +83,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/${{ github.repository_owner }}/stacktrack-api:${{ github.ref_name }}"
+          # Use the immutable commit tag, not the mutable branch tag. Container
+          # Apps otherwise has no configuration change to trigger a revision
+          # when :test has been rebuilt with newer code.
+          IMAGE="ghcr.io/${{ github.repository_owner }}/stacktrack-api:${{ github.sha }}"
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
