@@ -903,14 +903,14 @@ function PageContent({
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
+  if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
   if (page === "audit") return <AuditTrailPage data={data} session={session!} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
-  return <SettingsPage data={data} setPage={setPage} session={session} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
+  return <SettingsPage data={data} setPage={setPage} session={session} refresh={refresh} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
 }
 
 function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Page) => void }) {
@@ -1572,9 +1572,8 @@ function LocationWorkspacePage({ data, locationId, openDetail, setPage, session 
   </div>;
 }
 
-function LocationsPage({ data, focusedLocationId, openLocation, openDetail, setPage, refresh, session }: { data: OperationsData; focusedLocationId?: string; openLocation: (locationId: string) => void; openDetail: OpenDetail; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null }) {
+function LocationsPage({ data, focusedLocationId, openLocation, openDetail, setPage, session }: { data: OperationsData; focusedLocationId?: string; openLocation: (locationId: string) => void; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession | null }) {
   const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
-  const retiredLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive === false && !isUnknownLocation(location));
   const [selectedLocationId, setSelectedLocationIdState] = useState(physicalLocations[0]?.locationId ?? "");
   const setSelectedLocationId = (nextLocationId: string) => {
     setSelectedLocationIdState(nextLocationId);
@@ -1586,7 +1585,7 @@ function LocationsPage({ data, focusedLocationId, openLocation, openDetail, setP
   const [locationSort, setLocationSort] = useState<"work" | "containers" | "activity" | "alphabetical">("work");
   if (focusedLocationId) return <LocationWorkspacePage data={data} locationId={focusedLocationId} openDetail={openDetail} setPage={setPage} session={session} />;
   const selected = (physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0])!;
-  if (!selected) return <><LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} /><EmptyState>No active operating locations are available. Add a location or restore the operating plan before reviewing workflow.</EmptyState></>;
+  if (!selected) return <section className="panel"><EmptyState>No active operating locations are available. Add or restore a location from Settings before reviewing workflow.</EmptyState><button className="secondary" onClick={() => setPage("settings")}><Settings size={15} /> Open Settings</button></section>;
 
   const transitId = data.fixtures.locations.find((location) => location.type === "in_transit")?.locationId;
   const container = (id: string) => data.fixtures.containers.find((item) => item.containerId === id);
@@ -1697,8 +1696,7 @@ function LocationsPage({ data, focusedLocationId, openLocation, openDetail, setP
         <LocationWorkflowLane title="Containers leaving" subtitle="In transit after departing this location" tone="leaving" items={leaving} data={data} onOpen={openContainer} />
       </div>
      </section>}
-     <LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} retiredLocations={retiredLocations} />
-  </>;
+   </>;
 }
 
 function LocationAdministrationPanel({
@@ -1815,8 +1813,8 @@ function LocationAdministrationPanel({
     <div className="location-admin-panel__header">
       <div>
         <span className="eyebrow">Location administration</span>
-        <h2>Keep the operating map intentional.</h2>
-        <p>Add a new operating site or retire one that has closed. Retirement preserves every historical scan; it never deletes a location that an old record depends on.</p>
+        <h2>Maintain the operating location directory.</h2>
+        <p>This is infrequent, high-impact configuration. Add a new site or retire one that has closed only after checking scanners, managers, and historical dependencies. Retirement preserves every historical scan.</p>
       </div>
       {canCreate && <button className="primary" onClick={() => { setCreateOpen((value) => !value); setError(null); }}>{createOpen ? <X size={15} /> : <Building2 size={15} />}{createOpen ? "Close form" : "Add location"}</button>}
     </div>
@@ -2870,7 +2868,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   </section>;
 }
 
-function SettingsPage({ data, setPage, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; setPage: (page: Page) => void; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
+function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
   const settings = [
     { icon: UserRound, title: "Roles & approvals", text: "Operations Administrators can request corrections; Organization Owners approve them with dual control for material changes." },
     { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners receive their assigned operating location and availability from the administration service." },
@@ -2878,6 +2876,7 @@ function SettingsPage({ data, setPage, session, onRequestSignIn, onPasswordChang
   ];
   const actions = [
     { icon: Smartphone, title: "Manage scanner fleet", text: "Rename scanners, move assignments, review versions, and enable or disable access.", page: "devices" as Page },
+    { icon: MapPin, title: "Manage locations", text: "Rare, high-impact configuration: add sites or retire or restore a site after checking assignments and history.", page: "settings" as Page, anchor: "location-admin-panel" },
     { icon: AlertTriangle, title: "Review exceptions", text: "Work through containers with missing, conflicting, or late observations.", page: "exceptions" as Page },
     { icon: FilePenLine, title: "Review corrections", text: "Approve, reject, and document requests to change the official state.", page: "corrections" as Page },
     { icon: Activity, title: "Follow scanner activity", text: "Trace the physical observations that moved containers through the network.", page: "activity" as Page },
@@ -2894,7 +2893,7 @@ function SettingsPage({ data, setPage, session, onRequestSignIn, onPasswordChang
       <PanelTitle title="Administrator workspace" subtitle="Direct controls for the work administrators perform every day." />
       <div className="settings-action-grid">
         <button className="settings-action-card settings-action-card--access" onClick={openAdminDirectory} disabled={Boolean(session && session.principal.role !== "organization_owner")}><span className="settings-action-card__icon"><UserRound size={19} /></span><span><strong>Manage administrators</strong><small>{session?.principal.role === "organization_owner" ? "Add users, change roles, disable access, or reset passwords." : session ? "Only Organization Owners can manage administrator accounts." : "Sign in to manage administrator accounts."}</small></span><span className="settings-action-card__go">{session?.principal.role === "organization_owner" ? "Manage" : session ? "Owner only" : "Sign in"}<ChevronRight size={15} /></span></button>
-        {actions.map((action) => <button className="settings-action-card" key={action.title} onClick={() => setPage(action.page)}><span className="settings-action-card__icon"><action.icon size={19} /></span><span><strong>{action.title}</strong><small>{action.text}</small></span><span className="settings-action-card__go">Open<ChevronRight size={15} /></span></button>)}
+         {actions.map((action) => <button className="settings-action-card" key={action.title} onClick={() => { if (action.anchor) { document.querySelector(`.${action.anchor}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; } setPage(action.page); }}><span className="settings-action-card__icon"><action.icon size={19} /></span><span><strong>{action.title}</strong><small>{action.text}</small></span><span className="settings-action-card__go">Open<ChevronRight size={15} /></span></button>)}
       </div>
     </section>
     <section className="location-governance panel">
@@ -2903,6 +2902,7 @@ function SettingsPage({ data, setPage, session, onRequestSignIn, onPasswordChang
       <div className="location-governance__roles"><article><span className="location-governance__role-icon"><MapPin size={17} /></span><div><h3>Location Manager</h3><p>Scoped to assigned locations. Can manage local scanners and request a container correction with a reason.</p><small>Cannot add admins, change policy, approve corrections, or edit another location.</small></div><Pill tone="good">Location-scoped</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--admin"><UserRound size={17} /></span><div><h3>Operations Administrator</h3><p>Network-wide operational control. Can manage scanners, triage exceptions, and request corrections across locations.</p><small>Approval and account governance remain with an Organization Owner.</small></div><Pill tone="good">Network operations</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--owner"><ShieldCheck size={17} /></span><div><h3>Organization Owner</h3><p>Full control across Goodwill: administrator access, locations, devices, corrections, approvals, and settings.</p><small>Keep at least two active owners for continuity and dual control.</small></div><Pill tone="blue">Full control</Pill></article></div>
       <div className="location-governance__workflow"><span className="eyebrow">Accountable change path</span><div><span><b>1</b><strong>Local manager records what happened</strong><small>Location, scanner, container, and reason.</small></span><ArrowRight size={15} /><span><b>2</b><strong>Corporate queue receives the request</strong><small>Original scan evidence remains unchanged.</small></span><ArrowRight size={15} /><span><b>3</b><strong>Owner approves or rejects</strong><small>A separate decision and reason are audited.</small></span></div></div>
     </section>
+    <LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} />
     <section className="settings-reference panel">
       <PanelTitle title="Operating policies" subtitle="Reference only — these policies are enforced by the service and are not interactive settings." />
       <div className="settings-reference__grid">{settings.map((setting) => <article className="settings-reference__item" key={setting.title}><span className="settings-reference__icon"><setting.icon size={18} /></span><div><h3>{setting.title}</h3><p>{setting.text}</p></div><Pill tone="muted">Reference</Pill></article>)}</div>
