@@ -79,6 +79,12 @@ export const localFixtures = {
       name: "In Transit",
       type: "in_transit",
       isActive: true
+    },
+    {
+      locationId: "20000000-0000-4000-8000-000000000005",
+      name: "North Sacramento Warehouse",
+      type: "warehouse",
+      isActive: true
     }
   ] satisfies readonly LocalLocation[],
   devices: [
@@ -105,6 +111,30 @@ export const localFixtures = {
       reportedAppVersion: "0.2.0",
       requiredAppVersion: "0.3.0",
       lastReportedAt: new Date(Date.now() - 12 * 60 * 1000).toISOString()
+    },
+    {
+      deviceId: "30000000-0000-4000-8000-000000000003",
+      installationId: "31000000-0000-4000-8000-000000000003",
+      label: "Scanner C — North Warehouse",
+      assignedLocationId: "20000000-0000-4000-8000-000000000005",
+      isActive: true,
+      deactivatedAt: null,
+      pendingOfflineScanCount: 0,
+      reportedAppVersion: "0.3.0",
+      requiredAppVersion: "0.3.0",
+      lastReportedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    },
+    {
+      deviceId: "30000000-0000-4000-8000-000000000004",
+      installationId: "31000000-0000-4000-8000-000000000004",
+      label: "Scanner D — Auburn Donation Xpress",
+      assignedLocationId: "20000000-0000-4000-8000-000000000001",
+      isActive: true,
+      deactivatedAt: null,
+      pendingOfflineScanCount: 0,
+      reportedAppVersion: "0.3.0",
+      requiredAppVersion: "0.3.0",
+      lastReportedAt: new Date(Date.now() - 7 * 60 * 1000).toISOString()
     }
   ] satisfies readonly LocalDevice[],
   deviceAssignments: [
@@ -154,8 +184,11 @@ export function seedLocalLedger(
   const store = localFixtures.locations[1]!;
   const warehouse = localFixtures.locations[2]!;
   const transit = localFixtures.locations[3]!;
+  const northWarehouse = localFixtures.locations[4]!;
   const storeDevice = localFixtures.devices[0]!;
   const warehouseDevice = localFixtures.devices[1]!;
+  const northWarehouseDevice = localFixtures.devices[2]!;
+  const donationDevice = localFixtures.devices[3]!;
   const at = (hoursAgo: number) =>
     new Date(now.getTime() - hoursAgo * 60 * 60 * 1_000).toISOString();
 
@@ -239,17 +272,83 @@ export function seedLocalLedger(
       eventType: "load_assigned",
       eventAt: at(6),
       payload: { displayLoadCode: "ST-0724-012", goodsType: "Hard", secondaryValue: "Raw" }
+    },
+    {
+      eventId: "51000000-0000-4000-8000-000000000010",
+      containerId: localFixtures.containers[7]!.containerId,
+      loadCodeId: "61000000-0000-4000-8000-000000000008",
+      locationId: localFixtures.locations[0]!.locationId,
+      eventType: "load_assigned",
+      eventAt: at(60),
+      payload: { displayLoadCode: "ST-MULTI-001", goodsType: "Soft", secondaryValue: "Raw" }
+    },
+    {
+      eventId: "51000000-0000-4000-8000-000000000011",
+      containerId: localFixtures.containers[7]!.containerId,
+      loadCodeId: "61000000-0000-4000-8000-000000000008",
+      locationId: transit.locationId,
+      eventType: "batch_out",
+      eventAt: at(59),
+      payload: { sourceLocationId: localFixtures.locations[0]!.locationId, destinationLocationId: warehouse.locationId }
+    },
+    {
+      eventId: "51000000-0000-4000-8000-000000000012",
+      containerId: localFixtures.containers[7]!.containerId,
+      loadCodeId: "61000000-0000-4000-8000-000000000008",
+      locationId: warehouse.locationId,
+      eventType: "batch_in",
+      eventAt: at(58),
+      payload: { sourceLocationId: localFixtures.locations[0]!.locationId }
+    },
+    {
+      eventId: "51000000-0000-4000-8000-000000000013",
+      containerId: localFixtures.containers[7]!.containerId,
+      loadCodeId: "61000000-0000-4000-8000-000000000008",
+      locationId: transit.locationId,
+      eventType: "batch_out",
+      eventAt: at(57),
+      payload: { sourceLocationId: warehouse.locationId, destinationLocationId: northWarehouse.locationId }
+    },
+    {
+      eventId: "51000000-0000-4000-8000-000000000014",
+      containerId: localFixtures.containers[7]!.containerId,
+      loadCodeId: "61000000-0000-4000-8000-000000000008",
+      locationId: northWarehouse.locationId,
+      eventType: "batch_in",
+      eventAt: at(56),
+      payload: { sourceLocationId: warehouse.locationId }
+    },
+    {
+      eventId: "51000000-0000-4000-8000-000000000015",
+      containerId: localFixtures.containers[7]!.containerId,
+      loadCodeId: "61000000-0000-4000-8000-000000000008",
+      locationId: transit.locationId,
+      eventType: "batch_out",
+      eventAt: at(55),
+      payload: { sourceLocationId: northWarehouse.locationId, destinationLocationId: store.locationId }
+    },
+    {
+      eventId: "51000000-0000-4000-8000-000000000016",
+      containerId: localFixtures.containers[7]!.containerId,
+      loadCodeId: "61000000-0000-4000-8000-000000000008",
+      locationId: store.locationId,
+      eventType: "batch_in",
+      eventAt: at(54),
+      payload: { sourceLocationId: northWarehouse.locationId }
     }
   ] as const;
 
-  let storeSequence = 0;
-  let warehouseSequence = 0;
+  const sequences = new Map<string, number>();
+  const observationDevices = [
+    storeDevice, storeDevice, storeDevice, warehouseDevice, warehouseDevice,
+    storeDevice, storeDevice, storeDevice, warehouseDevice,
+    donationDevice, donationDevice, warehouseDevice, warehouseDevice,
+    northWarehouseDevice, northWarehouseDevice, storeDevice
+  ];
   observations.forEach((observation, index) => {
-    const useWarehouseDevice = index === 4 || index === 8;
-    const device = useWarehouseDevice ? warehouseDevice : storeDevice;
-    const deviceSequence = useWarehouseDevice
-      ? warehouseSequence++
-      : storeSequence++;
+    const device = observationDevices[index] ?? storeDevice;
+    const deviceSequence = sequences.get(device.deviceId) ?? 0;
+    sequences.set(device.deviceId, deviceSequence + 1);
     submit(
       {
         ...observation,

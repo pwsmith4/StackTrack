@@ -23,7 +23,8 @@ const locations = [
   ["Folsom Store", "store_backroom"],
   ["Elk Grove Store", "store_backroom"],
   ["Roseville Store", "store_backroom"],
-  ["Arden Donation Xpress", "donation_express"]
+  ["Arden Donation Xpress", "donation_express"],
+  ["North Sacramento Warehouse", "warehouse"]
 ] as const;
 
 const locationId = (index: number) => id("20", index);
@@ -81,7 +82,7 @@ export async function seedPostgres(
 
       // Preserve the pilot device IDs used by the mobile build:
       // device 1 = Midtown, device 2 = warehouse.
-      const physicalLocations = [2, 3, 1, 5, 6, 7, 8];
+      const physicalLocations = [2, 3, 1, 5, 6, 7, 8, 9];
       for (const [index, assignedLocation] of physicalLocations.entries()) {
         const number = index + 1;
         const locationName = locations[assignedLocation - 1]![0];
@@ -186,7 +187,7 @@ export async function seedPostgres(
   const ledger = new PostgresEventLedger(applicationPool);
   try {
     const now = new Date();
-    const sourceLocations = [1, 2, 5, 6, 7, 8];
+    const sourceLocations = [1, 2, 5, 6, 7, 8, 9];
     const locationDevice = new Map([
       [1, 3],
       [2, 1],
@@ -194,7 +195,8 @@ export async function seedPostgres(
       [5, 4],
       [6, 5],
       [7, 6],
-      [8, 7]
+      [8, 7],
+      [9, 8]
     ]);
     const sequences = new Map<number, number>();
     let nextEvent = 1;
@@ -250,7 +252,7 @@ export async function seedPostgres(
     };
 
     for (let containerNumber = 1; containerNumber <= 120; containerNumber++) {
-      if (containerNumber === 4) continue; // B1004 remains unused for manual tests.
+      if (containerNumber === 4) continue; // B1004 is reserved for the multi-hop route below.
       const source =
         containerNumber === 1
           ? 2
@@ -321,6 +323,24 @@ export async function seedPostgres(
           sourceDevice
         );
       }
+    }
+
+    // B1004 is a deliberately non-linear route used to exercise the operational
+    // model: Donation Xpress → South Sacramento Warehouse → North Sacramento
+    // Warehouse → Midtown Store. Every handoff has its own receipt so the UI can
+    // show completed checkpoints instead of flattening the journey to one lane.
+    const multiHopContainer = 4;
+    const multiHopSteps = [
+      { location: 1, type: "load_assigned" as const, age: 60, load: nextLoad++, payload: { displayLoadCode: `ST-MULTI-${String(nextLoad - 1).padStart(3, "0")}`, goodsType: "Soft", secondaryValue: "Raw" }, device: 3 },
+      { location: 4, type: "batch_out" as const, age: 59, load: nextLoad - 1, payload: { sourceLocationId: locationId(1), destinationLocationId: locationId(3) }, device: 3 },
+      { location: 3, type: "batch_in" as const, age: 58, load: nextLoad - 1, payload: { sourceLocationId: locationId(1) }, device: 2 },
+      { location: 4, type: "batch_out" as const, age: 57, load: nextLoad - 1, payload: { sourceLocationId: locationId(3), destinationLocationId: locationId(9) }, device: 2 },
+      { location: 9, type: "batch_in" as const, age: 56, load: nextLoad - 1, payload: { sourceLocationId: locationId(3) }, device: 8 },
+      { location: 4, type: "batch_out" as const, age: 55, load: nextLoad - 1, payload: { sourceLocationId: locationId(9), destinationLocationId: locationId(2) }, device: 8 },
+      { location: 2, type: "batch_in" as const, age: 54, load: nextLoad - 1, payload: { sourceLocationId: locationId(9) }, device: 1 }
+    ];
+    for (const step of multiHopSteps) {
+      await submit(multiHopContainer, step.location, step.type, step.age, step.load, step.payload, step.device);
     }
 
     // C2002 deliberately receives a second load assignment before being emptied.
