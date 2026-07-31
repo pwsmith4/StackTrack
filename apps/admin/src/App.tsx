@@ -36,10 +36,15 @@ import {
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   API_URL,
+  ApiRequestError,
+  changeOwnPassword,
   createAdminUser,
   listAdminUsers,
   loadOperationsData,
+  reviewCaseAction,
+  revokeAdminSession,
   signIn,
+  updateAdminUser,
   updateDevice,
   type AdminPrincipal,
   type AdminSession,
@@ -49,6 +54,8 @@ import {
   type Fixtures,
   type Location,
   type Projection,
+  type ReviewCase,
+  type ReviewAction,
   type StoredEvent
 } from "./api";
 import stacktrackLogo from "./assets/stacktrack-logo-tight.png";
@@ -67,6 +74,7 @@ type Page =
 interface OperationsData {
   fixtures: Fixtures;
   events: StoredEvent[];
+  reviewCases: ReviewCase[];
   projections: Record<string, Projection | null>;
 }
 
@@ -282,6 +290,11 @@ export function App() {
       setError(null);
       setLastRefresh(new Date());
     } catch (caught) {
+      if (caught instanceof ApiRequestError && caught.status === 401) {
+        sessionStorage.removeItem("stacktrack.admin.session");
+        setSession(null); setData(null); setError(null);
+        return;
+      }
       setError(caught instanceof Error ? caught.message : "Could not connect to the local API.");
     } finally {
       setLoading(false);
@@ -319,7 +332,17 @@ export function App() {
     setSession(next);
     setSignInOpen(false);
   };
-  const signOut = () => { sessionStorage.removeItem("stacktrack.admin.session"); setSession(null); };
+  const signOut = async () => {
+    try { if (session) await revokeAdminSession(session); }
+    catch { /* Clearing this browser session is still the safe client outcome. */ }
+    finally { sessionStorage.removeItem("stacktrack.admin.session"); setSession(null); setData(null); }
+  };
+  const markPasswordChanged = () => {
+    if (!session) return;
+    const next = { ...session, principal: { ...session.principal, mustChangePassword: false } };
+    sessionStorage.setItem("stacktrack.admin.session", JSON.stringify(next));
+    setSession(next);
+  };
 
   const selected = pageTitles[page];
   const reviewCount = data
@@ -372,7 +395,7 @@ export function App() {
           </a>
           <button className="user-card" onClick={() => session ? setDetail({
             eyebrow: "Signed-in profile", title: session.principal.displayName,
-            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically after twelve hours.</p><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", "Goodwill Local pilot tenant"], ["Session expires", new Date(session.expiresAt).toLocaleString()]]}/><button className="secondary" onClick={signOut}>Sign out</button></>
+            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically after twelve hours. Signing out revokes this browser session on the server.</p><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", "Goodwill Local pilot tenant"], ["Session expires", new Date(session.expiresAt).toLocaleString()]]}/><button className="secondary" onClick={() => void signOut()}>Sign out</button></>
           }) : setSignInOpen(true)}>
             <span className="avatar">{session ? initials(session.principal.displayName) : "?"}</span>
             <span><strong>{session ? session.principal.displayName : "Admin sign in"}</strong><small>{session ? roleLabel(session.principal.role) : "Operational changes locked"}</small></span>
@@ -435,7 +458,7 @@ export function App() {
           {loading && !data ? (
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
-            <PageContent page={page} data={data} query={query} setPage={setPage} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} />
+            <PageContent page={page} data={data} query={query} setPage={setPage} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
           ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
@@ -466,7 +489,9 @@ function PageContent({
   openDetail,
   refresh,
   session,
-  onRequestSignIn
+  onRequestSignIn,
+  onPasswordChanged,
+  onSignOut
 }: {
   page: Page;
   data: OperationsData;
@@ -476,16 +501,18 @@ function PageContent({
   refresh: () => Promise<void>;
   session: AdminSession | null;
   onRequestSignIn: () => void;
+  onPasswordChanged: () => void;
+  onSignOut: () => Promise<void>;
 }) {
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
   if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} />;
-  if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} />;
+  if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
-  return <SettingsPage openDetail={openDetail} session={session} onRequestSignIn={onRequestSignIn} />;
+  return <SettingsPage openDetail={openDetail} session={session} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
 }
 
 function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Page) => void }) {
@@ -887,7 +914,7 @@ function LocationWorkflowLane({ title, subtitle, tone, items, data, onOpen }: { 
   </section>;
 }
 
-function ExceptionsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
+function LegacyExceptionsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
   const exceptions = Object.values(data.projections).filter((item) => item?.health === "needs_review") as Projection[];
   const containerName = (id: string) => data.fixtures.containers.find((item) => item.containerId === id)?.label;
   return <section className="panel exceptions-panel">
@@ -995,7 +1022,7 @@ function deviceDetail(device: Device, data: OperationsData): DetailView {
 */
 }
 
-function DeviceCard({ device, data, operatingLocations, busy, canManage, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; canManage: boolean; onSave: (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; requiredAppVersion?: string; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
+function LegacyDeviceCard({ device, data, operatingLocations, busy, canManage, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; canManage: boolean; onSave: (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; requiredAppVersion?: string; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
   const [label, setLabel] = useState(device.label);
   const [assignedLocationId, setAssignedLocationId] = useState(device.assignedLocationId);
   const [reason, setReason] = useState("");
@@ -1069,7 +1096,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   </>;
 }
 
-function SettingsPage({ openDetail, session, onRequestSignIn }: { openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void }) {
+function SettingsPage({ openDetail, session, onRequestSignIn, onPasswordChanged, onSignOut }: { openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
   const settings = [
     { icon: UserRound, title: "Roles & approvals", text: "Store managers handle routine corrections; corporate data stewards approve material state changes.", details: [["Store manager", "Request routine corrections"], ["Corporate steward", "Approve material state changes"], ["Status", "Policy draft — needs Goodwill approval"]] as [string, string][] },
     { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners remain locked to an assigned operating location.", details: [["Identity", "One installation UUID per physical device"], ["Assignment", "Exactly one operating location"], ["Status", "Local shared-device simulation active"]] as [string, string][] },
@@ -1080,14 +1107,133 @@ function SettingsPage({ openDetail, session, onRequestSignIn }: { openDetail: Op
     eyebrow: "Configuration",
     title: setting.title,
     body: <><p className="detail-lead">{setting.text}</p><DetailFacts items={setting.details}/></>
-  })}><ChevronRight /></button></article>)}</section>{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
+  })}><ChevronRight /></button></article>)}</section>{session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
 }
 
-function AdminDirectory({ session }: { session: AdminSession }) {
+function AccountSecurity({ session, onPasswordChanged, onSignOut }: { session: AdminSession; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setError(null); setNotice(null);
+    if (newPassword !== confirmPassword) { setError("New-password entries do not match."); return; }
+    setBusy(true);
+    try {
+      await changeOwnPassword(session, currentPassword, newPassword);
+      setCurrentPassword(""); setNewPassword(""); setConfirmPassword("");
+      onPasswordChanged(); setNotice("Password updated. Other browser sessions were revoked.");
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Password could not be changed."); }
+    finally { setBusy(false); }
+  };
+  return <section className="account-security"><PanelTitle title="Your account security" subtitle="Password changes are recorded and revoke your other active browser sessions." /><div className="account-security__status"><span className="avatar">{initials(session.principal.displayName)}</span><div><strong>{session.principal.displayName}</strong><small>@{session.principal.username} · {roleLabel(session.principal.role)}</small></div><Pill tone={session.principal.mustChangePassword ? "warn" : "good"}>{session.principal.mustChangePassword ? "Password change required" : "Password current"}</Pill></div><form className="account-security__form" onSubmit={(event) => void submit(event)}><label>Current password<input required type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label><label>New password<input required minLength={12} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label><label>Confirm new password<input required minLength={12} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label><button className="primary" disabled={busy}>{busy ? "Updating…" : "Update password"}</button></form>{error && <div className="sign-in-error">{error}</div>}{notice && <div className="device-notice">{notice}</div>}<button className="account-security__signout" onClick={() => void onSignOut()}>Sign out of this browser</button></section>;
+}
+
+function LegacyAdminDirectory({ session }: { session: AdminSession }) {
   const [users, setUsers] = useState<AdminPrincipal[] | null>(null); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
-  const [displayName, setDisplayName] = useState(""); const [username, setUsername] = useState(""); const [temporaryPassword, setTemporaryPassword] = useState(""); const [role, setRole] = useState<"operations_administrator" | "read_only_reviewer">("operations_administrator");
+  const [displayName, setDisplayName] = useState(""); const [username, setUsername] = useState(""); const [temporaryPassword, setTemporaryPassword] = useState(""); const [role, setRole] = useState<"organization_owner" | "operations_administrator" | "read_only_reviewer">("operations_administrator");
   const refreshUsers = useCallback(async () => { try { setUsers(await listAdminUsers(session)); setError(null); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load accounts."); } }, [session]);
   useEffect(() => { void refreshUsers(); }, [refreshUsers]);
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); try { await createAdminUser(session, { displayName, username, temporaryPassword, role }); setDisplayName(""); setUsername(""); setTemporaryPassword(""); await refreshUsers(); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); } finally { setBusy(false); } };
   return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners control who can manage the pilot." /><div className="admin-directory__users">{users?.map((user) => <article key={user.userId}><span className="avatar">{initials(user.displayName)}</span><div><strong>{user.displayName}</strong><small>@{user.username}</small></div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill></article>) ?? <div className="skeleton"/>}</div><form className="admin-user-form" onSubmit={(event) => void submit(event)}><h3>Add administrator</h3><p>New accounts must change their temporary password before production use.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form></section>;
+}
+
+function AdminDirectory({ session }: { session: AdminSession }) {
+  const [users, setUsers] = useState<AdminPrincipal[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [username, setUsername] = useState("");
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [role, setRole] = useState<"organization_owner" | "operations_administrator" | "read_only_reviewer">("operations_administrator");
+  const refreshUsers = useCallback(async () => {
+    try { setUsers(await listAdminUsers(session)); setError(null); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load accounts."); }
+  }, [session]);
+  useEffect(() => { void refreshUsers(); }, [refreshUsers]);
+  const addUser = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(null);
+    try {
+      await createAdminUser(session, { displayName, username, temporaryPassword, role });
+      setDisplayName(""); setUsername(""); setTemporaryPassword("");
+      await refreshUsers();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); }
+    finally { setBusy(false); }
+  };
+  const save = async (userId: string, update: { displayName?: string; role?: "organization_owner" | "operations_administrator" | "read_only_reviewer"; isActive?: boolean }) => {
+    setBusy(true); setError(null);
+    try { await updateAdminUser(session, userId, update); await refreshUsers(); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update account."); }
+    finally { setBusy(false); }
+  };
+  return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners govern pilot access. Role changes and disabled accounts immediately invalidate the affected person’s active browser sessions." />
+    <div className="admin-directory__users">{users?.map((user) => <ManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} busy={busy} onSave={save} />) ?? <div className="skeleton"/>}</div>
+    {error && <div className="sign-in-error">{error}</div>}
+    <form className="admin-user-form" onSubmit={(event) => void addUser(event)}><h3>Add administrator</h3><p>Use an Operations Administrator for normal data and scanner work. Only nominate another Organization Owner when they need full access governance.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div><button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form>
+  </section>;
+}
+
+function ManagedAccountRow({ user, currentUserId, busy, onSave }: { user: AdminPrincipal; currentUserId: string; busy: boolean; onSave: (userId: string, update: { displayName?: string; role?: "organization_owner" | "operations_administrator" | "read_only_reviewer"; isActive?: boolean }) => Promise<void> }) {
+  const [displayName, setDisplayName] = useState(user.displayName);
+  const [role, setRole] = useState(user.role);
+  useEffect(() => { setDisplayName(user.displayName); setRole(user.role); }, [user.displayName, user.role]);
+  const self = user.userId === currentUserId;
+  const changed = displayName.trim() !== user.displayName || role !== user.role;
+  return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}><span className="avatar">{initials(user.displayName)}</span><div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">Password change pending</Pill>}</div></div>{self ? <small className="admin-account__self">Use another Organization Owner to change your role or disable this account.</small> : <div className="admin-account__controls"><input aria-label={`${user.username} display name`} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={`${user.username} role`} value={role} disabled={busy} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role: role as "organization_owner" | "operations_administrator" | "read_only_reviewer" } : {}) })}>Save</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable" : "Enable"}</button></div>}</article>;
+}
+
+function DeviceCard({ device, data, operatingLocations, busy, canManage, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; canManage: boolean; onSave: (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
+  const [label, setLabel] = useState(device.label);
+  const [assignedLocationId, setAssignedLocationId] = useState(device.assignedLocationId);
+  const [reason, setReason] = useState("");
+  useEffect(() => { setLabel(device.label); setAssignedLocationId(device.assignedLocationId); setReason(""); }, [device.label, device.assignedLocationId]);
+  const location = data.fixtures.locations.find((item) => item.locationId === device.assignedLocationId);
+  const events = data.events.filter((item) => item.deviceId === device.deviceId);
+  const assignmentChanged = assignedLocationId !== device.assignedLocationId;
+  const labelChanged = label.trim() !== device.label;
+  const locked = busy || !canManage;
+  return <article className="device-card"><div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div><h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name ?? "Unassigned"}</p>{!canManage && <div className="device-read-only">Read-only access: scanner controls are unavailable.</div>}<label className="device-location-control"><span>Scanner name</span><div className="device-name-input"><input value={label} onChange={(event) => setLabel(event.target.value)} disabled={locked} placeholder="Example: Scanner 1" /><button className="secondary" disabled={locked || !labelChanged || label.trim().length < 2} onClick={() => void onSave(device, { label: label.trim() })}>{busy ? "Saving…" : "Save name"}</button></div></label><dl><div><dt>Scanner ID</dt><dd className="device-id">{scannerNumber(device.deviceId)}</dd></div><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>StackTrack version</dt><dd>{device.reportedAppVersion ?? "Not reported"}</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>Last app report</dt><dd>{relativeTime(device.lastReportedAt)}</dd></div></dl><label className="device-location-control"><span>Move scanner to</span><select value={assignedLocationId} disabled={locked} onChange={(event) => setAssignedLocationId(event.target.value)}>{operatingLocations.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}</select></label>{assignmentChanged && <label className="device-location-control"><span>Reason (optional)</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Scanner moved with the Midtown store team." disabled={locked} /></label>}{assignmentChanged && <button className="primary device-save-assignment" disabled={locked} onClick={() => void onSave(device, { assignedLocationId, ...(reason.trim() ? { assignmentReason: reason.trim() } : {}) })}>{busy ? "Saving…" : "Record scanner move"}</button>}<div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={locked} onClick={() => void onSave(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={onDetails}>Details <ChevronRight size={16} /></button></div></article>;
+}
+
+function BrokenExceptionsPage({ data, openDetail, session, refresh }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession; refresh: () => Promise<void> }) {
+  /* Superseded by the structured review component below.
+  const cases = data.reviewCases;
+  const activeCases = cases.filter((item) => !["resolved", "approved", "rejected"].includes(item.status));
+  return <section className="panel exceptions-panel"><div className="accuracy-summary"><span><ShieldCheck size={25} /></span><div><strong>Evidence is preserved; disposition is append-only.</strong><p>Every review decision is tied to the signed-in administrator, has a required reason, and never rewrites the scanner observations that caused the case.</p></div></div><div className="review-summary"><span><b>{activeCases.length}</b> active cases</span><span><b>{cases.length - activeCases.length}</b> completed history</span><span>Organization Owners can resolve material cases.</span></div>{cases.length === 0 ? <EmptyState>No review cases have been created from the current scan history.</EmptyState> : cases.map((item) => <ReviewCaseCard key={item.reviewCaseId} reviewCase={item} data={data} session={session} onAction={async (action, reason) => { await reviewCaseAction(session, item.reviewCaseId, action, reason); await refresh(); }} onEvidence={() => openDetail({ eyebrow: "Preserved evidence", title: `${item.containerLabel} review evidence`, body: <><DetailFacts items={[["Case ID", item.reviewCaseId], ["Reason code", item.reasonCode], ["Current status", reviewStatusLabel(item.status)], ["Evidence events", String(item.evidenceEventIds.length)], ["Last decision", item.lastActionAt ? `${reviewStatusLabel(item.status)} · ${new Date(item.lastActionAt).toLocaleString()}` : "Not yet acted on"]}/>{item.lastActionReason && <div className="detail-callout"><ShieldCheck size={20}/><span><strong>Latest decision reason:</strong> {item.lastActionReason}</span></div>}<h3 className="detail-section-title">Immutable event evidence</h3><EventEvidence events={data.events.filter((event) => item.evidenceEventIds.includes(event.eventId) || event.containerId === item.containerId)} data={data}/></> })} />)}</section>;
+}
+
+  */
+}
+
+function reviewStatusLabel(status: ReviewCase["status"]) { return { opened: "Open", assigned: "Assigned", approved: "Approved", rejected: "Rejected", resolved: "Resolved", reopened: "Reopened" }[status]; }
+
+function ReviewCaseCard({ reviewCase, data, session, onAction, onEvidence }: { reviewCase: ReviewCase; data: OperationsData; session: AdminSession; onAction: (action: ReviewAction, reason: string) => Promise<void>; onEvidence: () => void }) {
+  const [reason, setReason] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
+  const manages = session.principal.role === "organization_owner" || session.principal.role === "operations_administrator";
+  const canResolve = session.principal.role === "organization_owner";
+  const isClosed = ["approved", "rejected", "resolved"].includes(reviewCase.status);
+  const act = async (action: ReviewAction) => { setError(null); setBusy(true); try { await onAction(action, reason); setReason(""); } catch (caught) { setError(caught instanceof Error ? caught.message : "Review decision could not be recorded."); } finally { setBusy(false); } };
+  const projection = data.projections[reviewCase.containerId];
+  return <article className={`exception-card ${isClosed ? "exception-card--closed" : ""}`}><div className="exception-card__icon"><AlertTriangle size={22} /></div><div className="exception-card__body"><div><Pill tone={isClosed ? "muted" : "warn"}>{reviewStatusLabel(reviewCase.status)}</Pill><span>{relativeTime(reviewCase.lastActionAt ?? reviewCase.openedAt)}</span></div><h2>{reviewCase.containerLabel} needs a review decision</h2><p>{reviewCase.reasonCode.replaceAll("_", " ")} · {projection?.conflicts.length ?? 0} current projection conflicts · {reviewCase.evidenceEventIds.length} preserved evidence event{reviewCase.evidenceEventIds.length === 1 ? "" : "s"}.</p><div className="evidence"><span><strong>{reviewCase.actionCount}</strong> recorded actions</span><span><strong>{projection?.appliedEventIds.length ?? 0}</strong> applied events</span><span><strong>{projection?.warnings.length ?? 0}</strong> timing warnings</span></div>{reviewCase.lastActionReason && <div className="review-last-action"><strong>Latest reason:</strong> {reviewCase.lastActionReason}</div>}{manages && <label className="review-reason"><span>Decision reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder="State what was verified and who should act next." /></label>}{error && <div className="sign-in-error">{error}</div>}</div><div className="exception-card__actions"><button className="secondary" onClick={onEvidence}>View evidence</button>{manages && !isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("assigned")}>{busy ? "Recording…" : "Assign review"}</button>}{canResolve && !isClosed && <button className="primary" disabled={busy || reason.trim().length < 8} onClick={() => void act("resolved")}>{busy ? "Recording…" : "Resolve case"}</button>}{canResolve && isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("reopened")}>{busy ? "Recording…" : "Reopen case"}</button>}</div></article>;
+}
+
+function ExceptionsPage({ data, openDetail, session, refresh }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession; refresh: () => Promise<void> }) {
+  const activeCases = data.reviewCases.filter((item) => !["resolved", "approved", "rejected"].includes(item.status));
+  return <section className="panel exceptions-panel">
+    <div className="accuracy-summary"><span><ShieldCheck size={25} /></span><div><strong>Evidence is preserved; disposition is append-only.</strong><p>Each review decision is tied to its signed-in administrator, includes a reason, and never rewrites the scans that created the case.</p></div></div>
+    <div className="review-summary"><span><b>{activeCases.length}</b> active cases</span><span><b>{data.reviewCases.length - activeCases.length}</b> completed history</span><span>Organization Owners can resolve material cases.</span></div>
+    {data.reviewCases.length === 0 ? <EmptyState>No review cases have been created from the current scan history.</EmptyState> : data.reviewCases.map((item) => <ReviewCaseCard key={item.reviewCaseId} reviewCase={item} data={data} session={session} onAction={async (action, reason) => { await reviewCaseAction(session, item.reviewCaseId, action, reason); await refresh(); }} onEvidence={() => openDetail({
+      eyebrow: "Preserved evidence",
+      title: `${item.containerLabel} review evidence`,
+      body: <><DetailFacts items={[
+        ["Case ID", item.reviewCaseId],
+        ["Reason code", item.reasonCode],
+        ["Current status", reviewStatusLabel(item.status)],
+        ["Evidence events", String(item.evidenceEventIds.length)],
+        ["Last decision", item.lastActionAt ? `${reviewStatusLabel(item.status)} · ${new Date(item.lastActionAt).toLocaleString()}` : "Not yet acted on"]
+      ]}/>{item.lastActionReason && <div className="detail-callout"><ShieldCheck size={20}/><span><strong>Latest decision reason:</strong> {item.lastActionReason}</span></div>}<h3 className="detail-section-title">Immutable event evidence</h3><EventEvidence events={data.events.filter((event) => item.evidenceEventIds.includes(event.eventId) || event.containerId === item.containerId)} data={data}/></>
+    })} />)}
+  </section>;
 }

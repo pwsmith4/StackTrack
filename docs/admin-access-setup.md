@@ -25,5 +25,19 @@ local-only example and must never be used in Azure.
 - **Read-only Reviewer** — reviews data and exports reports without changing
   operational records.
 
+## What the pilot console enforces
+
+- New users begin with a temporary password and a password-change reminder.
+  Users can change their own password in **Settings**; that change invalidates
+  their other browser sessions.
+- An Organization Owner can rename a user, change their role, or disable their
+  account in **Settings → Administrator directory**. Disabling or changing a
+  role immediately revokes that person’s active sessions.
+- The Devices page records the signed-in administrator whenever a scanner is
+  renamed, moved, enabled, or disabled. A scanner-move reason is optional for
+  this pilot, but the action itself is never silent.
+- The Needs review page records every decision as an append-only action with a
+  required reason. Only an Organization Owner can resolve a material case.
+
 The initial password route is only a temporary pilot bridge. Production should
 use Goodwill Microsoft Entra sign-in and map Entra object IDs to these roles.

@@ -9,7 +9,8 @@ import {
 } from "@stacktrack/domain";
 import { localFixtures, type LocalFixtures } from "./local-fixtures.js";
 import type { DeviceAdministration, DeviceControlUpdate, DeviceTelemetryUpdate } from "./device-administration.js";
-import type { AdminPrincipal, NewAdminUser, PostgresAdminAccess } from "./admin-access.js";
+import type { AdminPrincipal, AdminUserUpdate, NewAdminUser, PostgresAdminAccess } from "./admin-access.js";
+import type { PostgresReviewAdministration, ReviewAction } from "./review-administration.js";
 
 export interface AppDependencies {
   readonly ledger?: EventLedger;
@@ -20,6 +21,7 @@ export interface AppDependencies {
   ) => LocalFixtures | null | Promise<LocalFixtures | null>;
   readonly deviceAdministration?: DeviceAdministration;
   readonly adminAccess?: PostgresAdminAccess;
+  readonly reviewAdministration?: PostgresReviewAdministration;
 }
 
 interface ResettableLedger extends EventLedger {
@@ -113,13 +115,72 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       if (!principal) return;
       if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can add administrators." });
       const input = request.body;
-      if (!input || typeof input.username !== "string" || typeof input.displayName !== "string" || typeof input.temporaryPassword !== "string" || !["operations_administrator", "read_only_reviewer"].includes(input.role)) {
+      if (!input || typeof input.username !== "string" || typeof input.displayName !== "string" || typeof input.temporaryPassword !== "string" || !["organization_owner", "operations_administrator", "read_only_reviewer"].includes(input.role)) {
         return reply.code(400).send({ error: "InvalidAdminUser" });
       }
       try {
         return reply.code(201).send({ user: await dependencies.adminAccess!.createUser(principal, input) });
       } catch (error) {
         return reply.code(400).send({ error: "AdminUserRejected", message: error instanceof Error ? error.message : "The user could not be created." });
+      }
+    });
+
+    app.post("/api/v1/local/admin/session/revoke", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      const token = readBearerToken(request);
+      if (!principal || !token) return;
+      await dependencies.adminAccess!.revokeSession(principal, token);
+      return reply.code(204).send();
+    });
+
+    app.patch<{ Body: { currentPassword?: string; newPassword?: string } }>("/api/v1/local/admin/me/password", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      const token = readBearerToken(request);
+      const body = request.body;
+      if (!principal || !token) return;
+      if (typeof body?.currentPassword !== "string" || typeof body.newPassword !== "string") {
+        return reply.code(400).send({ error: "InvalidPasswordChange" });
+      }
+      try {
+        await dependencies.adminAccess!.changePassword(principal, token, body.currentPassword, body.newPassword);
+        return reply.code(204).send();
+      } catch (error) {
+        return reply.code(400).send({ error: "PasswordChangeRejected", message: error instanceof Error ? error.message : "Password could not be changed." });
+      }
+    });
+
+    app.patch<{ Params: { userId: string }; Body: AdminUserUpdate }>("/api/v1/local/admin/users/:userId", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can manage administrator accounts." });
+      const update = request.body;
+      if (!update || (update.displayName !== undefined && typeof update.displayName !== "string") || (update.role !== undefined && !["organization_owner", "operations_administrator", "read_only_reviewer"].includes(update.role)) || (update.isActive !== undefined && typeof update.isActive !== "boolean")) {
+        return reply.code(400).send({ error: "InvalidAdminUserUpdate" });
+      }
+      try {
+        return reply.send({ user: await dependencies.adminAccess!.updateUser(principal, request.params.userId, update) });
+      } catch (error) {
+        return reply.code(400).send({ error: "AdminUserUpdateRejected", message: error instanceof Error ? error.message : "Administrator account could not be updated." });
+      }
+    });
+
+    app.get("/api/v1/local/review-cases", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
+      return reply.send({ items: await dependencies.reviewAdministration.listCases(principal.tenantId) });
+    });
+
+    app.post<{ Params: { reviewCaseId: string }; Body: { action?: ReviewAction; reason?: string } }>("/api/v1/local/review-cases/:reviewCaseId/actions", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
+      const body = request.body;
+      if (!body || !["assigned", "approved", "rejected", "resolved", "reopened"].includes(body.action ?? "") || typeof body.reason !== "string") return reply.code(400).send({ error: "InvalidReviewAction" });
+      try {
+        return reply.send({ item: await dependencies.reviewAdministration.takeAction(principal.tenantId, principal, request.params.reviewCaseId, body.action!, body.reason) });
+      } catch (error) {
+        return reply.code(400).send({ error: "ReviewActionRejected", message: error instanceof Error ? error.message : "Review action could not be recorded." });
       }
     });
 
@@ -303,7 +364,8 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
           const device = await dependencies.deviceAdministration.update(
             tenantId,
             request.params.deviceId,
-            update
+            update,
+            { userId: principal.userId }
           );
           if (!device) return reply.code(404).send({ error: "NotFound" });
           return reply.send({ device });

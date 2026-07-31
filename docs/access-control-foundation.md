@@ -39,6 +39,20 @@ PBKDF2-SHA-512 password hash in PostgreSQL. The password is never committed or
 put in the GitHub Pages build. The default *username* can be `root`, but the
 password must be a unique 12+ character value, not `password`.
 
+The pilot implementation now enforces these boundaries server-side:
+
+- the public admin page renders no tenant data until the API verifies a session;
+- sessions expire after 12 hours, can be explicitly signed out, and are revoked
+  immediately if the account is disabled or its role changes;
+- Organization Owners can add a second Organization Owner (for example, the
+  Goodwill Chief of IT), Operations Administrators, and Read-only Reviewers;
+- StackTrack will not allow the final active Organization Owner to be disabled
+  or demoted; and
+- scanner moves, renames, availability changes, account changes, password
+  changes, and review decisions all write an authenticated actor to `audit_log`.
+
+This is still a test-pilot password bridge, not the production Entra design.
+
 ## Preconditions before activating sign-in
 
 - The Azure test API deployment pipeline must be healthy.

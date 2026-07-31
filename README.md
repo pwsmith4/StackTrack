@@ -101,10 +101,12 @@ npm.cmd run release:mobile:minor  # 0.3.1 → 0.4.0
 npm.cmd run release:mobile:major  # 0.3.1 → 1.0.0
 ```
 
-The command updates the Expo manifest, Android build number, package metadata,
-and the version bundled into the app together. Commit those changes with the
-release. The Devices page shows each scanner's reported installed version,
-required version, and any required-update warning.
+The command updates the Expo manifest, Android Gradle version code/name,
+package metadata, and the version bundled into the app together. Commit those
+changes with the release. The Devices page shows each scanner's reported installed version and
+the exact five-digit scanner identifier. Required-version enforcement remains
+available to the mobile/API deployment policy but is intentionally not exposed
+as a routine pilot admin toggle.
 
 GitHub Actions also creates a versioned mobile preview on every qualifying push
 to `main` or `test`. It adds the GitHub run number and short commit hash, such

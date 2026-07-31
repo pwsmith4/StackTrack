@@ -3,6 +3,7 @@ import { createApp } from "./app.js";
 import { PostgresEventLedger } from "./postgres-ledger.js";
 import { PostgresDeviceAdministration } from "./device-administration.js";
 import { PostgresAdminAccess } from "./admin-access.js";
+import { PostgresReviewAdministration } from "./review-administration.js";
 
 const { Pool } = pg;
 
@@ -25,7 +26,8 @@ const app = createApp({
   localMode: testMode,
   referenceData: (tenantId) => ledger.referenceData(tenantId),
   deviceAdministration: new PostgresDeviceAdministration(pool),
-  adminAccess: new PostgresAdminAccess(pool, tenantId)
+  adminAccess: new PostgresAdminAccess(pool, tenantId),
+  reviewAdministration: new PostgresReviewAdministration(pool)
 });
 app.addHook("onClose", () => pool.end());
 
