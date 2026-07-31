@@ -863,23 +863,74 @@ function PanelTitle({ title, subtitle, action, onClick }: { title: string; subti
   );
 }
 
-function ContainerRouteSummary({ events, data }: { events: StoredEvent[]; data: OperationsData }) {
+interface ContainerRouteContext {
+  inTransit: boolean;
+  currentLocation: Location | null;
+  origin: Location | null;
+  destination: Location | null;
+  departedAt: string | null;
+}
+
+function getContainerRouteContext(containerId: string, data: OperationsData): ContainerRouteContext {
   const transitId = data.fixtures.locations.find((location) => location.type === "in_transit")?.locationId;
-  const ordered = [...events].sort((left, right) => Date.parse(left.effectiveAt) - Date.parse(right.effectiveAt));
-  const departure = [...ordered].reverse().find((event) => event.eventType === "batch_out");
+  const locationFor = (locationId: string | null | undefined) => data.fixtures.locations.find((location) => location.locationId === locationId) ?? null;
+  const projection = data.projections[containerId];
+  const events = data.events
+    .filter((event) => event.containerId === containerId)
+    .sort((left, right) => Date.parse(left.effectiveAt) - Date.parse(right.effectiveAt));
+  const departure = [...events].reverse().find((event) => event.eventType === "batch_out");
   const destinationId = typeof departure?.payload.destinationLocationId === "string" ? departure.payload.destinationLocationId : null;
   const originEvent = departure
-    ? ordered.filter((event) => event.eventId !== departure.eventId && event.locationId !== transitId && Date.parse(event.effectiveAt) < Date.parse(departure.effectiveAt)).at(-1)
-    : ordered[0];
-  const name = (id: string | null | undefined) => data.fixtures.locations.find((location) => location.locationId === id)?.name ?? "Not confirmed";
-  const origin = originEvent ? name(originEvent.locationId) : "Not confirmed";
-  const destination = destinationId ? name(destinationId) : "Destination pending";
-  const current = ordered.at(-1);
-  const inTransit = current?.locationId === transitId;
-  return <div className={`detail-route-summary ${inTransit ? "detail-route-summary--active" : ""}`}>
-    <div className="detail-route-summary__heading"><span><Truck size={15} /> Route context</span><Pill tone={inTransit ? "blue" : "good"}>{inTransit ? "In transit" : "Physical location confirmed"}</Pill></div>
-    <div className="detail-route-summary__path"><div><small>Origin</small><strong>{origin}</strong></div><ArrowRight size={17} /><div><small>Destination</small><strong>{destination}</strong></div></div>
-    <small className="detail-route-summary__note">{inTransit ? "The container remains in transit until a destination receipt is scanned." : current ? `Last authoritative observation: ${eventLabel(current.eventType)} at ${name(current.locationId)}.` : "No route observations are recorded yet."}</small>
+    ? events.filter((event) => event.eventId !== departure.eventId && event.locationId !== transitId && Date.parse(event.effectiveAt) < Date.parse(departure.effectiveAt)).at(-1)
+    : events.filter((event) => event.locationId !== transitId).at(-1);
+  const latestEvent = events.at(-1);
+  return {
+    inTransit: projection?.locationId === transitId,
+    currentLocation: locationFor(projection?.locationId),
+    origin: locationFor(originEvent?.locationId),
+    destination: locationFor(destinationId),
+    departedAt: departure?.eventAt ?? latestEvent?.eventAt ?? null
+  };
+}
+
+function ContainerRouteCell({ route }: { route: ContainerRouteContext }) {
+  if (route.inTransit) {
+    return (
+      <div className="container-route-cell container-route-cell--active">
+        <span className="container-route-cell__status"><i aria-hidden="true" /> In transit</span>
+        <div className="container-route-cell__path">
+          <strong title={route.origin?.name ?? "Origin pending"}>{route.origin?.name ?? "Origin pending"}</strong>
+          <span className="container-route-cell__connector" aria-hidden="true"><i /><ArrowRight size={13} /></span>
+          <strong title={route.destination?.name ?? "Destination pending"}>{route.destination?.name ?? "Destination pending"}</strong>
+        </div>
+        <small>Departed {relativeTime(route.departedAt)} · destination receipt pending</small>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container-location-cell">
+      <span className="container-location-cell__icon">{route.currentLocation ? <LocationTypeIcon location={route.currentLocation} size={15} /> : <MapPin size={15} />}</span>
+      <div>
+        <strong>{route.currentLocation?.name ?? "Not yet observed"}</strong>
+        <small>{route.currentLocation ? route.currentLocation.type === "donation_express" ? "Donation Xpress" : route.currentLocation.type === "warehouse" ? "Warehouse" : route.currentLocation.type === "store_backroom" ? "Store" : "In transit" : "No location confirmed"}</small>
+      </div>
+    </div>
+  );
+}
+
+function ContainerRouteSummary({ containerId, data }: { containerId: string; data: OperationsData }) {
+  const route = getContainerRouteContext(containerId, data);
+  const current = data.events.filter((event) => event.containerId === containerId).sort((left, right) => Date.parse(left.effectiveAt) - Date.parse(right.effectiveAt)).at(-1);
+  const currentName = route.currentLocation?.name ?? "Not confirmed";
+  return <div className={`detail-route-summary ${route.inTransit ? "detail-route-summary--active" : ""}`}>
+    <div className="detail-route-summary__heading"><span><Truck size={15} /> Route context</span><Pill tone={route.inTransit ? "blue" : "good"}>{route.inTransit ? "In transit" : "Physical location confirmed"}</Pill></div>
+    <div className="detail-route-summary__path">
+      <div><small>Origin</small><strong>{route.origin?.name ?? "Origin not confirmed"}</strong></div>
+      <span className="detail-route-summary__connector" aria-hidden="true"><i /><ArrowRight size={16} /></span>
+      <div><small>Destination</small><strong>{route.destination?.name ?? "Destination pending"}</strong></div>
+    </div>
+    <small className="detail-route-summary__note">{route.inTransit ? `Movement is active from ${route.origin?.name ?? "the last confirmed location"} to ${route.destination?.name ?? "the destination"}. A destination receipt will close the route.` : current ? `Last authoritative observation: ${eventLabel(current.eventType)} at ${currentName}.` : "No route observations are recorded yet."}</small>
   </div>;
 }
 
@@ -899,6 +950,7 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
   const visibleRows = rows.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize);
   const showContainer = (container: Container) => {
     const projection = data.projections[container.containerId];
+    const route = getContainerRouteContext(container.containerId, data);
     openDetail({
       eyebrow: `${container.type} record`,
       title: container.label,
@@ -910,13 +962,23 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
       actions: projection?.health === "needs_review" ? <button className="secondary" onClick={() => setPage("exceptions")}><AlertTriangle size={15} /> Open review queue</button> : undefined,
       body: <><DetailFacts items={[
         ["Current state", projection?.loadState ?? "Not observed"],
-        ["Last known location", locationName(projection?.locationId ?? null)],
+        ["Movement status", route.inTransit ? "In transit" : "Stationary / location confirmed"],
+        ["Route", route.inTransit ? `${route.origin?.name ?? "Origin pending"} → ${route.destination?.name ?? "Destination pending"}` : "No active movement"],
+        ["Last known location", route.inTransit ? "In transit" : locationName(projection?.locationId ?? null)],
         ["History health", projection?.health ?? "No history"],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"],
         ["Container UUID", container.containerId]
-      ]}/><ContainerRouteSummary events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
+      ]}/><ContainerRouteSummary containerId={container.containerId} data={data}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
     });
   };
+  const movementRows = data.fixtures.containers.map((container) => ({ container, route: getContainerRouteContext(container.containerId, data) })).filter((item) => item.route.inTransit);
+  const movementGroups = Array.from(new Map(movementRows.map((item) => {
+    const key = `${item.route.origin?.locationId ?? "unknown"}:${item.route.destination?.locationId ?? "unknown"}`;
+    return [key, { key, origin: item.route.origin, destination: item.route.destination, count: 0, labels: [] as string[], first: item.container }] as const;
+  })).values()).map((group) => {
+    const matches = movementRows.filter((item) => (item.route.origin?.locationId ?? "unknown") === (group.origin?.locationId ?? "unknown") && (item.route.destination?.locationId ?? "unknown") === (group.destination?.locationId ?? "unknown"));
+    return { ...group, count: matches.length, labels: matches.slice(0, 3).map((item) => item.container.label) };
+  });
   const exportRows = () => downloadCsv("stacktrack-containers.csv", [
     ["Label", "Type", "State", "Location", "Last observed", "Health"],
     ...rows.map((container) => {
@@ -934,16 +996,21 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
   return (
     <section className="panel">
       <div className="toolbar"><div className="filter-tabs">{(["all", "loaded", "empty", "unknown"] as const).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => { setFilter(value); setPageIndex(0); }}>{value[0]!.toUpperCase() + value.slice(1)} <b>{filterCount(value)}</b></button>)}</div><button className="secondary" onClick={exportRows}><Download size={16} /> Export CSV</button></div>
+      {movementRows.length > 0 && <div className="container-movement-summary">
+        <div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each route shows the last confirmed origin and planned destination. The movement closes when the destination receipt is scanned.</p></div></div>
+        <div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.first)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`${group.origin?.name ?? "Origin pending"} to ${group.destination?.name ?? "Destination pending"}`}>{group.origin?.name ?? "Origin pending"} <ArrowRight size={12} /> {group.destination?.name ?? "Destination pending"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional route{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div>
+      </div>}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Asset label</th><th>Container type</th><th>Current state</th><th>Last known location</th><th>Last observed</th><th>History health</th></tr></thead>
+          <thead><tr><th>Asset label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>History health</th></tr></thead>
           <tbody>{visibleRows.map((container) => {
             const projection = data.projections[container.containerId];
+            const route = getContainerRouteContext(container.containerId, data);
             return <tr className="clickable-row" key={container.containerId} onClick={() => showContainer(container)}>
               <td><strong className="asset-label">{container.label}</strong><small>{container.containerId.slice(0, 13)}…</small></td>
               <td className="capitalize">{container.type}</td>
               <td><Pill tone={projection?.loadState === "loaded" ? "blue" : "muted"}>{projection?.loadState ?? "Not observed"}</Pill></td>
-              <td>{locationName(projection?.locationId ?? null)}</td>
+              <td><ContainerRouteCell route={route} /></td>
               <td>{relativeTime(projection?.lastObservedAt)}</td>
               <td>{projection?.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : projection?.administrativeCorrection ? <Pill tone="blue">Corrected</Pill> : projection ? <Pill tone="good">Clean</Pill> : <Pill tone="muted">No history</Pill>}</td>
             </tr>;
