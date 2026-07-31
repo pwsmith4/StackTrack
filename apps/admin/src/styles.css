@@ -1115,3 +1115,70 @@ footer > span:first-child { display: none; }
 @media (max-width: 600px) { .detail-drawer__body { padding: 20px; } .detail-drawer__header { padding: 18px 20px; } .detail-drawer__record { margin-inline: 20px; } .detail-drawer__actions { padding-inline: 20px; } .detail-danger-zone { align-items: stretch; flex-direction: column; } .danger-button { width: 100%; } }
 @media (max-width: 600px) { .timeline { padding: 14px 12px 18px; } .timeline article { grid-template-columns: 26px minmax(0, 1fr); gap: 7px; } .timeline__card { padding: 11px 10px 12px; } .timeline__card-heading { flex-direction: column; gap: 7px; } .timeline time { white-space: normal; } }
 @media (max-width: 600px) { .pagination { align-items: stretch; flex-direction: column; } .pagination__summary, .pagination__controls { justify-content: space-between; width: 100%; } .pagination__page-size { margin-left: auto; } }
+
+/* Dedicated location workspaces. The network directory remains the corporate
+   landing page; this hierarchy gives a manager a calm, local operating view. */
+.location-focused-page { display: grid; gap: 16px; }
+.location-focused-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.location-focused-toolbar__crumb { display: inline-flex; align-items: center; gap: 6px; color: #71828d; font-size: 10px; font-weight: 700; }
+.location-focused-toolbar__back { transform: rotate(180deg); }
+.location-focused-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 22px; border-color: #c5e2ec; background: linear-gradient(135deg, #f7fcfe, #fff); }
+.location-focused-hero__identity { display: flex; gap: 13px; min-width: 0; }
+.location-focused-hero__identity > .location-title-icon { width: 48px; height: 48px; flex: none; }
+.location-focused-hero__identity h2 { margin: 3px 0 0; color: var(--ink); font: 800 24px/1.1 Manrope, sans-serif; }
+.location-focused-hero__identity p { margin: 8px 0 0; color: #6f808b; font-size: 10.5px; }
+.location-focused-hero__tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.location-focused-hero__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.location-focused-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; }
+.location-focused-metrics article { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 13px; border: 1px solid var(--line); background: #fff; }
+.location-focused-metric__icon { width: 32px; height: 32px; display: grid; place-items: center; flex: none; }
+.location-focused-metric__icon--blue { color: var(--blue-800); background: #e8f4fb; }
+.location-focused-metric__icon--green { color: #2a8264; background: #e9f7ef; }
+.location-focused-metric__icon--orange { color: #bb692b; background: #fff1e6; }
+.location-focused-metric__icon--slate { color: #536d7d; background: #edf2f4; }
+.location-focused-metric__icon--cyan { color: #167c9b; background: #e8f8fb; }
+.location-focused-metrics article > div { min-width: 0; }
+.location-focused-metrics small, .location-focused-metrics strong, .location-focused-metrics em { display: block; }
+.location-focused-metrics small { color: #7a8a94; font-size: 8px; }
+.location-focused-metrics strong { margin-top: 2px; color: var(--ink); font: 800 17px Manrope, sans-serif; }
+.location-focused-metrics em { margin-top: 2px; overflow: hidden; color: #8a969f; font-size: 8px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.location-focused-section { padding: 0; overflow: hidden; }
+.location-focused-section__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 17px 20px; border-bottom: 1px solid var(--line); }
+.location-focused-section__header h3 { margin: 3px 0 0; color: var(--ink); font: 800 14px/1.25 Manrope, sans-serif; }
+.location-focused-section__header p { max-width: 710px; margin: 6px 0 0; color: #71818c; font-size: 9.5px; line-height: 1.5; }
+.location-focused-section__header-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.location-focused-section .workflow-lanes { padding: 17px 20px 20px; }
+.location-focused-columns { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 16px; }
+.location-scanner-list, .location-review-list, .location-activity-list { display: grid; }
+.location-scanner-list button, .location-review-list button, .location-activity-list button { display: grid; align-items: center; gap: 9px; width: 100%; min-width: 0; padding: 11px 16px; border: 0; border-bottom: 1px solid #edf1f3; background: #fff; color: var(--ink); text-align: left; }
+.location-scanner-list button { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.location-review-list button { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.location-activity-list button { grid-template-columns: minmax(0, 1fr) auto auto; }
+.location-scanner-list button:hover, .location-review-list button:hover, .location-activity-list button:hover { background: #f4fafc; }
+.location-scanner-list__icon, .location-review-list__icon { width: 28px; height: 28px; display: grid; place-items: center; color: var(--blue-800); background: #edf7fb; }
+.location-review-list__icon { color: #b7662a; background: #fff1e7; }
+.location-scanner-list strong, .location-scanner-list small, .location-review-list strong, .location-review-list small, .location-activity-list strong, .location-activity-list small { display: block; }
+.location-scanner-list strong, .location-review-list strong, .location-activity-list strong { color: #304754; font-size: 10px; }
+.location-scanner-list small, .location-review-list small, .location-activity-list small { margin-top: 3px; color: #81909a; font-size: 8.5px; }
+.location-scanner-list__state { display: grid; justify-items: end; gap: 3px; }
+.location-scanner-list__state > small { white-space: nowrap; }
+.location-activity-list time { color: #7d8d96; font-size: 8px; white-space: nowrap; }
+.location-focused-empty { padding: 18px 16px; color: #83919a; font-size: 9px; }
+.location-focused-health { display: grid; grid-template-columns: minmax(210px, .65fr) minmax(0, 1.35fr); align-items: center; gap: 20px; padding: 18px 20px; }
+.location-focused-health h3 { margin: 3px 0 0; color: var(--ink); font: 800 14px Manrope, sans-serif; }
+.location-focused-health p { margin: 6px 0 0; color: #778691; font-size: 9px; line-height: 1.45; }
+.location-health-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); }
+.location-health-grid span { display: grid; gap: 3px; min-width: 0; padding: 11px; border-right: 1px solid var(--line); background: #fbfcfd; }
+.location-health-grid span:last-child { border-right: 0; }
+.location-health-grid strong { color: var(--blue-800); font: 800 17px Manrope, sans-serif; }
+.location-health-grid small { color: #617985; font-size: 8px; font-weight: 700; }
+.location-health-grid em { color: #89969e; font-size: 7.5px; font-style: normal; line-height: 1.35; }
+.location-workspace-denied { max-width: 650px; margin: 40px auto; padding: 32px; text-align: center; }
+.location-workspace-denied__icon { width: 48px; height: 48px; display: grid; place-items: center; margin: 0 auto 13px; color: var(--blue-800); background: #eaf5fa; }
+.location-workspace-denied h2 { margin: 7px 0 0; color: var(--ink); font: 800 22px Manrope, sans-serif; }
+.location-workspace-denied p { max-width: 480px; margin: 9px auto 18px; color: #73838e; font-size: 10px; line-height: 1.55; }
+.location-directory-card__open { display: inline-flex; align-items: center; gap: 3px; color: var(--blue-800); font-size: 8px; font-weight: 800; }
+.device-read-only { display: flex; align-items: center; gap: 5px; margin: 9px 0 -4px; padding: 7px 8px; color: #687f8c; background: #f3f8fa; font-size: 8.5px; line-height: 1.35; }
+@media (max-width: 1100px) { .location-focused-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } .location-focused-health { grid-template-columns: 1fr; } }
+@media (max-width: 850px) { .location-focused-hero { flex-direction: column; } .location-focused-hero__actions { justify-content: flex-start; } .location-focused-columns { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .location-focused-toolbar { align-items: stretch; flex-wrap: wrap; } .location-focused-toolbar__crumb { order: 3; width: 100%; } .location-focused-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-focused-section__header { flex-direction: column; } .location-health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-health-grid span:nth-child(2) { border-right: 0; } .location-health-grid span:nth-child(n + 3) { border-top: 1px solid var(--line); } }

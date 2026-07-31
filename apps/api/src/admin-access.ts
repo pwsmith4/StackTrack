@@ -15,7 +15,7 @@ export interface AdminPrincipal {
   readonly username: string;
   readonly displayName: string;
   readonly role: AdminRole;
-  /** Assigned operating locations for Location Managers. Other roles are network-wide. */
+  /** Assigned operating locations for Location Managers and optionally scoped read-only reviewers. */
   readonly locationIds?: readonly string[];
   readonly supportExpiresAt: string | null;
   readonly isActive: boolean;
@@ -403,8 +403,8 @@ export class PostgresAdminAccess {
     if (input.role === "location_manager" && locationIds.length === 0) {
       throw new Error("Assign at least one operating location to a Location Manager.");
     }
-    if (input.role !== "location_manager" && locationIds.length > 0) {
-      throw new Error("Location assignments are only valid for Location Managers.");
+    if (input.role !== "location_manager" && input.role !== "read_only_reviewer" && locationIds.length > 0) {
+      throw new Error("Location assignments are only valid for Location Managers or scoped Read-only Reviewers.");
     }
     const passwordHash = await hashPassword(input.temporaryPassword);
     return this.transaction(async (client) => {
@@ -470,10 +470,10 @@ export class PostgresAdminAccess {
       if (role === "location_manager" && requestedLocationIds.length === 0) {
         throw new Error("Assign at least one operating location to a Location Manager.");
       }
-      if (role !== "location_manager" && input.locationIds !== undefined && requestedLocationIds.length > 0) {
-        throw new Error("Location assignments are only valid for Location Managers.");
+      if (role !== "location_manager" && role !== "read_only_reviewer" && input.locationIds !== undefined && requestedLocationIds.length > 0) {
+        throw new Error("Location assignments are only valid for Location Managers or scoped Read-only Reviewers.");
       }
-      const locationIds = role === "location_manager" ? requestedLocationIds : [];
+      const locationIds = role === "location_manager" || role === "read_only_reviewer" ? requestedLocationIds : [];
       if (locationIds.length > 0) {
         const locations = await client.query(
           `SELECT location_id

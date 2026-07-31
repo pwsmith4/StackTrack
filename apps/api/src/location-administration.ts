@@ -28,12 +28,13 @@ export interface LocationDependencyManager {
   readonly userId: string;
   readonly username: string;
   readonly displayName: string;
+  readonly role: "location_manager" | "read_only_reviewer";
 }
 
 export interface LocationDependencySummary {
   readonly location: LocationRecord;
   readonly devices: readonly LocationDependencyDevice[];
-  /** Location Managers who would lose their scope if this site is retired. */
+  /** Scoped administrators who would lose their site boundary if this site is retired. */
   readonly managers: readonly LocationDependencyManager[];
   /** Containers whose latest recorded observation points at this location. */
   readonly currentContainerCount: number;
@@ -161,8 +162,9 @@ export class PostgresLocationAdministration implements LocationAdministration {
         user_id: string;
         username: string;
         display_name: string;
+        role: "location_manager" | "read_only_reviewer";
       }>(
-        `SELECT u.user_id, u.username, u.display_name
+        `SELECT u.user_id, u.username, u.display_name, u.role
            FROM admin_user_locations scope
            JOIN admin_users u
              ON u.tenant_id = scope.tenant_id AND u.user_id = scope.user_id
@@ -205,7 +207,8 @@ export class PostgresLocationAdministration implements LocationAdministration {
       managers: managers.rows.map((row) => ({
         userId: row.user_id,
         username: row.username,
-        displayName: row.display_name
+        displayName: row.display_name,
+        role: row.role
       })),
       currentContainerCount: Number(containers.rows[0]?.count ?? 0),
       loadCodeCount: Number(loadCodes.rows[0]?.count ?? 0),
@@ -308,7 +311,7 @@ export class PostgresLocationAdministration implements LocationAdministration {
       const hasManagers = dependencies.managers.length > 0;
       if (hasManagers) {
         throw new LocationRetireConflict(
-          "Reassign or remove every Location Manager scope before retiring this location. This prevents a user from silently losing or retaining access to a closed site.",
+          "Reassign or remove every scoped administrator assignment before retiring this location. This prevents a user from silently losing or retaining access to a closed site.",
           dependencies
         );
       }

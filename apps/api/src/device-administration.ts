@@ -16,6 +16,8 @@ export interface DeviceTelemetryUpdate {
 
 export interface DeviceAdministrationActor {
   readonly userId: string;
+  /** Cross-location scanner moves are a corporate governance action. */
+  readonly role?: "organization_owner" | "operations_administrator" | "location_manager" | "read_only_reviewer" | "support";
 }
 
 export interface DeviceControlResult {
@@ -103,6 +105,13 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
       const changedLocation = assignedLocationId !== current.rows[0].assigned_location_id;
       const changedAvailability = isActive !== current.rows[0].is_active;
       const changedRequiredVersion = requiredAppVersion !== current.rows[0].required_app_version;
+
+      // Keep the corporate approval boundary in the persistence layer as well
+      // as the HTTP layer. This prevents a future caller from accidentally
+      // bypassing the owner-only rule when the reference-data cache is stale.
+      if (changedLocation && actor && actor.role !== "organization_owner") {
+        throw new Error("Cross-location scanner moves require an Organization Owner approval.");
+      }
 
       // The pilot lets an administrator make a routine scanner move without a
       // written reason, while preserving a truthful audit record either way.

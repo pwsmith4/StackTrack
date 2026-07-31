@@ -13,7 +13,7 @@ access control.
 | **Organization Owner** | Goodwill corporate authority for the tenant. At least two people should hold this role: the operational program owner and the Chief of IT. | Yes | Yes |
 | **Operations Administrator** | Daily operational and device management. | No | Yes |
 | **Location Manager** | Store, Donation Xpress, or warehouse lead who can keep assigned local work moving without seeing or changing the wider network. | No | Yes, only for assigned locations |
-| **Read-only reviewer** | Audit, reporting, and exception review without changes. | No | View only |
+| **Read-only reviewer** | Audit, reporting, and exception review without changes; optionally limited to assigned sites. | No | View only |
 | **StackTrack Support** | Time-limited, explicitly approved vendor troubleshooting access. | No | Only the granted scope |
 
 There is no hidden developer super-admin. Goodwill should retain the ability to
@@ -44,10 +44,20 @@ server-side rather than trusting a hidden UI control.
 
 The pilot now stores this mapping in `admin_user_locations`. An Organization
 Owner assigns one or more active location IDs when creating or editing a
-Location Manager. The API applies the same scope to reference data, activity,
-containers, review cases, corrections, device controls, and audit searches;
-the web UI is not trusted to enforce it. Goodwill can later replace the manual
-assignment step with an Entra group or HR directory mapping.
+Location Manager. A Read-only Reviewer may optionally receive the same scope;
+leaving it empty preserves network-wide read-only access. The API applies the
+scope to reference data, activity, containers, review cases, corrections,
+device controls, and audit searches; the web UI is not trusted to enforce it.
+Goodwill can later replace the manual assignment step with an Entra group or
+HR directory mapping.
+
+The admin console keeps a corporate Locations network view and deep-links each
+site to a focused workspace (`#/locations/{locationId}`). That workspace
+separates containers currently at the site from inbound and outbound handoffs,
+shows local scanner freshness and versions, and limits the data returned by the
+API for scoped accounts. A route can therefore pass through Donation Xpress,
+multiple warehouses, and a store without being flattened into a simple
+store-to-warehouse diagram.
 
 Until a scoped support-grant workflow is introduced, the pilot treats support
 as read-only: it cannot alter scanners, users, or review decisions.

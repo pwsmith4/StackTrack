@@ -102,12 +102,22 @@ function publicEvent(event: StoredEvent) {
   return result;
 }
 
-function isScopedLocationManager(principal: AdminPrincipal): boolean {
+function isLocationManager(principal: AdminPrincipal): boolean {
   return principal.role === "location_manager";
 }
 
+/**
+ * A non-corporate account is scoped only when explicit site assignments exist.
+ * This lets a read-only reviewer be either network-wide (legacy account) or
+ * deliberately limited to a set of locations without changing the owner and
+ * operations roles.
+ */
+function isScopedPrincipal(principal: AdminPrincipal): boolean {
+  return isLocationManager(principal) || (principal.role === "read_only_reviewer" && (principal.locationIds?.length ?? 0) > 0);
+}
+
 function principalLocationIds(principal: AdminPrincipal): ReadonlySet<string> | null {
-  return isScopedLocationManager(principal) ? new Set(principal.locationIds ?? []) : null;
+  return isScopedPrincipal(principal) ? new Set(principal.locationIds ?? []) : null;
 }
 
 function eventVisibleToPrincipal(
@@ -306,7 +316,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         ...(from ? { from } : {}),
         ...(to ? { to } : {})
       };
-      const scopedFilters = isScopedLocationManager(principal)
+      const scopedFilters = isScopedPrincipal(principal)
         ? { ...filters, locationIds: [...(principalLocationIds(principal) ?? [])] }
         : filters;
       return reply.send(await dependencies.adminAccess!.searchAuditEntries(scopedFilters));
@@ -406,7 +416,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       if (!principal) return;
       if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
       const items = await dependencies.reviewAdministration.listCases(principal.tenantId);
-      if (!isScopedLocationManager(principal)) return reply.send({ items });
+      if (!isScopedPrincipal(principal)) return reply.send({ items });
       const fixtures = (dependencies.referenceData
         ? await dependencies.referenceData(principal.tenantId)
         : principal.tenantId === localFixtures.tenant.tenantId ? localFixtures : null) ?? localFixtures;
@@ -424,8 +434,8 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
-      if (isScopedLocationManager(principal)) {
-        return reply.code(403).send({ error: "InsufficientRole", message: "Location Managers can request a correction but cannot change review decisions." });
+      if (isScopedPrincipal(principal)) {
+        return reply.code(403).send({ error: "InsufficientRole", message: "Location-scoped accounts can request a correction but cannot change review decisions." });
       }
       const body = request.body;
       if (!body || !["assigned", "approved", "rejected", "resolved", "reopened"].includes(body.action ?? "") || typeof body.reason !== "string") return reply.code(400).send({ error: "InvalidReviewAction" });
@@ -445,7 +455,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         return reply.code(501).send({ error: "CorrectionAdministrationUnavailable" });
       }
       const items = await dependencies.correctionAdministration.listRequests(principal.tenantId);
-      if (!isScopedLocationManager(principal)) return reply.send({ items });
+      if (!isScopedPrincipal(principal)) return reply.send({ items });
       const fixtures = (dependencies.referenceData
         ? await dependencies.referenceData(principal.tenantId)
         : principal.tenantId === localFixtures.tenant.tenantId ? localFixtures : null) ?? localFixtures;
@@ -715,7 +725,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         if (!requestContextSchema.shape.deviceId.safeParse(request.params.locationId).success) {
           return reply.code(400).send({ error: "InvalidLocationId" });
         }
-        if (isScopedLocationManager(principal) && !principalLocationIds(principal)?.has(request.params.locationId)) {
+        if (isScopedPrincipal(principal) && !principalLocationIds(principal)?.has(request.params.locationId)) {
           return reply.code(403).send({ error: "LocationScopeDenied", message: "This account is not assigned to that operating location." });
         }
         const result = await dependencies.locationAdministration.dependencies(
@@ -878,11 +888,22 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         ) {
           return reply.code(400).send({ error: "InvalidDeviceUpdate" });
         }
-        if (isScopedLocationManager(principal)) {
-          const fixtures = (dependencies.referenceData
-            ? await dependencies.referenceData(principal.tenantId)
-            : principal.tenantId === localFixtures.tenant.tenantId ? localFixtures : null);
-          const currentDevice = fixtures?.devices.find((device) => device.deviceId === request.params.deviceId);
+        const fixtures = (dependencies.referenceData
+          ? await dependencies.referenceData(principal.tenantId)
+          : principal.tenantId === localFixtures.tenant.tenantId ? localFixtures : null);
+        const currentDevice = fixtures?.devices.find((device) => device.deviceId === request.params.deviceId);
+        const changingLocation = Boolean(
+          currentDevice &&
+          update.assignedLocationId !== undefined &&
+          update.assignedLocationId !== currentDevice.assignedLocationId
+        );
+        if (changingLocation && principal.role !== "organization_owner") {
+          return reply.code(403).send({
+            error: "CorporateApprovalRequired",
+            message: "Cross-location scanner moves require an Organization Owner approval. Keep the scanner at its current site or ask an Organization Owner to move it."
+          });
+        }
+        if (isLocationManager(principal)) {
           const scope = principalLocationIds(principal);
           if (!currentDevice || !scope?.has(currentDevice.assignedLocationId) ||
               (update.assignedLocationId !== undefined && !scope.has(update.assignedLocationId))) {
@@ -897,7 +918,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
             tenantId,
             request.params.deviceId,
             update,
-            { userId: principal.userId }
+            { userId: principal.userId, role: principal.role }
           );
           if (!device) return reply.code(404).send({ error: "NotFound" });
           return reply.send({ device });

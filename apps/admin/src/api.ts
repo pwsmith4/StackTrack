@@ -29,6 +29,7 @@ export interface LocationDependencyManager {
   userId: string;
   username: string;
   displayName: string;
+  role: "location_manager" | "read_only_reviewer";
 }
 
 export interface LocationDependencySummary {

@@ -190,11 +190,21 @@ const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
   { page: "reports", label: "Reports & data", icon: BarChart3 }
 ];
 
-function pageFromHash(): Page {
-  const value = window.location.hash.replace("#/", "") as Page;
+type AppRoute = { page: Page; locationId?: string };
+
+function routeFromHash(): AppRoute {
+  // GitHub Pages can append a verification query to the hash during deploys.
+  // Keep routing deliberately small and deterministic so a copied location
+  // link never falls back to an unrelated page.
+  const raw = window.location.hash.replace(/^#\/?/, "").split("?")[0] ?? "";
+  const parts = raw.split("/").filter(Boolean).map((part) => {
+    try { return decodeURIComponent(part); } catch { return part; }
+  });
+  if (parts[0] === "locations" && parts[1]) return { page: "locations", locationId: parts[1] };
+  const value = parts[0] as Page;
   return [...nav.map((item) => item.page), "settings"].includes(value)
-    ? value
-    : "dashboard";
+    ? { page: value }
+    : { page: "dashboard" };
 }
 
 function Mark({ compact = false }: { compact?: boolean }) {
@@ -479,7 +489,9 @@ function EventEvidence({ events, data }: { events: StoredEvent[]; data: Operatio
 }
 
 export function App() {
-  const [page, setPageState] = useState<Page>(pageFromHash);
+  const [route, setRoute] = useState<AppRoute>(routeFromHash);
+  const page = route.page;
+  const locationId = route.locationId;
   const [data, setData] = useState<OperationsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -525,7 +537,7 @@ export function App() {
 
   useEffect(() => {
     void refresh();
-    const onHash = () => setPageState(pageFromHash());
+    const onHash = () => setRoute(routeFromHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, [refresh]);
@@ -544,7 +556,16 @@ export function App() {
 
   const setPage = (next: Page) => {
     window.location.hash = `/${next}`;
-    setPageState(next);
+    setRoute({ page: next });
+    setDetail(null);
+    setMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const openLocation = (nextLocationId: string) => {
+    if (!nextLocationId) return;
+    window.location.hash = `/locations/${encodeURIComponent(nextLocationId)}`;
+    setRoute({ page: "locations", locationId: nextLocationId });
     setDetail(null);
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -567,7 +588,12 @@ export function App() {
     setSession(next);
   };
 
-  const selected = pageTitles[page];
+  const selectedLocationName = data && locationId
+    ? data.fixtures.locations.find((item) => item.locationId === locationId)?.name
+    : undefined;
+  const selected = page === "locations" && locationId && selectedLocationName
+    ? { eyebrow: "Location workspace", title: selectedLocationName, description: "A focused operating picture for this site: containers, handoffs, scanners, reviews, and local activity." }
+    : pageTitles[page];
   const reviewCount = data
     ? Object.values(data.projections).filter((projection) => projection?.health === "needs_review").length
     : 0;
@@ -730,7 +756,7 @@ export function App() {
           {loading && !data ? (
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
-            <PageContent page={page} data={data} query={query} setPage={setPage} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
+            <PageContent page={page} {...(locationId ? { locationId } : {})} data={data} query={query} setPage={setPage} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
           ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
@@ -756,9 +782,11 @@ function SignInDialog({ onClose: _onClose, onSuccess }: { onClose: () => void; o
 
 function PageContent({
   page,
+  locationId,
   data,
   query,
   setPage,
+  openLocation,
   openDetail,
   refresh,
   session,
@@ -767,9 +795,11 @@ function PageContent({
   onSignOut
 }: {
   page: Page;
+  locationId?: string | undefined;
   data: OperationsData;
   query: string;
   setPage: (page: Page) => void;
+  openLocation: (locationId: string) => void;
   openDetail: OpenDetail;
   refresh: () => Promise<void>;
   session: AdminSession | null;
@@ -780,7 +810,7 @@ function PageContent({
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
+  if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
@@ -1383,15 +1413,80 @@ function LocationLifecycleExplorer({ routeRecords, focusLocationId, onOpen }: { 
   return <section className="location-option location-lifecycle panel"><div className="location-option__header"><div><span className="eyebrow">Location view option 3 · container lifecycle</span><h2>Follow every checkpoint in order</h2><p>Use this when a container has visited several sites. It shows the recorded journey as a chain, highlights the current open hop, and keeps a reroute visible rather than flattening it into one “last location.”</p></div><span className="location-option__icon"><GitBranch size={19} /></span></div>{visible.length ? <div className="lifecycle-list">{visible.map((record) => { const route = record.route; const names = routeLocationNames(route); return <button className="lifecycle-row" key={record.container.containerId} onClick={() => onOpen(record)}><span className="lifecycle-row__identity"><span className="lifecycle-row__icon"><ContainerIcon size={15} /></span><span><strong>{record.container.label}</strong><small>{record.container.type} · {route.segments.length} recorded handoff{route.segments.length === 1 ? "" : "s"}</small></span></span><span className="lifecycle-row__journey">{names.map((name, index) => <span key={`${record.container.containerId}:${name}:${index}`}><b>{name}</b>{index < names.length - 1 && <ArrowRight size={12} />}</span>)}{!names.length && <em>Locations not recorded</em>}</span><span className="lifecycle-row__status">{route.inTransit ? <Pill tone="blue">In transit</Pill> : route.unresolvedSegmentCount ? <Pill tone="warn">Receipt gap</Pill> : <Pill tone="good">Journey recorded</Pill>}<ChevronRight size={15} /></span></button>; })}</div> : <div className="location-lifecycle__empty"><Layers3 size={19} /><span><strong>No multi-hop journeys match this location.</strong><small>Once a container is received and sent again, its complete checkpoint chain will appear here.</small></span></div>}{journeys.length > 8 && <button className="location-option__more" onClick={() => setShowAll((value) => !value)}>{showAll ? "Show fewer journeys" : `Show all ${journeys.length} journeys`}</button>}</section>;
 }
 
-function LocationsPage({ data, openDetail, setPage, refresh, session }: { data: OperationsData; openDetail: OpenDetail; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null }) {
+function LocationWorkspacePage({ data, locationId, openDetail, setPage, session }: { data: OperationsData; locationId: string; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession | null }) {
+  const location = data.fixtures.locations.find((item) => item.locationId === locationId && item.type !== "in_transit" && item.isActive !== false && !isUnknownLocation(item));
+  const principal = session?.principal;
+  const canManageScanners = Boolean(principal && ["organization_owner", "operations_administrator", "location_manager"].includes(principal.role));
+  const canRequestCorrections = Boolean(principal && ["organization_owner", "operations_administrator", "location_manager"].includes(principal.role));
+  if (!location) {
+    return <section className="location-workspace-denied panel"><div className="location-workspace-denied__icon"><ShieldCheck size={24} /></div><span className="eyebrow">Location workspace</span><h2>Location unavailable</h2><p>This site is outside the signed-in account's operating scope, has been retired, or no longer exists. Return to the network directory to choose an available location.</p><button className="secondary" onClick={() => setPage("locations")}><MapPin size={15} /> Back to locations</button></section>;
+  }
+  const transitId = data.fixtures.locations.find((item) => item.type === "in_transit")?.locationId;
+  const projections = Object.values(data.projections).filter(Boolean) as Projection[];
+  const routeFor = (containerId: string) => getContainerRouteContext(containerId, data);
+  const current = projections.filter((projection) => projection.locationId === location.locationId);
+  const moving = transitId ? projections.filter((projection) => projection.locationId === transitId) : [];
+  const arriving = moving.filter((projection) => routeFor(projection.containerId).activeSegment?.destination?.locationId === location.locationId);
+  const leaving = moving.filter((projection) => routeFor(projection.containerId).activeSegment?.origin?.locationId === location.locationId);
+  const localEvents = data.events
+    .filter((event) => event.locationId === location.locationId)
+    .sort((left, right) => Date.parse(right.eventAt) - Date.parse(left.eventAt));
+  const localEventIds = new Set(localEvents.map((event) => event.eventId));
+  const localReviews = data.reviewCases.filter((item) => item.evidenceEventIds.some((eventId) => localEventIds.has(eventId)));
+  const scanners = data.fixtures.devices.filter((device) => device.assignedLocationId === location.locationId);
+  const staleScanners = scanners.filter((device) => !device.lastReportedAt || Date.now() - Date.parse(device.lastReportedAt) > 24 * 60 * 60 * 1000);
+  const scansLastDay = localEvents.filter((event) => Date.now() - Date.parse(event.receivedAt) <= 24 * 60 * 60 * 1000).length;
+  const flaggedScans = localEvents.filter((event) => event.accuracyFlags.length > 0).length;
+  const openReviews = localReviews.filter((item) => !["resolved", "approved", "rejected"].includes(item.status));
+  const containerFor = (containerId: string) => data.fixtures.containers.find((item) => item.containerId === containerId);
+  const openContainer = (projection: Projection) => {
+    const record = containerFor(projection.containerId);
+    openDetail({
+      eyebrow: "Location container",
+      title: record?.label ?? "Tracked container",
+      icon: <ContainerIcon size={18} />,
+      status: { label: projection.health === "needs_review" ? "Needs review" : projection.loadState, tone: projection.health === "needs_review" ? "warn" : projection.loadState === "loaded" ? "blue" : "good" },
+      summary: "This container is shown in the location workspace using its latest accepted projection and preserved scan evidence.",
+      ...(record?.containerId ? { recordId: record.containerId } : {}),
+      recordIdLabel: "Container ID",
+      body: <><DetailFacts items={[ ["Container type", record?.type ?? "Unknown"], ["Current state", projection.loadState], ["Official location", data.fixtures.locations.find((item) => item.locationId === projection.locationId)?.name ?? "In transit / not observed"], ["Last observed", relativeTime(projection.lastObservedAt)], ["History health", projection.health === "needs_review" ? "Needs review" : projection.health] ]} /><h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === projection.containerId)} data={data} /></>
+    });
+  };
+  const openEvent = (event: StoredEvent) => openDetail({
+    eyebrow: "Local scanner observation",
+    title: containerFor(event.containerId)?.label ?? "Tracked container",
+    icon: <Activity size={18} />,
+    status: event.accuracyFlags.length ? { label: "Review flags", tone: "warn" } : { label: "Verified timing", tone: "good" },
+    summary: `Observed at ${location.name} by ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "a scanner"}.`,
+    recordId: event.eventId,
+    recordIdLabel: "Observation ID",
+    body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", location.name], ["Scanner", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Data quality", event.accuracyFlags.length ? event.accuracyFlags.join(", ") : "Verified"]]} /><h3 className="detail-section-title">Preserved evidence</h3><EventEvidence events={[event]} data={data} /></>
+  });
+  const typeLabel = locationTypeLabel(location.type);
+  return <div className="location-focused-page">
+    <div className="location-focused-toolbar"><button className="secondary" onClick={() => setPage("locations")}><ArrowRight size={15} className="location-focused-toolbar__back" /> All locations</button><span className="location-focused-toolbar__crumb"><MapPin size={14} /> {typeLabel} workspace</span><button className="secondary" onClick={() => void window.scrollTo({ top: 0, behavior: "smooth" })}><RefreshCw size={15} /> Refresh view</button></div>
+    <section className="location-focused-hero panel"><div className="location-focused-hero__identity"><span className={`location-title-icon location-title-icon--${location.type}`}><LocationTypeIcon location={location} size={23} /></span><div><span className="eyebrow">Focused operating location</span><h2>{location.name}</h2><p>{typeLabel} · {scanners.length} assigned scanner{scanners.length === 1 ? "" : "s"} · {scansLastDay} accepted scan{scansLastDay === 1 ? "" : "s"} in the last 24 hours</p><div className="location-focused-hero__tags"><Pill tone={openReviews.length ? "warn" : "good"}>{openReviews.length ? `${openReviews.length} review${openReviews.length === 1 ? "" : "s"} open` : "No open reviews"}</Pill><Pill tone={staleScanners.length ? "warn" : "good"}>{staleScanners.length ? `${staleScanners.length} stale scanner${staleScanners.length === 1 ? "" : "s"}` : "Scanner reports fresh"}</Pill></div></div></div><div className="location-focused-hero__actions"><button className="primary" onClick={() => setPage("devices")}><Smartphone size={15} /> Manage scanners</button><button className="secondary" onClick={() => setPage("activity")}><Activity size={15} /> Local activity</button>{canRequestCorrections && <button className="secondary" onClick={() => setPage("corrections")}><FilePenLine size={15} /> Request correction</button>}</div></section>
+    <section className="location-focused-metrics"><article><span className="location-focused-metric__icon location-focused-metric__icon--blue"><Boxes size={18} /></span><div><small>At this location</small><strong>{current.length}</strong><em>Latest projection</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--green"><ArrowRight size={18} /></span><div><small>Arriving</small><strong>{arriving.length}</strong><em>Destination receipt pending</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--orange"><Truck size={18} /></span><div><small>Leaving</small><strong>{leaving.length}</strong><em>Outbound handoff open</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--slate"><Smartphone size={18} /></span><div><small>Scanner coverage</small><strong>{scanners.filter((device) => device.isActive).length}/{scanners.length}</strong><em>{staleScanners.length ? `${staleScanners.length} report stale` : "Reports within 24 hours"}</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--cyan"><Activity size={18} /></span><div><small>Recent scans</small><strong>{scansLastDay}</strong><em>{flaggedScans ? `${flaggedScans} flagged for review` : "No scan-quality flags"}</em></div></article></section>
+    <section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Physical workflow</span><h3>What is at, arriving to, and leaving this site</h3><p>Each lane is independent. A container can appear in multiple lanes over time, and a multi-hop route stays tied to its own recorded checkpoints.</p></div><Pill tone="blue">{current.length + arriving.length + leaving.length} active records</Pill></div><div className="workflow-lanes"><LocationWorkflowLane title="At this location" subtitle="Official current projection" tone="here" items={current} data={data} onOpen={openContainer} /><LocationWorkflowLane title="Arriving here" subtitle="Open handoffs with this destination" tone="arriving" items={arriving} data={data} onOpen={openContainer} /><LocationWorkflowLane title="Leaving here" subtitle="Open handoffs from this origin" tone="leaving" items={leaving} data={data} onOpen={openContainer} /></div></section>
+    <div className="location-focused-columns"><section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Local devices</span><h3>Scanner readiness</h3><p>Use Devices for changes; this summary makes local coverage visible without leaving the workspace.</p></div><button className="secondary" onClick={() => setPage("devices")}>Open Devices <ChevronRight size={14} /></button></div>{scanners.length ? <div className="location-scanner-list">{scanners.map((device) => <button key={device.deviceId} onClick={() => openDetail(deviceDetail(device, data))}><span className="location-scanner-list__icon"><Smartphone size={16} /></span><span><strong>{device.label}</strong><small>Scanner {scannerNumber(device.deviceId)} · {device.reportedAppVersion ?? "Version not reported"}</small></span><span className="location-scanner-list__state"><Pill tone={device.isActive ? "good" : "warn"}>{device.isActive ? "Enabled" : "Disabled"}</Pill><small>{relativeTime(device.lastReportedAt)}</small></span><ChevronRight size={14} /></button>)}</div> : <EmptyState>No scanners are assigned to this location.</EmptyState>}</section><section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Local attention</span><h3>Reviews and recent observations</h3><p>{openReviews.length ? "These review items are linked to evidence recorded at this location." : "The latest scanner activity is clear for this location."}</p></div><div className="location-focused-section__header-actions"><button className="secondary" onClick={() => setPage("activity")}>Activity <ChevronRight size={14} /></button>{openReviews.length > 0 && <button className="secondary" onClick={() => setPage("exceptions")}>Review queue <ChevronRight size={14} /></button>}</div></div>{openReviews.length > 0 && <div className="location-review-list">{openReviews.slice(0, 4).map((item) => <button key={item.reviewCaseId} onClick={() => setPage("exceptions")}><span className="location-review-list__icon"><AlertTriangle size={15} /></span><span><strong>{item.containerLabel}</strong><small>{item.reasonCode.replaceAll("_", " ")} · opened {relativeTime(item.openedAt)}</small></span><Pill tone="warn">Needs review</Pill><ChevronRight size={14} /></button>)}</div>}<div className="location-activity-list">{localEvents.slice(0, 5).map((event) => <button key={event.eventId} onClick={() => openEvent(event)}><span><strong>{eventLabel(event.eventType)}</strong><small>{containerFor(event.containerId)?.label ?? "Container"} · {data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Scanner"}</small></span><time>{relativeTime(event.eventAt)}</time><ChevronRight size={14} /></button>)}{localEvents.length === 0 && <div className="location-focused-empty">No scanner observations have been recorded at this location.</div>}</div></section></div>
+    <section className="location-focused-health panel"><div><span className="eyebrow">Location health</span><h3>Trust signals for this site</h3><p>These signals describe evidence freshness, not the physical condition of containers.</p></div><div className="location-health-grid"><span><strong>{flaggedScans}</strong><small>Flagged observations</small><em>{flaggedScans ? "Review timing or device order" : "No scan flags"}</em></span><span><strong>{openReviews.length}</strong><small>Open reviews</small><em>{openReviews.length ? "Corporate decision may be needed" : "No local review queue"}</em></span><span><strong>{staleScanners.length}</strong><small>Stale scanners</small><em>{staleScanners.length ? "Confirm power and connectivity" : "All scanners reported recently"}</em></span><span><strong>{localEvents.length}</strong><small>Total observations</small><em>Retained in the immutable ledger</em></span></div></section>
+  </div>;
+}
+
+function LocationsPage({ data, focusedLocationId, openLocation, openDetail, setPage, refresh, session }: { data: OperationsData; focusedLocationId?: string; openLocation: (locationId: string) => void; openDetail: OpenDetail; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null }) {
   const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
   const retiredLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive === false && !isUnknownLocation(location));
-  const [selectedLocationId, setSelectedLocationId] = useState(physicalLocations[0]?.locationId ?? "");
+  const [selectedLocationId, setSelectedLocationIdState] = useState(physicalLocations[0]?.locationId ?? "");
+  const setSelectedLocationId = (nextLocationId: string) => {
+    setSelectedLocationIdState(nextLocationId);
+    openLocation(nextLocationId);
+  };
   const [locationQuery, setLocationQuery] = useState("");
   const [locationTypeFilter, setLocationTypeFilter] = useState<"all" | Location["type"]>("all");
   const [locationHealthFilter, setLocationHealthFilter] = useState<"all" | "attention">("all");
   const [locationSort, setLocationSort] = useState<"work" | "containers" | "activity" | "alphabetical">("work");
-  const selected = physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0];
+  if (focusedLocationId) return <LocationWorkspacePage data={data} locationId={focusedLocationId} openDetail={openDetail} setPage={setPage} session={session} />;
+  const selected = (physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0])!;
   if (!selected) return <><LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} /><EmptyState>No active operating locations are available. Add a location or restore the operating plan before reviewing workflow.</EmptyState></>;
 
   const transitId = data.fixtures.locations.find((location) => location.type === "in_transit")?.locationId;
@@ -1469,8 +1564,8 @@ function LocationsPage({ data, openDetail, setPage, refresh, session }: { data: 
   };
 
   return <>
-    <LocationNetworkOverview metrics={locationMetrics} movingCount={moving.length} movingReviewCount={movingReviewCount} routeRecords={routeRecords} onSelect={setSelectedLocationId} onOpen={openRouteRecord} />
-    <LocationRouteMatrix routeRecords={routeRecords} onSelect={setSelectedLocationId} />
+    <LocationNetworkOverview metrics={locationMetrics} movingCount={moving.length} movingReviewCount={movingReviewCount} routeRecords={routeRecords} onSelect={openLocation} onOpen={openRouteRecord} />
+    <LocationRouteMatrix routeRecords={routeRecords} onSelect={openLocation} />
     <LocationLifecycleExplorer routeRecords={routeRecords} focusLocationId={selected.locationId} onOpen={(record) => {
       const projection = record.projection;
       if (projection) openContainer(projection);
@@ -1491,7 +1586,7 @@ function LocationsPage({ data, openDetail, setPage, refresh, session }: { data: 
       })}{matchingMetrics.length === 0 && <div className="location-selector__empty">No locations match the current search and filters.</div>}</div>
     </section>
 
-    <section className="location-workspace panel">
+     {false && <section className="location-workspace panel">
       <div className="location-workspace__head">
         <div><span className="eyebrow">Selected operating location</span><h2><span className={`location-title-icon location-title-icon--${selected.type}`}><LocationTypeIcon location={selected} size={20} /></span>{selected.name}</h2><p>One place to review containers physically here, inbound, and outbound without mixing simultaneous routes together.</p><div className="location-workspace__actions"><button className="secondary location-details-button" onClick={() => openDetail(locationDetail(selected, data, setPage, openDetail))}><MapPin size={15} /> Location details</button><button className="secondary location-details-button" onClick={() => setPage("activity")}><Activity size={15} /> View activity</button></div></div>
         <div className="location-workspace__counts"><span><b>{current.length}</b> here</span><span><b>{arriving.length}</b> arriving</span><span><b>{leaving.length}</b> leaving</span></div>
@@ -1502,8 +1597,8 @@ function LocationsPage({ data, openDetail, setPage, refresh, session }: { data: 
         <LocationWorkflowLane title="Containers arriving" subtitle="In transit with this location as the recorded destination" tone="arriving" items={arriving} data={data} onOpen={openContainer} />
         <LocationWorkflowLane title="Containers leaving" subtitle="In transit after departing this location" tone="leaving" items={leaving} data={data} onOpen={openContainer} />
       </div>
-    </section>
-    <LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} retiredLocations={retiredLocations} />
+     </section>}
+     <LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} retiredLocations={retiredLocations} />
   </>;
 }
 
@@ -1644,7 +1739,7 @@ function LocationAdministrationPanel({
       <div className="location-retire-form__controls"><label><span>Location to retire</span><select value={retireLocationId} onChange={(event) => { setRetireLocationId(event.target.value); resetRetirement(); }} disabled={busy}><option value="">Select an active location</option>{activeLocations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label><button className="secondary" type="button" disabled={busy || !retireLocationId} onClick={() => void inspectDependencies()}>{busy ? "Checking…" : "Check dependencies"}</button></div>
       {dependencies && selectedRetireLocation && <div className="location-dependency-review">
         <div className="location-dependency-review__headline"><div><span className="eyebrow">Before you retire {selectedRetireLocation.name}</span><strong>Review what will be affected.</strong></div><button className="icon-button" type="button" aria-label="Clear dependency review" onClick={resetRetirement}><X size={16} /></button></div>
-        <div className="location-dependency-grid"><div><b>{dependencies.devices.length}</b><span>assigned scanners</span></div><div><b>{dependencies.managers.length}</b><span>scoped Location Managers</span></div><div><b>{dependencies.currentContainerCount}</b><span>containers last observed here</span></div><div><b>{dependencies.loadCodeCount}</b><span>load codes created here</span></div><div><b>{dependencies.observationCount}</b><span>immutable observations</span></div></div>
+         <div className="location-dependency-grid"><div><b>{dependencies.devices.length}</b><span>assigned scanners</span></div><div><b>{dependencies.managers.length}</b><span>scoped administrators</span></div><div><b>{dependencies.currentContainerCount}</b><span>containers last observed here</span></div><div><b>{dependencies.loadCodeCount}</b><span>load codes created here</span></div><div><b>{dependencies.observationCount}</b><span>immutable observations</span></div></div>
         {hasDevices && <div className="location-retire-warning"><AlertTriangle size={18} /><div><strong>Scanners are still assigned to this location.</strong><p>Move them individually from the Devices page when possible. If one cannot be updated, choose a destination below so it remains usable without claiming it is at a closed site.</p><button className="secondary" type="button" onClick={() => setPage("devices")}><Smartphone size={14} /> Open scanner administration</button></div></div>}
         {hasManagers && <div className="location-retire-warning location-retire-warning--manager"><AlertTriangle size={18} /><div><strong>Location Manager access is still assigned.</strong><p>Update these administrator scopes in Settings before retiring the site. StackTrack will not silently remove a manager’s access or leave a stale assignment behind.</p><ul>{dependencies.managers.map((manager) => <li key={manager.userId}>{manager.displayName} <span>@{manager.username}</span></li>)}</ul><button className="secondary" type="button" onClick={() => setPage("settings")}><UserRound size={14} /> Open administrator access</button></div></div>}
         {!hasDevices && <div className="location-retire-safe"><CheckCircle2 size={17} /><span>No scanners are assigned. Historical container observations and load codes will remain linked to this location name.</span></div>}
@@ -2184,7 +2279,7 @@ function DevicesPage({ data, query, openDetail, refresh, session, onRequestSignI
     {!session && <div className="access-lock"><ShieldCheck size={20}/><span><strong>Sign in to change scanners.</strong> You can inspect device records now; changes are locked until a verified Organization Owner or Operations Administrator signs in.</span><button className="secondary" onClick={onRequestSignIn}>Sign in</button></div>}
     {notice && <div className={`device-notice ${notice.tone === "error" ? "device-notice--error" : ""}`}>{notice.text}</div>}
     {query.trim() && <p className="device-search-summary">Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners matching “{query.trim()}”. Searches include the current and previous assigned locations.</p>}
-    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator", "location_manager"].includes(session.principal.role))} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
+    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator", "location_manager"].includes(session.principal.role))} canMoveAcrossLocations={session?.principal.role === "organization_owner"} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
   </>;
 }
 
@@ -2835,7 +2930,7 @@ function AdminDirectory({ session, locations }: { session: AdminSession; locatio
     }
     setBusy(true); setError(null);
     try {
-      await createAdminUser(session, { displayName, username, temporaryPassword, role, ...(role === "location_manager" ? { locationIds } : {}) });
+      await createAdminUser(session, { displayName, username, temporaryPassword, role, ...(["location_manager", "read_only_reviewer"].includes(role) && locationIds.length ? { locationIds } : {}) });
       setDisplayName(""); setUsername(""); setTemporaryPassword(""); setRole("operations_administrator"); setLocationIds([]);
       await refreshUsers();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); }
@@ -2866,16 +2961,16 @@ function AdminDirectory({ session, locations }: { session: AdminSession; locatio
     {error && <div className="sign-in-error">{error}</div>}
     <form className="admin-user-form admin-user-form--owner" onSubmit={(event) => void addUser(event)}>
       <div><span className="eyebrow">Create access</span><h3>Add an administrator</h3><p>Give each person the least access needed. The temporary password is never retrievable after this form is cleared; the user replaces it privately on first sign-in.</p></div>
-      <div className="admin-user-form__grid"><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label><label>Role<select value={role} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>One-time temporary password<input required minLength={12} type="password" autoComplete="new-password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /><small>12+ characters. It is hashed immediately and cannot be viewed later.</small></label></div>
-      {role === "location_manager" && <LocationScopePicker locations={activeLocations} value={locationIds} onChange={setLocationIds} />}
+      <div className="admin-user-form__grid"><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label><label>Role<select value={role} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>One-time temporary password<input required minLength={12} type="password" autoComplete="new-password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /><small>12+ characters. It is hashed immediately and cannot be viewed later.</small></label></div>
+      {(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={activeLocations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}
       <button className="primary" disabled={busy}>{busy ? "Creating…" : "Create administrator"}</button>
     </form>
   </section>;
 }
 
-function LocationScopePicker({ locations, value, onChange }: { locations: Location[]; value: string[]; onChange: (value: string[]) => void }) {
+function LocationScopePicker({ locations, value, onChange, optional = false }: { locations: Location[]; value: string[]; onChange: (value: string[]) => void; optional?: boolean }) {
   const toggle = (locationId: string) => onChange(value.includes(locationId) ? value.filter((id) => id !== locationId) : [...value, locationId]);
-  return <fieldset className="admin-scope-picker"><legend>Assigned locations <small>Select every site this manager is responsible for.</small></legend><div>{locations.map((location) => <label key={location.locationId} className={value.includes(location.locationId) ? "admin-scope-picker__option admin-scope-picker__option--selected" : "admin-scope-picker__option"}><input type="checkbox" checked={value.includes(location.locationId)} onChange={() => toggle(location.locationId)} /><span><strong>{location.name}</strong><small>{location.type === "donation_express" ? "Donation Xpress" : location.type === "warehouse" ? "Warehouse" : "Store"}</small></span></label>)}</div>{value.length === 0 && <small className="admin-scope-picker__empty">No locations selected yet.</small>}</fieldset>;
+  return <fieldset className="admin-scope-picker"><legend>{optional ? "Optional location scope" : "Assigned locations"} <small>{optional ? "Leave empty for a network-wide read-only reviewer, or select only the sites they should see." : "Select every site this manager is responsible for."}</small></legend><div>{locations.map((location) => <label key={location.locationId} className={value.includes(location.locationId) ? "admin-scope-picker__option admin-scope-picker__option--selected" : "admin-scope-picker__option"}><input type="checkbox" checked={value.includes(location.locationId)} onChange={() => toggle(location.locationId)} /><span><strong>{location.name}</strong><small>{location.type === "donation_express" ? "Donation Xpress" : location.type === "warehouse" ? "Warehouse" : "Store"}</small></span></label>)}</div>{value.length === 0 && <small className="admin-scope-picker__empty">{optional ? "No scope selected — network-wide read-only access." : "No locations selected yet."}</small>}</fieldset>;
 }
 
 function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onReset }: { user: AdminPrincipal; currentUserId: string; locations: Location[]; busy: boolean; onSave: (userId: string, update: AdminDirectoryUpdate) => Promise<void>; onReset: (userId: string, temporaryPassword: string, reason: string) => Promise<void> }) {
@@ -2888,7 +2983,7 @@ function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onRes
   const [resetError, setResetError] = useState<string | null>(null);
   useEffect(() => { setDisplayName(user.displayName); setRole(user.role === "support" ? "read_only_reviewer" : user.role); setLocationIds(user.locationIds ?? []); }, [user.displayName, user.role, (user.locationIds ?? []).join(",")]);
   const self = user.userId === currentUserId;
-  const changed = displayName.trim() !== user.displayName || role !== user.role || (role === "location_manager" ? locationIds.join(",") !== (user.locationIds ?? []).join(",") : (user.locationIds ?? []).length > 0);
+  const changed = displayName.trim() !== user.displayName || role !== user.role || ((role === "location_manager" || role === "read_only_reviewer") ? locationIds.join(",") !== (user.locationIds ?? []).join(",") : (user.locationIds ?? []).length > 0);
   const assignedLocationNames = locationIds.map((locationId) => locations.find((location) => location.locationId === locationId)?.name).filter((name): name is string => Boolean(name));
   const submitReset = async () => {
     if (temporaryPassword.length < 12) { setResetError("Use at least 12 characters."); return; }
@@ -2899,12 +2994,12 @@ function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onRes
   };
   return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}>
     <span className="avatar">{initials(user.displayName)}</span>
-    <div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={adminRoleTone(user.role)}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">First password change pending</Pill>}</div><small className="admin-account__scope">{user.role === "location_manager" ? (user.locationIds?.length ? "Assigned to " + user.locationIds.length + " location" + (user.locationIds.length === 1 ? "" : "s") : "No locations assigned") : user.role === "read_only_reviewer" ? "Network view only" : "Network-wide access"}</small></div>
-    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{role === "location_manager" && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...(role === "location_manager" || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button></div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}
+    <div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={adminRoleTone(user.role)}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">First password change pending</Pill>}</div><small className="admin-account__scope">{user.role === "location_manager" ? (user.locationIds?.length ? "Assigned to " + user.locationIds.length + " location" + (user.locationIds.length === 1 ? "" : "s") : "No locations assigned") : user.role === "read_only_reviewer" ? (user.locationIds?.length ? "Read-only at " + user.locationIds.length + " assigned location" + (user.locationIds.length === 1 ? "" : "s") : "Network-wide read-only") : "Network-wide access"}</small></div>
+    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...((role === "location_manager" || role === "read_only_reviewer") || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" || role === "read_only_reviewer" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button></div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}
   </article>;
 }
 
-function DeviceCard({ device, data, operatingLocations, busy, canManage, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; canManage: boolean; onSave: (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
+function DeviceCard({ device, data, operatingLocations, busy, canManage, canMoveAcrossLocations, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; canManage: boolean; canMoveAcrossLocations: boolean; onSave: (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
   const [label, setLabel] = useState(device.label);
   const [assignedLocationId, setAssignedLocationId] = useState(device.assignedLocationId);
   const [reason, setReason] = useState("");
@@ -2914,7 +3009,8 @@ function DeviceCard({ device, data, operatingLocations, busy, canManage, onSave,
   const assignmentChanged = assignedLocationId !== device.assignedLocationId;
   const labelChanged = label.trim() !== device.label;
   const locked = busy || !canManage;
-  return <article className="device-card"><div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div><h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name ?? "Unassigned"}</p>{!canManage && <div className="device-read-only">Read-only access: scanner controls are unavailable.</div>}<label className="device-location-control"><span>Scanner name</span><div className="device-name-input"><input value={label} onChange={(event) => setLabel(event.target.value)} disabled={locked} placeholder="Example: Scanner 1" /><button className="secondary" disabled={locked || !labelChanged || label.trim().length < 2} onClick={() => void onSave(device, { label: label.trim() })}>{busy ? "Saving…" : "Save name"}</button></div></label><dl><div className="device-id-row"><dt>Scanner ID</dt><dd className="device-id">{scannerNumber(device.deviceId)}</dd></div><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>StackTrack version</dt><dd>{device.reportedAppVersion ?? "Not reported"}</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>Last app report</dt><dd>{relativeTime(device.lastReportedAt)}</dd></div></dl><label className="device-location-control"><span>Move scanner to</span><select value={assignedLocationId} disabled={locked} onChange={(event) => setAssignedLocationId(event.target.value)}>{operatingLocations.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}</select></label>{assignmentChanged && <label className="device-location-control"><span>Reason (optional)</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Scanner moved with the Midtown store team." disabled={locked} /></label>}{assignmentChanged && <button className="primary device-save-assignment" disabled={locked} onClick={() => void onSave(device, { assignedLocationId, ...(reason.trim() ? { assignmentReason: reason.trim() } : {}) })}>{busy ? "Saving…" : "Record scanner move"}</button>}<div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={locked} onClick={() => void onSave(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={onDetails}>Details <ChevronRight size={16} /></button></div></article>;
+  const destinationOptions = canMoveAcrossLocations ? operatingLocations : operatingLocations.filter((option) => option.locationId === device.assignedLocationId);
+  return <article className="device-card"><div className="phone-icon"><Smartphone /></div><div className={`device-card__status ${device.isActive ? "" : "device-card__status--disabled"}`}><i /> {device.isActive ? "SCANNING ENABLED" : "SCANNING DISABLED"}</div><h2>{device.label}</h2><p><MapPin size={15} /> Assigned to {location?.name ?? "Unassigned"}</p>{!canManage && <div className="device-read-only">Read-only access: scanner controls are unavailable.</div>}{canManage && !canMoveAcrossLocations && <div className="device-read-only"><ShieldCheck size={14} /> Cross-location moves require Organization Owner approval.</div>}<label className="device-location-control"><span>Scanner name</span><div className="device-name-input"><input value={label} onChange={(event) => setLabel(event.target.value)} disabled={locked} placeholder="Example: Scanner 1" /><button className="secondary" disabled={locked || !labelChanged || label.trim().length < 2} onClick={() => void onSave(device, { label: label.trim() })}>{busy ? "Saving…" : "Save name"}</button></div></label><dl><div className="device-id-row"><dt>Scanner ID</dt><dd className="device-id">{scannerNumber(device.deviceId)}</dd></div><div><dt>Availability</dt><dd>{device.isActive ? "Enabled" : "Disabled"}</dd></div><div><dt>StackTrack version</dt><dd>{device.reportedAppVersion ?? "Not reported"}</dd></div><div><dt>Observations</dt><dd>{events.length}</dd></div><div><dt>Last app report</dt><dd>{relativeTime(device.lastReportedAt)}</dd></div></dl><label className="device-location-control"><span>Move scanner to</span><select value={assignedLocationId} disabled={locked || !canMoveAcrossLocations} onChange={(event) => setAssignedLocationId(event.target.value)}>{destinationOptions.map((option) => <option value={option.locationId} key={option.locationId}>{option.name}</option>)}</select></label>{assignmentChanged && <label className="device-location-control"><span>Reason (optional)</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Scanner moved with the Midtown store team." disabled={locked} /></label>}{assignmentChanged && <button className="primary device-save-assignment" disabled={locked} onClick={() => void onSave(device, { assignedLocationId, ...(reason.trim() ? { assignmentReason: reason.trim() } : {}) })}>{busy ? "Saving…" : "Record scanner move"}</button>}<div className="device-card__actions"><button className={device.isActive ? "secondary" : "primary"} disabled={locked} onClick={() => void onSave(device, { isActive: !device.isActive })}>{busy ? "Saving…" : device.isActive ? "Disable scanner" : "Enable scanner"}</button><button className="secondary" onClick={onDetails}>Details <ChevronRight size={16} /></button></div></article>;
 }
 
 function BrokenExceptionsPage({ data, openDetail, session, refresh }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession; refresh: () => Promise<void> }) {
