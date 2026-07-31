@@ -2427,7 +2427,6 @@ function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRe
     finally { setBusyId(null); }
   };
   return <>
-    <div className="device-guidance"><ShieldCheck size={20} /><span><strong>Scanner control is an accountable action.</strong> The app reports its installed version; assignments and scanner-name changes become permanent history, with an optional move note. Offline scans remain on the scanner until it reconnects, so this console shows the last confirmed report—not a live offline queue.</span></div>
      {!session && <div className="access-lock"><ShieldCheck size={20}/><span><strong>Sign in to change scanners.</strong> You can inspect device records now; changes are locked until a verified Organization Owner or Operations Administrator signs in.</span><button className="secondary" onClick={onRequestSignIn}>Sign in</button></div>}
      {notice && <div className={`device-notice ${notice.tone === "error" ? "device-notice--error" : ""}`}>{notice.text}</div>}
      <section className="device-filter-panel" aria-label="Filter and sort scanners">
