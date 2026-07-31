@@ -51,6 +51,9 @@ The pilot implementation now enforces these boundaries server-side:
   immediately if the account is disabled or its role changes;
 - an administrator created with a temporary password cannot view or manage
   pilot operations until they replace it with their own 12+ character password;
+- an Organization Owner can reset another active administrator's password;
+  that action revokes the target's sessions and forces a new private password
+  at the next sign-in;
 - Organization Owners can add a second Organization Owner (for example, the
   Goodwill Chief of IT), Operations Administrators, and Read-only Reviewers;
 - StackTrack will not allow the final active Organization Owner to be disabled
