@@ -36,8 +36,13 @@ import {
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   API_URL,
+  createAdminUser,
+  listAdminUsers,
   loadOperationsData,
+  signIn,
   updateDevice,
+  type AdminPrincipal,
+  type AdminSession,
   type Container,
   type Device,
   type DeviceAssignment,
@@ -252,12 +257,28 @@ export function App() {
   const [query, setQuery] = useState("");
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [detail, setDetail] = useState<DetailView | null>(null);
+  const [session, setSession] = useState<AdminSession | null>(() => {
+    try {
+      const stored = sessionStorage.getItem("stacktrack.admin.session");
+      return stored ? JSON.parse(stored) as AdminSession : null;
+    } catch { return null; }
+  });
+  // The pilot console opens on the sign-in surface. A user may close it only
+  // to inspect read-only operational data; all administrative writes stay
+  // locked until the API verifies a session.
+  const [signInOpen, setSignInOpen] = useState(() => !session);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
+    if (!session) {
+      setData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      setData(await loadOperationsData());
+      setData(await loadOperationsData(session));
       setError(null);
       setLastRefresh(new Date());
     } catch (caught) {
@@ -265,7 +286,7 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     void refresh();
@@ -293,10 +314,21 @@ export function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const establishSession = (next: AdminSession) => {
+    sessionStorage.setItem("stacktrack.admin.session", JSON.stringify(next));
+    setSession(next);
+    setSignInOpen(false);
+  };
+  const signOut = () => { sessionStorage.removeItem("stacktrack.admin.session"); setSession(null); };
+
   const selected = pageTitles[page];
   const reviewCount = data
     ? Object.values(data.projections).filter((projection) => projection?.health === "needs_review").length
     : 0;
+
+  if (!session) {
+    return <div className="authentication-shell"><SignInDialog onClose={() => undefined} onSuccess={establishSession} /></div>;
+  }
 
   return (
     <div className="app-shell">
@@ -338,13 +370,12 @@ export function App() {
           <a href="http://127.0.0.1:8082" target="_blank" rel="noreferrer">
             <MonitorSmartphone size={19} /><span>Open mobile preview</span><ExternalLink size={14} />
           </a>
-          <button className="user-card" onClick={() => setDetail({
-            eyebrow: "Signed-in profile",
-            title: "Parker Smith",
-            body: <><p className="detail-lead">The current administrator identity is simulated. Production roles will come from Microsoft Entra ID and Goodwill security groups.</p><DetailFacts items={[["Role", "Corporate administrator"], ["Scope", "All pilot locations"], ["Approval level", "Material corrections (prototype)"]]}/></>
-          })}>
-            <span className="avatar">PS</span>
-            <span><strong>Parker Smith</strong><small>Corporate administrator</small></span>
+          <button className="user-card" onClick={() => session ? setDetail({
+            eyebrow: "Signed-in profile", title: session.principal.displayName,
+            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically after twelve hours.</p><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", "Goodwill Local pilot tenant"], ["Session expires", new Date(session.expiresAt).toLocaleString()]]}/><button className="secondary" onClick={signOut}>Sign out</button></>
+          }) : setSignInOpen(true)}>
+            <span className="avatar">{session ? initials(session.principal.displayName) : "?"}</span>
+            <span><strong>{session ? session.principal.displayName : "Admin sign in"}</strong><small>{session ? roleLabel(session.principal.role) : "Operational changes locked"}</small></span>
             <ChevronRight size={16} />
           </button>
         </div>
@@ -404,8 +435,8 @@ export function App() {
           {loading && !data ? (
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
-            <PageContent page={page} data={data} query={query} setPage={setPage} openDetail={setDetail} refresh={refresh} />
-          ) : null}
+            <PageContent page={page} data={data} query={query} setPage={setPage} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} />
+          ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
           <span><ShieldCheck size={15} /> Pilot test environment • append-only audit foundation</span>
@@ -413,8 +444,18 @@ export function App() {
         </footer>
       </main>
       {detail && <DetailDrawer detail={detail} onClose={() => setDetail(null)} />}
+      {signInOpen && <SignInDialog onClose={() => setSignInOpen(false)} onSuccess={establishSession} />}
     </div>
   );
+}
+
+function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase(); }
+function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
+
+function SignInDialog({ onClose: _onClose, onSuccess }: { onClose: () => void; onSuccess: (session: AdminSession) => void }) {
+  const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { onSuccess(await signIn(username, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Sign-in failed."); } finally { setBusy(false); } };
+  return <section className="sign-in-dialog" role="dialog" aria-modal="true" aria-label="Administrator sign in"><ShieldCheck size={28}/><span className="eyebrow">SECURE PILOT ACCESS</span><h2>Sign in to view operations.</h2><p>Container, route, device, and report data stays unavailable until the StackTrack API verifies an approved account.</p><form onSubmit={(event) => void submit(event)}><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form><small>Production will use Goodwill Microsoft Entra sign-in. This password route is for the isolated test pilot only.</small></section>;
 }
 
 function PageContent({
@@ -423,7 +464,9 @@ function PageContent({
   query,
   setPage,
   openDetail,
-  refresh
+  refresh,
+  session,
+  onRequestSignIn
 }: {
   page: Page;
   data: OperationsData;
@@ -431,6 +474,8 @@ function PageContent({
   setPage: (page: Page) => void;
   openDetail: OpenDetail;
   refresh: () => Promise<void>;
+  session: AdminSession | null;
+  onRequestSignIn: () => void;
 }) {
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} />;
@@ -438,9 +483,9 @@ function PageContent({
   if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} />;
+  if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
-  return <SettingsPage openDetail={openDetail} />;
+  return <SettingsPage openDetail={openDetail} session={session} onRequestSignIn={onRequestSignIn} />;
 }
 
 function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Page) => void }) {
@@ -901,7 +946,7 @@ function ActivityPage({ data, query, openDetail }: { data: OperationsData; query
   ))}</div></section>;
 }
 
-function DevicesPage({ data, query, openDetail, refresh }: { data: OperationsData; query: string; openDetail: OpenDetail; refresh: () => Promise<void> }) {
+function DevicesPage({ data, query, openDetail, refresh, session, onRequestSignIn }: { data: OperationsData; query: string; openDetail: OpenDetail; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
@@ -916,9 +961,10 @@ function DevicesPage({ data, query, openDetail, refresh }: { data: OperationsDat
     return searchText.includes(query.trim().toLowerCase());
   });
   const save = async (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => {
+    if (!session) { onRequestSignIn(); return; }
     setBusyId(device.deviceId); setNotice(null);
     try {
-      await updateDevice(device.deviceId, update);
+      await updateDevice(device.deviceId, update, session);
       await refresh();
       const destination = update.assignedLocationId ? data.fixtures.locations.find((location) => location.locationId === update.assignedLocationId)?.name ?? "the selected location" : null;
       setNotice({ text: destination ? `${device.label} was moved to ${destination}. Use Refresh in the scanner app to apply the assignment immediately.` : update.label ? `${update.label} was saved as the scanner name.` : `${device.label} was ${update.isActive ? "enabled" : "disabled"}.`, tone: "success" });
@@ -928,9 +974,10 @@ function DevicesPage({ data, query, openDetail, refresh }: { data: OperationsDat
   };
   return <>
     <div className="device-guidance"><ShieldCheck size={20} /><span><strong>Scanner control is an accountable action.</strong> The app reports its installed version; assignments and scanner-name changes become permanent history, with an optional move note.</span></div>
+    {!session && <div className="access-lock"><ShieldCheck size={20}/><span><strong>Sign in to change scanners.</strong> You can inspect device records now; changes are locked until a verified Organization Owner or Operations Administrator signs in.</span><button className="secondary" onClick={onRequestSignIn}>Sign in</button></div>}
     {notice && <div className={`device-notice ${notice.tone === "error" ? "device-notice--error" : ""}`}>{notice.text}</div>}
     {query.trim() && <p className="device-search-summary">Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners matching “{query.trim()}”. Searches include the current and previous assigned locations.</p>}
-    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
+    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && session.principal.role !== "read_only_reviewer")} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
   </>;
 }
 
@@ -948,7 +995,7 @@ function deviceDetail(device: Device, data: OperationsData): DetailView {
 */
 }
 
-function DeviceCard({ device, data, operatingLocations, busy, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; onSave: (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; requiredAppVersion?: string; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
+function DeviceCard({ device, data, operatingLocations, busy, canManage, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; canManage: boolean; onSave: (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; requiredAppVersion?: string; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
   const [label, setLabel] = useState(device.label);
   const [assignedLocationId, setAssignedLocationId] = useState(device.assignedLocationId);
   const [reason, setReason] = useState("");
@@ -1022,16 +1069,25 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   </>;
 }
 
-function SettingsPage({ openDetail }: { openDetail: OpenDetail }) {
+function SettingsPage({ openDetail, session, onRequestSignIn }: { openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void }) {
   const settings = [
     { icon: UserRound, title: "Roles & approvals", text: "Store managers handle routine corrections; corporate data stewards approve material state changes.", details: [["Store manager", "Request routine corrections"], ["Corporate steward", "Approve material state changes"], ["Status", "Policy draft — needs Goodwill approval"]] as [string, string][] },
     { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners remain locked to an assigned operating location.", details: [["Identity", "One installation UUID per physical device"], ["Assignment", "Exactly one operating location"], ["Status", "Local shared-device simulation active"]] as [string, string][] },
     { icon: Wifi, title: "Offline behavior", text: "Scans queue locally, preserve device order, and synchronize when connectivity returns.", details: [["Local queue", "AsyncStorage on the scanner"], ["Ordering", "Device installation + monotonic sequence"], ["Conflict handling", "Accept evidence and flag review"]] as [string, string][] },
     { icon: Cloud, title: "Integrations", text: "Production system, Entra ID, and analytics connections are placeholders in this local build.", details: [["Production system API", "Pending access"], ["Microsoft Entra ID", "Pending tenant details"], ["Analytics", "Fabric / Data Lake decision pending"]] as [string, string][] }
   ];
-  return <section className="settings-list">{settings.map((setting) => <article key={setting.title}><span><setting.icon /></span><div><h2>{setting.title}</h2><p>{setting.text}</p></div><button aria-label={`Open ${setting.title}`} onClick={() => openDetail({
+  return <><section className="settings-list"><article className="access-settings"><span><ShieldCheck /></span><div><h2>Administrator access</h2><p>{session ? `${session.principal.displayName} is signed in as ${roleLabel(session.principal.role)}. Organization Owners can add daily administrators from this console.` : "Operational changes are protected by a server-side pilot account. Sign in to manage scanners and administrator accounts."}</p></div><button className="secondary" onClick={onRequestSignIn}>{session ? "Manage access" : "Sign in"}</button></article>{settings.map((setting) => <article key={setting.title}><span><setting.icon /></span><div><h2>{setting.title}</h2><p>{setting.text}</p></div><button aria-label={`Open ${setting.title}`} onClick={() => openDetail({
     eyebrow: "Configuration",
     title: setting.title,
     body: <><p className="detail-lead">{setting.text}</p><DetailFacts items={setting.details}/></>
-  })}><ChevronRight /></button></article>)}</section>;
+  })}><ChevronRight /></button></article>)}</section>{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
+}
+
+function AdminDirectory({ session }: { session: AdminSession }) {
+  const [users, setUsers] = useState<AdminPrincipal[] | null>(null); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const [displayName, setDisplayName] = useState(""); const [username, setUsername] = useState(""); const [temporaryPassword, setTemporaryPassword] = useState(""); const [role, setRole] = useState<"operations_administrator" | "read_only_reviewer">("operations_administrator");
+  const refreshUsers = useCallback(async () => { try { setUsers(await listAdminUsers(session)); setError(null); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load accounts."); } }, [session]);
+  useEffect(() => { void refreshUsers(); }, [refreshUsers]);
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); try { await createAdminUser(session, { displayName, username, temporaryPassword, role }); setDisplayName(""); setUsername(""); setTemporaryPassword(""); await refreshUsers(); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); } finally { setBusy(false); } };
+  return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners control who can manage the pilot." /><div className="admin-directory__users">{users?.map((user) => <article key={user.userId}><span className="avatar">{initials(user.displayName)}</span><div><strong>{user.displayName}</strong><small>@{user.username}</small></div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill></article>) ?? <div className="skeleton"/>}</div><form className="admin-user-form" onSubmit={(event) => void submit(event)}><h3>Add administrator</h3><p>New accounts must change their temporary password before production use.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form></section>;
 }

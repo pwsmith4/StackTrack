@@ -31,6 +31,10 @@ export interface DeviceAssignment {
   occurredAt: string;
 }
 
+export type AdminRole = "organization_owner" | "operations_administrator" | "read_only_reviewer" | "support";
+export interface AdminPrincipal { tenantId: string; userId: string; username: string; displayName: string; role: AdminRole; supportExpiresAt: string | null; }
+export interface AdminSession { token: string; principal: AdminPrincipal; expiresAt: string; }
+
 export interface Container {
   containerId: string;
   label: string;
@@ -77,19 +81,23 @@ export interface Projection {
 
 const headers = { "x-stacktrack-tenant-id": TENANT_ID };
 
-async function getJson<T>(path: string): Promise<T> {
+function adminHeaders(session?: AdminSession | null) {
+  return session ? { authorization: `Bearer ${session.token}` } : {};
+}
+
+async function getJson<T>(path: string, session: AdminSession): Promise<T> {
   const joiner = path.includes("?") ? "&" : "?";
   const response = await fetch(`${API_URL}${path}${joiner}refresh=${Date.now()}`, {
-    headers: { ...headers, "cache-control": "no-cache" }
+    headers: { ...headers, ...adminHeaders(session), "cache-control": "no-cache" }
   });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json() as Promise<T>;
 }
 
-async function patchJson<T>(path: string, body: unknown): Promise<T> {
+async function patchJson<T>(path: string, body: unknown, session?: AdminSession | null): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     method: "PATCH",
-    headers: { ...headers, "content-type": "application/json" },
+    headers: { ...headers, ...adminHeaders(session), "content-type": "application/json" },
     body: JSON.stringify(body)
   });
   if (!response.ok) {
@@ -102,20 +110,48 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
 export async function updateDevice(
   deviceId: string,
   update: {
+    label?: string;
     assignedLocationId?: string;
     isActive?: boolean;
     assignmentReason?: string;
-  }
+  },
+  session: AdminSession
 ): Promise<Device> {
-  const response = await patchJson<{ device: Device }>(`/api/v1/local/devices/${deviceId}`, update);
+  const response = await patchJson<{ device: Device }>(`/api/v1/local/devices/${deviceId}`, update, session);
   return response.device;
 }
 
-export async function loadOperationsData() {
-  const fixtures = await getJson<Fixtures>("/api/v1/local/reference-data");
+export async function signIn(username: string, password: string): Promise<AdminSession> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/session`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password })
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? "Sign-in failed.");
+  }
+  return response.json() as Promise<AdminSession>;
+}
+
+export async function listAdminUsers(session: AdminSession): Promise<AdminPrincipal[]> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/users`, { headers: { ...adminHeaders(session) } });
+  if (!response.ok) throw new Error("Could not load administrator accounts.");
+  return ((await response.json()) as { items: AdminPrincipal[] }).items;
+}
+
+export async function createAdminUser(session: AdminSession, input: { username: string; displayName: string; role: "operations_administrator" | "read_only_reviewer"; temporaryPassword: string }): Promise<AdminPrincipal> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/users`, { method: "POST", headers: { ...adminHeaders(session), "content-type": "application/json" }, body: JSON.stringify(input) });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? "Could not create the administrator.");
+  }
+  return ((await response.json()) as { user: AdminPrincipal }).user;
+}
+
+export async function loadOperationsData(session: AdminSession) {
+  const fixtures = await getJson<Fixtures>("/api/v1/local/reference-data", session);
   const [eventsResult, statesResult] = await Promise.all([
-    getJson<{ items: StoredEvent[] }>("/api/v1/local/events"),
-    getJson<{ items: Projection[] }>("/api/v1/containers/states")
+    getJson<{ items: StoredEvent[] }>("/api/v1/local/events", session),
+    getJson<{ items: Projection[] }>("/api/v1/containers/states", session)
   ]);
   const projectionById = new Map(
     statesResult.items.map((projection) => [projection.containerId, projection])
