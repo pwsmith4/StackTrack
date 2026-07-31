@@ -62,7 +62,7 @@ interface ContainerReference {
 
 interface Fixtures {
   containers: ContainerReference[];
-  locations: { locationId: string; name: string; type: string }[];
+  locations: { locationId: string; name: string; type: string; isActive?: boolean }[];
   goodsTypes: { name: string; secondaryLabel: string; options: string[] }[];
   devices?: {
     deviceId: string;
@@ -671,7 +671,7 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
           <Text style={styles.fieldLabel}>{selectedGoods?.secondaryLabel.toUpperCase()}</Text><View style={styles.choiceWrap}>{selectedGoods?.options.map((item) => <Pressable key={item} onPress={() => setWorkflow((current) => ({ ...current, secondaryValue: item }))} style={[styles.choice, workflow.secondaryValue === item && styles.choiceActive]}><Text style={[styles.choiceText, workflow.secondaryValue === item && styles.choiceTextActive]}>{item}</Text></Pressable>)}</View>
         </>
       ) : (
-        <View>{fixtures.locations.filter((item) => item.locationId !== assignedLocationId && item.type !== "in_transit").map((location) => <Pressable key={location.locationId} onPress={() => setWorkflow((current) => ({ ...current, destinationId: location.locationId }))} style={[styles.destination, workflow.destinationId === location.locationId && styles.destinationActive]}><View style={styles.destinationIcon}><Icon name="business-outline" /></View><View style={styles.destinationCopy}><Text style={styles.destinationTitle}>{location.name}</Text><Text style={styles.destinationText}>{location.type.replaceAll("_", " ")}</Text></View><Icon name={workflow.destinationId === location.locationId ? "radio-button-on" : "radio-button-off"} color={workflow.destinationId === location.locationId ? colors.blue : colors.muted} /></Pressable>)}</View>
+        <View>{fixtures.locations.filter((item) => item.locationId !== assignedLocationId && item.type !== "in_transit" && item.isActive !== false && item.name.trim().toLowerCase() !== "unknown location").map((location) => <Pressable key={location.locationId} onPress={() => setWorkflow((current) => ({ ...current, destinationId: location.locationId }))} style={[styles.destination, workflow.destinationId === location.locationId && styles.destinationActive]}><View style={styles.destinationIcon}><Icon name="business-outline" /></View><View style={styles.destinationCopy}><Text style={styles.destinationTitle}>{location.name}</Text><Text style={styles.destinationText}>{location.type.replaceAll("_", " ")}</Text></View><Icon name={workflow.destinationId === location.locationId ? "radio-button-on" : "radio-button-off"} color={workflow.destinationId === location.locationId ? colors.blue : colors.muted} /></Pressable>)}</View>
       )}
       <Text style={styles.fieldLabel}>OPTIONAL NOTE</Text><TextInput value={workflow.notes} onChangeText={(notes) => setWorkflow((current) => ({ ...current, notes }))} placeholder="Add context for a manager" placeholderTextColor="#98A2AB" style={[styles.labelInput, styles.noteInput]} multiline />
       <PrimaryButton onPress={onContinue} icon="arrow-forward">REVIEW OBSERVATION</PrimaryButton>
