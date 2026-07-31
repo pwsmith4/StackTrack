@@ -19,6 +19,7 @@ import {
   FilePenLine,
   HandHeart,
   LayoutDashboard,
+  Link2,
   MapPin,
   Menu,
   MonitorSmartphone,
@@ -1932,7 +1933,11 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
     {events.length ? <div className="timeline">{events.slice(0, 100).map((event, index) => {
       const container = data.fixtures.containers.find((item) => item.containerId === event.containerId);
       const location = locationName(event.locationId);
-      return <article className="clickable-timeline" key={event.eventId} onClick={() => openDetail({
+      const previous = index > 0 ? events[index - 1] : undefined;
+      const sameScanner = Boolean(previous?.deviceId && event.deviceId && previous.deviceId === event.deviceId);
+      const sameContainer = Boolean(previous?.containerId && event.containerId && previous.containerId === event.containerId);
+      const relationship = sameScanner && sameContainer ? "Same scanner and container as previous event" : sameScanner ? "Same scanner as previous event" : sameContainer ? "Same container as previous event" : null;
+      return <article className={`clickable-timeline ${relationship ? "clickable-timeline--linked" : ""}`} key={event.eventId} onClick={() => openDetail({
         eyebrow: "Scanner observation",
         icon: <FileClock size={18} />,
         status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "Timing verified", tone: "good" },
@@ -1941,7 +1946,7 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
         recordIdLabel: "Event UUID",
         title: `${container?.label ?? "Unknown container"} · ${eventLabel(event.eventType)}`,
         body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
-      })}><div className="timeline__rail"><span>{index + 1}</span><i /></div><div className="timeline__card"><div><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"} · {location}</h3><p>{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`} · received {relativeTime(event.receivedAt)} · {event.accuracyFlags.length ? `${event.accuracyFlags.length} warning` : "timing verified"}</p></div></article>;
+      })}><div className="timeline__rail"><span>{index + 1}</span></div><div className="timeline__card"><div className="timeline__card-heading"><span><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{relationship && <span className="timeline__relationship"><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"} · {location}</h3><p><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span> · received {relativeTime(event.receivedAt)} · {event.accuracyFlags.length ? `${event.accuracyFlags.length} warning` : "timing verified"}</p></div></article>;
     })}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
     {events.length > 100 && <p className="activity-limit-note">Showing the newest 100 matching observations. Use the filters to narrow the feed further.</p>}
   </section>;
