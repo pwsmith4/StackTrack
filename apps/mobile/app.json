@@ -2,7 +2,7 @@
   "expo": {
     "name": "StackTrack",
     "slug": "stacktrack-local",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "backgroundColor": "#F3F6F8",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "org.goodwill.stacktrack.local",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/stacktrack-app-icon.png",
         "backgroundColor": "#00294F"

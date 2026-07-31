@@ -56,7 +56,30 @@ The pilot implementation now enforces these boundaries server-side:
 - StackTrack will not allow the final active Organization Owner to be disabled
   or demoted; and
 - scanner moves, renames, availability changes, account changes, password
-  changes, and review decisions all write an authenticated actor to `audit_log`.
+  changes, review decisions, and correction decisions all write an
+  authenticated actor to `audit_log`.
+
+## Governed correction policy implemented for the pilot
+
+StackTrack never edits or deletes a scanner observation. An Operations
+Administrator or Organization Owner can request a correction to a container's
+official location and/or loaded state, with a required evidence-based reason.
+Only an Organization Owner can approve or reject the request.
+
+- Material corrections require a different Organization Owner than the
+  requester. This prevents one person from proposing and approving a
+  consequential state change.
+- Routine corrections still require Organization Owner approval in the pilot.
+- Approval creates a newer administrative projection; it does not replace the
+  original event or its evidence.
+- A later physical scanner observation supersedes an approved administrative
+  correction automatically.
+- Reopening an approved request removes it from the official projection until a
+  new decision is recorded.
+- The correction register can be downloaded from Reports & data.
+
+Goodwill can change the routine-approval policy after it defines store and
+corporate authority, but material dual control should remain.
 
 This is still a test-pilot password bridge, not the production Entra design.
 

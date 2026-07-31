@@ -8,6 +8,7 @@ import { PostgresEventLedger } from "./postgres-ledger.js";
 import { PostgresDeviceAdministration, type DeviceAdministration } from "./device-administration.js";
 import { PostgresAdminAccess } from "./admin-access.js";
 import { PostgresReviewAdministration } from "./review-administration.js";
+import { PostgresCorrectionAdministration } from "./correction-administration.js";
 import { seedPostgres } from "./postgres-seed.js";
 
 const { Pool } = pg;
@@ -27,6 +28,7 @@ let closeDatabase: (() => Promise<void>) | undefined;
 let deviceAdministration: DeviceAdministration | undefined;
 let adminAccess: PostgresAdminAccess | undefined;
 let reviewAdministration: PostgresReviewAdministration | undefined;
+let correctionAdministration: PostgresCorrectionAdministration | undefined;
 let dataDescription: string;
 
 try {
@@ -42,6 +44,7 @@ try {
   deviceAdministration = new PostgresDeviceAdministration(pool);
   adminAccess = new PostgresAdminAccess(pool, localFixtures.tenant.tenantId);
   reviewAdministration = new PostgresReviewAdministration(pool);
+  correctionAdministration = new PostgresCorrectionAdministration(pool);
   closeDatabase = () => pool.end();
   dataDescription = "PostgreSQL at 127.0.0.1:5433/stacktrack";
 } catch (error) {
@@ -63,7 +66,8 @@ const app = await createApp({
   ...(referenceData ? { referenceData } : {}),
   ...(deviceAdministration ? { deviceAdministration } : {}),
   ...(adminAccess ? { adminAccess } : {}),
-  ...(reviewAdministration ? { reviewAdministration } : {})
+  ...(reviewAdministration ? { reviewAdministration } : {}),
+  ...(correctionAdministration ? { correctionAdministration } : {})
 });
 if (closeDatabase) {
   app.addHook("onClose", closeDatabase);

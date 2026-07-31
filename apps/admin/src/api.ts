@@ -45,6 +45,25 @@ export interface AdminSession { token: string; principal: AdminPrincipal; expire
 export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; action: string; targetType: string; targetId: string | null; details: Record<string, unknown>; }
 export type ReviewAction = "assigned" | "approved" | "rejected" | "resolved" | "reopened";
 export interface ReviewCase { reviewCaseId: string; containerId: string; containerLabel: string; reasonCode: string; evidenceEventIds: string[]; openedAt: string; status: "opened" | ReviewAction; lastActionAt: string | null; lastActionReason: string | null; actionCount: number; }
+export type CorrectionImpact = "routine" | "material";
+export type CorrectionAction = "approved" | "rejected" | "reopened";
+export interface ProposedCorrection { locationId?: string; loadState?: "unknown" | "empty" | "loaded"; }
+export interface CorrectionRequest {
+  correctionRequestId: string;
+  containerId: string;
+  containerLabel: string;
+  requestedByUserId: string;
+  requestedByDisplayName: string;
+  impactLevel: CorrectionImpact;
+  reason: string;
+  proposedCorrection: ProposedCorrection;
+  requestedAt: string;
+  status: "pending" | CorrectionAction;
+  latestActionAt: string | null;
+  latestActionReason: string | null;
+  latestActorDisplayName: string | null;
+  actionCount: number;
+}
 export interface OperationsWarning { endpoint: string; status: number | null; message: string; }
 
 export interface Container {
@@ -89,6 +108,12 @@ export interface Projection {
   conflicts: { conflictId: string; reason: string; eventIds: string[]; detectedAt: string }[];
   lastObservedAt: string | null;
   lastReceivedAt: string | null;
+  administrativeCorrection?: {
+    correctionRequestId: string;
+    approvedAt: string;
+    approvedByDisplayName: string;
+    reason: string;
+  };
 }
 
 const headers = { "x-stacktrack-tenant-id": TENANT_ID };
@@ -230,6 +255,37 @@ export async function reviewCaseAction(session: AdminSession, reviewCaseId: stri
   return response.item;
 }
 
+export async function createCorrectionRequest(
+  session: AdminSession,
+  input: {
+    containerId: string;
+    impactLevel: CorrectionImpact;
+    reason: string;
+    proposedCorrection: ProposedCorrection;
+  }
+): Promise<CorrectionRequest> {
+  const response = await postJson<{ item: CorrectionRequest }>(
+    "/api/v1/local/correction-requests",
+    input,
+    session
+  );
+  return response.item;
+}
+
+export async function correctionRequestAction(
+  session: AdminSession,
+  correctionRequestId: string,
+  action: CorrectionAction,
+  reason: string
+): Promise<CorrectionRequest> {
+  const response = await postJson<{ item: CorrectionRequest }>(
+    `/api/v1/local/correction-requests/${correctionRequestId}/actions`,
+    { action, reason },
+    session
+  );
+  return response.item;
+}
+
 function operationWarning(endpoint: string, error: unknown): OperationsWarning {
   return {
     endpoint,
@@ -244,14 +300,18 @@ export async function loadOperationsData(session: AdminSession) {
     getJson<{ items: StoredEvent[] }>("/api/v1/local/events", session),
     getJson<{ items: Projection[] }>("/api/v1/containers/states", session)
   ]);
-  const [reviewCasesResult, auditResult] = await Promise.allSettled([
+  const [reviewCasesResult, correctionRequestsResult, auditResult] = await Promise.allSettled([
     getJson<{ items: ReviewCase[] }>("/api/v1/local/review-cases", session),
+    getJson<{ items: CorrectionRequest[] }>("/api/v1/local/correction-requests", session),
     listAuditEntries(session)
   ]);
   const warnings: OperationsWarning[] = [];
   const reviewCases = reviewCasesResult.status === "fulfilled"
     ? reviewCasesResult.value.items
     : (warnings.push(operationWarning("/api/v1/local/review-cases", reviewCasesResult.reason)), []);
+  const correctionRequests = correctionRequestsResult.status === "fulfilled"
+    ? correctionRequestsResult.value.items
+    : (warnings.push(operationWarning("/api/v1/local/correction-requests", correctionRequestsResult.reason)), []);
   const auditEntries = auditResult.status === "fulfilled"
     ? auditResult.value
     : (warnings.push(operationWarning("/api/v1/local/admin/audit-log", auditResult.reason)), []);
@@ -262,6 +322,7 @@ export async function loadOperationsData(session: AdminSession) {
     fixtures,
     events: eventsResult.items,
     reviewCases,
+    correctionRequests,
     auditEntries,
     warnings,
     projections: Object.fromEntries(

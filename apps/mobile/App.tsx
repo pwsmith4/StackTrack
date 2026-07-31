@@ -19,6 +19,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { APP_RELEASE, APP_REPORTED_VERSION, APP_VERSION } from "./src/release";
+import { classifyEventResponse, type EventResponseBody } from "./src/sync";
 
 const colors = {
   navy: "#00294F",
@@ -138,6 +139,14 @@ function versionIsOlder(version: string, required: string) {
   return false;
 }
 
+async function readEventResponse(response: Response) {
+  try {
+    return await response.json() as EventResponseBody;
+  } catch {
+    return { message: response.ok ? "The server returned an unreadable response." : `Request failed with status ${response.status}.` };
+  }
+}
+
 function Mark() {
   return (
     <View style={styles.mark}>
@@ -186,6 +195,11 @@ function AppContent() {
   const [deviceLocationName, setDeviceLocationName] = useState("Midtown Store");
   const [deviceLabel, setDeviceLabel] = useState("Scanner A — Midtown");
   const [refreshingDevice, setRefreshingDevice] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState("");
+  const [lastSubmission, setLastSubmission] = useState<{ status: QueueStatus; message: string }>({
+    status: "pending",
+    message: "Saved on this device and waiting to sync."
+  });
 
   const loadLocal = useCallback(async () => {
     const cached = await AsyncStorage.getItem(QUEUE_KEY);
@@ -211,6 +225,7 @@ function AppContent() {
       setDeviceLocationName(loaded.locations.find((location) => location.locationId === nextLocationId)?.name ?? "Assigned location unavailable");
       setDeviceLabel(registeredDevice?.label ?? "Assigned scanner");
       setOnline(true);
+      return true;
     } catch {
       setOnline(false);
       setFixtures({
@@ -230,6 +245,7 @@ function AppContent() {
           { name: "Other", secondaryLabel: "Other Type", options: ["Trash", "Ecomm", "Ewaste", "Bric Brac"] }
         ]
       });
+      return false;
     } finally {
       setLoading(false);
     }
@@ -243,7 +259,11 @@ function AppContent() {
 
   const refreshDevice = async () => {
     setRefreshingDevice(true);
-    await loadLocal();
+    const connected = await loadLocal();
+    if (connected) await syncPending();
+    setRefreshNotice(connected
+      ? `Controls refreshed at ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+      : "The data service could not be reached. Offline capture remains available.");
     setRefreshingDevice(false);
   };
 
@@ -287,15 +307,16 @@ function AppContent() {
           },
           body: JSON.stringify(item.event)
         });
-        const result = await response.json() as { accepted?: boolean; status?: string; message?: string };
-        if (!response.ok || !result.accepted) throw new Error(result.message ?? "Server rejected observation");
+        const result = await readEventResponse(response);
         reachedServer = true;
+        const outcome = classifyEventResponse(response.status, result);
+        if (outcome.kind === "retry") {
+          throw new Error(outcome.message);
+        }
         next[index] = {
           ...item,
-          status: result.status === "accepted_for_review" ? "review" : "synced",
-          message: result.status === "accepted_for_review"
-            ? "Saved and flagged for administrative review."
-            : "Synced to the local ledger."
+          status: outcome.kind,
+          message: outcome.message
         };
       } catch {
         setOnline(false);
@@ -385,11 +406,12 @@ function AppContent() {
           },
           body: JSON.stringify(event)
         });
-        const result = await response.json() as { accepted?: boolean; status?: string; message?: string };
-        if (!response.ok || !result.accepted) throw new Error(result.message ?? "Server rejected observation");
-        status = result.status === "accepted_for_review" ? "review" : "synced";
-        message = status === "review" ? "Saved and flagged for administrative review." : "Synced to the local ledger.";
+        const result = await readEventResponse(response);
         setOnline(true);
+        const outcome = classifyEventResponse(response.status, result);
+        if (outcome.kind === "retry") throw new Error(outcome.message);
+        status = outcome.kind;
+        message = outcome.message;
       } catch {
         setOnline(false);
       }
@@ -407,6 +429,7 @@ function AppContent() {
     await saveObservations([next, ...observations]);
     await AsyncStorage.setItem(SEQUENCE_KEY, String(sequence + 1));
     setWorkflow((current) => ({ ...current, loadCode }));
+    setLastSubmission({ status, message });
     setStep("success");
     setSubmitting(false);
   };
@@ -435,7 +458,7 @@ function AppContent() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} hidden={false} />
       <View style={[styles.app, isWide && styles.appWide]}>
-        {isWide && <WideNav tab={tab} setTab={setTab} pending={pending} />}
+        {isWide && <WideNav tab={tab} setTab={setTab} pending={pending} deviceLocationName={deviceLocationName} />}
         <View style={styles.main}>
           <View style={styles.header}>
             <Mark />
@@ -447,14 +470,14 @@ function AppContent() {
               </View>
             </View>
           </View>
-          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} onScan={beginScan} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} deviceLocationName={deviceLocationName} />}
+          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} onScan={beginScan} onViewActivity={() => setTab("activity")} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} deviceLocationName={deviceLocationName} refreshNotice={refreshNotice} />}
           {tab === "activity" && <ActivityScreen observations={observations} />}
           {tab === "settings" && (
             <SettingsScreen
               offlineMode={offlineMode}
               setOfflineMode={setOfflineMode}
               online={online}
-              onReconnect={() => void syncPending()}
+              onReconnect={() => void refreshDevice()}
               updateRequired={updateRequired}
               requiredAppVersion={requiredAppVersion}
               scannerEnabled={scannerEnabled}
@@ -474,8 +497,8 @@ function AppContent() {
               {step === "scan" && <ScanStep workflow={workflow} setWorkflow={setWorkflow} onContinue={findContainer} />}
               {step === "action" && workflow.container && <ActionStep container={workflow.container} onChoose={chooseAction} />}
               {step === "details" && fixtures && <DetailsStep workflow={workflow} setWorkflow={setWorkflow} fixtures={fixtures} assignedLocationId={assignedLocationId} onContinue={() => setStep("confirm")} />}
-              {step === "confirm" && workflow.container && workflow.action && <ConfirmStep workflow={workflow} fixtures={fixtures} submitting={submitting} onSubmit={() => void submitObservation()} />}
-              {step === "success" && workflow.container && workflow.action && <SuccessStep workflow={workflow} online={effectiveOnline} onDone={closeWorkflow} onAnother={() => { closeWorkflow(); setTimeout(beginScan, 150); }} />}
+              {step === "confirm" && workflow.container && workflow.action && <ConfirmStep workflow={workflow} fixtures={fixtures} submitting={submitting} deviceLocationName={deviceLocationName} onSubmit={() => void submitObservation()} />}
+              {step === "success" && workflow.container && workflow.action && <SuccessStep workflow={workflow} submissionStatus={lastSubmission.status} submissionMessage={lastSubmission.message} onDone={closeWorkflow} onAnother={() => { closeWorkflow(); setTimeout(beginScan, 150); }} />}
             </ScrollView>
           </SafeAreaView>
         </SafeAreaProvider>
@@ -484,7 +507,7 @@ function AppContent() {
   );
 }
 
-function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredAppVersion, scannerEnabled, deviceLocationName }: { online: boolean; pending: number; recent: LocalObservation[]; onScan: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; deviceLocationName: string }) {
+function HomeScreen({ online, pending, recent, onScan, onViewActivity, updateRequired, requiredAppVersion, scannerEnabled, deviceLocationName, refreshNotice }: { online: boolean; pending: number; recent: LocalObservation[]; onScan: () => void; onViewActivity: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; deviceLocationName: string; refreshNotice: string }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.locationStrip}>
@@ -494,6 +517,7 @@ function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredA
       </View>
       {updateRequired && <View style={styles.requiredUpdateBanner}><Icon name="alert-circle-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Update required</Text><Text style={styles.requiredUpdateText}>This scanner is on {APP_VERSION}; StackTrack {requiredAppVersion} is required. Ask an administrator to update this device.</Text></View></View>}
       {!scannerEnabled && <View style={styles.requiredUpdateBanner}><Icon name="pause-circle-outline" color={colors.red} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Scanner disabled</Text><Text style={styles.requiredUpdateText}>An administrator has paused this shared scanner. New observations cannot be recorded until it is enabled.</Text></View></View>}
+      {!!refreshNotice && <View style={styles.refreshNotice}><Icon name={online ? "checkmark-circle-outline" : "cloud-offline-outline"} size={18} color={online ? colors.green : colors.orange} /><Text>{refreshNotice}</Text></View>}
 
       <View style={styles.hero}>
         <Text style={styles.heroEyebrow}>FIELD SCANNER</Text>
@@ -513,7 +537,7 @@ function HomeScreen({ online, pending, recent, onScan, updateRequired, requiredA
         {pending > 0 && <View style={styles.pendingBadge}><Text>{pending}</Text></View>}
       </View>
 
-      <View style={styles.sectionTitleRow}><Text style={styles.sectionTitle}>RECENT ON THIS DEVICE</Text><Text style={styles.sectionAction}>VIEW ALL</Text></View>
+      <View style={styles.sectionTitleRow}><Text style={styles.sectionTitle}>RECENT ON THIS DEVICE</Text><Pressable accessibilityRole="button" accessibilityLabel="View all device activity" onPress={onViewActivity} hitSlop={10}><Text style={styles.sectionAction}>VIEW ALL</Text></Pressable></View>
       <View style={styles.recentCard}>
         {recent.length === 0 ? (
           <View style={styles.emptyRecent}><Icon name="clipboard-outline" size={27} color={colors.muted} /><Text style={styles.emptyRecentTitle}>No device activity yet</Text><Text style={styles.emptyRecentText}>Your first scan will appear here.</Text></View>
@@ -533,7 +557,7 @@ function ObservationRow({ item, last }: { item: LocalObservation; last: boolean 
   return (
     <View style={[styles.observation, last && styles.observationLast]}>
       <View style={styles.observationIcon}><Icon name={icon} size={20} /></View>
-      <View style={styles.observationCopy}><Text style={styles.observationTitle}>{item.label} · {actionLabel(item.eventType)}</Text><Text style={styles.observationTime}>{new Date(item.eventAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}{item.loadCode ? ` · ${item.loadCode}` : ""}</Text></View>
+      <View style={styles.observationCopy}><Text style={styles.observationTitle}>{item.label} · {actionLabel(item.eventType)}</Text><Text style={styles.observationTime}>{new Date(item.eventAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}{item.loadCode ? ` · ${item.loadCode}` : ""}</Text>{item.message && <Text numberOfLines={2} style={styles.observationMessage}>{item.message}</Text>}</View>
       <Tag tone={item.status === "synced" ? "green" : item.status === "review" ? "orange" : "muted"}>{item.status === "synced" ? "SYNCED" : item.status === "review" ? "REVIEW" : "QUEUED"}</Tag>
     </View>
   );
@@ -552,7 +576,7 @@ function ActivityScreen({ observations }: { observations: LocalObservation[] }) 
 function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, updateRequired, requiredAppVersion, scannerEnabled, deviceLocationName, deviceLabel }: { offlineMode: boolean; setOfflineMode: (value: boolean) => void; online: boolean; onReconnect: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; deviceLocationName: string; deviceLabel: string }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
-      <Text style={styles.pageEyebrow}>LOCAL PROTOTYPE</Text><Text style={styles.pageTitle}>Device settings</Text><Text style={styles.pageDescription}>This shared scanner is provisioned for one operating location.</Text>
+      <Text style={styles.pageEyebrow}>SHARED SCANNER</Text><Text style={styles.pageTitle}>Device settings</Text><Text style={styles.pageDescription}>This scanner receives its assignment and availability from the StackTrack administration service.</Text>
       <View style={styles.settingsCard}>
         <SettingRow icon="location-outline" title="Assigned location" subtitle={deviceLocationName} trailing={<Tag tone="green">LOCKED</Tag>} />
         <SettingRow icon="phone-portrait-outline" title="Device" subtitle={deviceLabel} />
@@ -565,9 +589,9 @@ function SettingsScreen({ offlineMode, setOfflineMode, online, onReconnect, upda
       <Text style={styles.sectionTitle}>TESTING</Text>
       <View style={styles.settingsCard}>
         <SettingRow icon="cloud-offline-outline" title="Simulate offline" subtitle="Queue new observations locally" trailing={<Switch value={offlineMode} onValueChange={setOfflineMode} trackColor={{ false: "#C9D2D9", true: colors.cyan }} />} />
-        <SettingRow icon="server-outline" title="Local API" subtitle={online ? API_URL : "Connection unavailable"} trailing={<Pressable onPress={onReconnect}><Text style={styles.retryText}>RETRY</Text></Pressable>} />
+        <SettingRow icon="server-outline" title="Data API" subtitle={online ? API_URL : "Connection unavailable"} trailing={<Pressable accessibilityRole="button" accessibilityLabel="Refresh controls and retry pending observations" onPress={onReconnect}><Text style={styles.retryText}>REFRESH</Text></Pressable>} />
       </View>
-      <View style={styles.prototypeNotice}><Icon name="construct-outline" color={colors.orange} /><Text>This is a local test build. Authentication, remote device management, and production integrations are intentionally simulated.</Text></View>
+      <View style={styles.prototypeNotice}><Icon name="flask-outline" color={colors.orange} /><Text>This is the pilot test build. Device identity is fixed for testing; assignments, availability, version reporting, offline capture, and observation sync use the configured data service.</Text></View>
     </ScrollView>
   );
 }
@@ -655,7 +679,7 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
   );
 }
 
-function ConfirmStep({ workflow, fixtures, submitting, onSubmit }: { workflow: WorkflowState; fixtures: Fixtures | null; submitting: boolean; onSubmit: () => void }) {
+function ConfirmStep({ workflow, fixtures, submitting, deviceLocationName, onSubmit }: { workflow: WorkflowState; fixtures: Fixtures | null; submitting: boolean; deviceLocationName: string; onSubmit: () => void }) {
   const destination = fixtures?.locations.find((item) => item.locationId === workflow.destinationId)?.name;
   return (
     <View style={styles.step}>
@@ -663,7 +687,7 @@ function ConfirmStep({ workflow, fixtures, submitting, onSubmit }: { workflow: W
       <View style={styles.confirmCard}>
         <ConfirmRow label="Container" value={workflow.container?.label ?? ""} />
         <ConfirmRow label="Observation" value={actionLabel(workflow.action!)} />
-        <ConfirmRow label="Location" value="Midtown Store" />
+        <ConfirmRow label="Location" value={deviceLocationName} />
         {workflow.action === "load_assigned" && <><ConfirmRow label="Goods" value={workflow.goodsType} /><ConfirmRow label="Quality" value={workflow.secondaryValue} /></>}
         {workflow.action === "batch_out" && <ConfirmRow label="Destination" value={destination ?? "Not selected"} />}
         {workflow.notes && <ConfirmRow label="Note" value={workflow.notes} />}
@@ -679,12 +703,14 @@ function ConfirmRow({ label, value, last = false }: { label: string; value: stri
   return <View style={[styles.confirmRow, last && styles.confirmRowLast]}><Text style={styles.confirmLabel}>{label}</Text><Text style={styles.confirmValue}>{value}</Text></View>;
 }
 
-function SuccessStep({ workflow, online, onDone, onAnother }: { workflow: WorkflowState; online: boolean; onDone: () => void; onAnother: () => void }) {
+function SuccessStep({ workflow, submissionStatus, submissionMessage, onDone, onAnother }: { workflow: WorkflowState; submissionStatus: QueueStatus; submissionMessage: string; onDone: () => void; onAnother: () => void }) {
+  const isSynced = submissionStatus === "synced";
+  const needsReview = submissionStatus === "review";
   return (
     <View style={[styles.step, styles.successStep]}>
-      <View style={styles.successIcon}><Icon name="checkmark" size={45} color="white" /></View>
-      <Text style={styles.successEyebrow}>{online ? "SAVED & SYNCED" : "SAVED ON DEVICE"}</Text><Text style={styles.successTitle}>{workflow.container?.label} updated.</Text>
-      <Text style={styles.successText}>{online ? "The observation is now part of the local audit ledger." : "The observation is safe on this device and will sync when a connection returns."}</Text>
+      <View style={[styles.successIcon, needsReview && styles.successIconReview]}><Icon name={needsReview ? "alert" : "checkmark"} size={45} color="white" /></View>
+      <Text style={styles.successEyebrow}>{isSynced ? "SAVED & SYNCED" : needsReview ? "SAVED FOR REVIEW" : "SAVED ON DEVICE"}</Text><Text style={styles.successTitle}>{workflow.container?.label} recorded.</Text>
+      <Text style={styles.successText}>{submissionMessage}</Text>
       {workflow.loadCode && <View style={styles.loadCodeBox}><Text style={styles.loadCodeLabel}>GENERATED LOAD CODE</Text><Text style={styles.loadCodeValue}>{workflow.loadCode}</Text><Text style={styles.loadCodeHelp}>Use this code in the production system.</Text></View>}
       <PrimaryButton onPress={onDone}>DONE</PrimaryButton>
       <Pressable onPress={onAnother} style={styles.anotherButton}><Icon name="scan-outline" size={18} /><Text>SCAN ANOTHER CONTAINER</Text></Pressable>
@@ -692,8 +718,8 @@ function SuccessStep({ workflow, online, onDone, onAnother }: { workflow: Workfl
   );
 }
 
-function WideNav({ tab, setTab, pending }: { tab: Tab; setTab: (tab: Tab) => void; pending: number }) {
-  return <View style={styles.wideNav}><Mark /><View style={styles.wideNavLocation}><Text style={styles.overline}>ASSIGNED LOCATION</Text><Text style={styles.wideNavLocationName}>Midtown Store</Text></View><View style={styles.wideNavItems}><NavItem icon="home-outline" activeIcon="home" label="Home" active={tab === "home"} onPress={() => setTab("home")} /><NavItem icon="time-outline" activeIcon="time" label="Activity" active={tab === "activity"} onPress={() => setTab("activity")} badge={pending} /><NavItem icon="settings-outline" activeIcon="settings" label="Settings" active={tab === "settings"} onPress={() => setTab("settings")} /></View><View style={styles.wideNavFoot}><Icon name="shield-checkmark-outline" color="#87B9D2" /><Text>Accuracy-first local build</Text></View></View>;
+function WideNav({ tab, setTab, pending, deviceLocationName }: { tab: Tab; setTab: (tab: Tab) => void; pending: number; deviceLocationName: string }) {
+  return <View style={styles.wideNav}><Mark /><View style={styles.wideNavLocation}><Text style={styles.overline}>ASSIGNED LOCATION</Text><Text style={styles.wideNavLocationName}>{deviceLocationName}</Text></View><View style={styles.wideNavItems}><NavItem icon="home-outline" activeIcon="home" label="Home" active={tab === "home"} onPress={() => setTab("home")} /><NavItem icon="time-outline" activeIcon="time" label="Activity" active={tab === "activity"} onPress={() => setTab("activity")} badge={pending} /><NavItem icon="settings-outline" activeIcon="settings" label="Settings" active={tab === "settings"} onPress={() => setTab("settings")} /></View><View style={styles.wideNavFoot}><Icon name="shield-checkmark-outline" color="#87B9D2" /><Text>Accuracy-first pilot build</Text></View></View>;
 }
 
 function BottomNav({ tab, setTab, pending }: { tab: Tab; setTab: (tab: Tab) => void; pending: number }) {
@@ -740,6 +766,7 @@ const styles = StyleSheet.create({
   requiredUpdateCopy: { flex: 1 },
   requiredUpdateTitle: { color: colors.orange, fontWeight: "800", fontSize: 13, marginBottom: 3 },
   requiredUpdateText: { color: "#80512F", fontSize: 11, lineHeight: 16 },
+  refreshNotice: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 14 },
   locationIcon: { width: 35, height: 35, backgroundColor: colors.paleBlue, alignItems: "center", justifyContent: "center", marginRight: 10 },
   locationCopy: { flex: 1 },
   overline: { color: colors.muted, fontSize: 8, fontWeight: "800", letterSpacing: 1.1 },
@@ -781,6 +808,7 @@ const styles = StyleSheet.create({
   observationCopy: { flex: 1 },
   observationTitle: { color: colors.ink, fontSize: 10.5, fontWeight: "700" },
   observationTime: { color: colors.muted, fontSize: 8, marginTop: 4 },
+  observationMessage: { color: "#526473", fontSize: 9, lineHeight: 13, marginTop: 5 },
   emptyRecent: { minHeight: 120, alignItems: "center", justifyContent: "center", padding: 20 },
   emptyRecentTitle: { color: colors.ink, fontSize: 11, fontWeight: "700", marginTop: 8 },
   emptyRecentText: { color: colors.muted, fontSize: 9, marginTop: 3 },
@@ -863,6 +891,7 @@ const styles = StyleSheet.create({
   auditNotice: { backgroundColor: colors.paleBlue, borderLeftWidth: 3, borderLeftColor: colors.cyan, padding: 13, flexDirection: "row", gap: 10, marginBottom: 17 },
   successStep: { alignItems: "center", paddingTop: 34 },
   successIcon: { width: 82, height: 82, borderRadius: 41, backgroundColor: colors.green, alignItems: "center", justifyContent: "center", marginBottom: 22 },
+  successIconReview: { backgroundColor: colors.orange },
   successEyebrow: { color: colors.green, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
   successTitle: { color: colors.ink, fontSize: 28, fontWeight: "800", letterSpacing: -0.8, marginTop: 7 },
   successText: { color: colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center", maxWidth: 360, marginTop: 7, marginBottom: 22 },

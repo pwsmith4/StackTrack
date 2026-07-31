@@ -2,7 +2,7 @@
 
 StackTrack is an accuracy-first, offline-capable reusable-container tracking system being designed for Goodwill operations. This repository contains a working local API, an internal admin website, and an Expo/React Native field app.
 
-The executable baseline centers on an immutable event ledger, deterministic container-state projection, idempotent event intake, clock and offline-order diagnostics, and a review queue for contradictions. The web and mobile interfaces are functional local prototypes around those contracts.
+The executable baseline centers on an immutable event ledger, deterministic container-state projection, idempotent event intake, clock and offline-order diagnostics, governed review and correction workflows, and an offline-capable field scanner.
 
 ## Current status
 
@@ -13,9 +13,11 @@ The executable baseline centers on an immutable event ledger, deterministic cont
 - Offline scan queue foundation for the Android client
 - Goodwill-inspired React admin console with linked operational views
 - Expo/React Native field interface with a complete manual scan workflow
-- Local mobile web preview and queued offline-observation behavior
+- Mobile control refresh, accurate queued/rejected status, and automatic offline replay
 - PostgreSQL-backed local API with 120 synthetic containers, 8 locations,
   7 shared scanners, 302 immutable observations, and seeded accuracy-review cases
+- Authenticated, append-only correction requests with owner approval, dual control
+  for material changes, CSV reporting, and automatic supersession by newer scans
 - Baseline assumptions and unanswered-decision register
 
 This is not production-ready yet. Scanner and test-data routes still use a
@@ -60,7 +62,7 @@ GitHub OpenID Connect rather than storing an Azure password in GitHub.
 The proposed Goodwill-owned access model and production authentication boundary
 are documented in the [access-control foundation](docs/access-control-foundation.md).
 
-The test API also rate-limits requests globally and limits administrator sign-in
+The test API rate-limits requests globally and limits administrator sign-in
 attempts to five per fifteen minutes per client address. This is a pilot safety
 control; production should enforce equivalent limits at Goodwill's gateway or
 identity provider as well.

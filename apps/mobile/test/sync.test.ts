@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MemoryQueueStore, OfflineEventQueue } from "@stacktrack/offline-queue";
-import { syncPendingEvents } from "../src/index.js";
+import { classifyEventResponse, syncPendingEvents } from "../src/index.js";
 
 const installationId = "33333333-3333-4333-8333-333333333333";
 
@@ -45,3 +45,31 @@ describe("syncPendingEvents", () => {
   });
 });
 
+describe("classifyEventResponse", () => {
+  it("moves a permanent server rejection out of the retry queue", () => {
+    expect(classifyEventResponse(403, {
+      error: "ScannerDisabled",
+      message: "An administrator disabled this scanner."
+    })).toEqual({
+      kind: "review",
+      message: "Not accepted by the service: An administrator disabled this scanner."
+    });
+  });
+
+  it("keeps a temporary service failure eligible for retry", () => {
+    expect(classifyEventResponse(503, { message: "Database is restarting." })).toEqual({
+      kind: "retry",
+      message: "Database is restarting."
+    });
+  });
+
+  it("preserves an accepted-for-review result", () => {
+    expect(classifyEventResponse(201, {
+      accepted: true,
+      status: "accepted_for_review"
+    })).toEqual({
+      kind: "review",
+      message: "Saved and flagged for administrative review."
+    });
+  });
+});
