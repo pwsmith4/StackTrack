@@ -42,7 +42,9 @@ export type AdminRole = "organization_owner" | "operations_administrator" | "rea
 export type ManagedAdminRole = Exclude<AdminRole, "support">;
 export interface AdminPrincipal { tenantId: string; userId: string; username: string; displayName: string; role: AdminRole; supportExpiresAt: string | null; isActive: boolean; mustChangePassword: boolean; }
 export interface AdminSession { token: string; principal: AdminPrincipal; expiresAt: string; }
-export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; action: string; targetType: string; targetId: string | null; details: Record<string, unknown>; }
+export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; actorUsername?: string | null; action: string; targetType: string; targetId: string | null; targetLabel?: string | null; locationId?: string | null; locationName?: string | null; details: Record<string, unknown>; }
+export interface AuditPage { items: AuditEntry[]; total: number; limit: number; offset: number; }
+export interface AuditSearchFilters { search?: string; locationId?: string; deviceId?: string; actorUserId?: string; actionPrefix?: string; targetType?: string; from?: string; to?: string; limit?: number; offset?: number; }
 export type ReviewAction = "assigned" | "approved" | "rejected" | "resolved" | "reopened";
 export interface ReviewCase { reviewCaseId: string; containerId: string; containerLabel: string; reasonCode: string; evidenceEventIds: string[]; openedAt: string; status: "opened" | ReviewAction; lastActionAt: string | null; lastActionReason: string | null; actionCount: number; }
 export type CorrectionImpact = "routine" | "material";
@@ -234,6 +236,25 @@ export async function listAuditEntries(session: AdminSession): Promise<AuditEntr
     );
   }
   return ((await response.json()) as { items: AuditEntry[] }).items;
+}
+
+export async function searchAuditEntries(session: AdminSession, filters: AuditSearchFilters = {}): Promise<AuditPage> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  const path = `/api/v1/local/admin/audit-log${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await readWithRetry(path, session);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new ApiRequestError(
+      response.status,
+      path,
+      `GET ${path} failed (${response.status}): ${detail?.message ?? response.statusText}`
+    );
+  }
+  const result = await response.json() as AuditPage;
+  return { items: result.items ?? [], total: Number(result.total ?? 0), limit: Number(result.limit ?? filters.limit ?? 100), offset: Number(result.offset ?? filters.offset ?? 0) };
 }
 
 export async function createAdminUser(session: AdminSession, input: { username: string; displayName: string; role: ManagedAdminRole; temporaryPassword: string }): Promise<AdminPrincipal> {

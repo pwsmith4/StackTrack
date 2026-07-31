@@ -48,6 +48,30 @@ export interface AuditEntry {
   readonly targetType: string;
   readonly targetId: string | null;
   readonly details: Record<string, unknown>;
+  readonly actorUsername: string | null;
+  readonly targetLabel: string | null;
+  readonly locationId: string | null;
+  readonly locationName: string | null;
+}
+
+export interface AuditFilters {
+  readonly search?: string;
+  readonly locationId?: string;
+  readonly deviceId?: string;
+  readonly actorUserId?: string;
+  readonly actionPrefix?: string;
+  readonly targetType?: string;
+  readonly from?: string;
+  readonly to?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface AuditPage {
+  readonly items: AuditEntry[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
 }
 
 type AdminRow = Record<string, unknown>;
@@ -203,25 +227,77 @@ export class PostgresAdminAccess {
   }
 
   public async listAuditEntries(limit = 100): Promise<AuditEntry[]> {
-    const safeLimit = Math.max(1, Math.min(limit, 250));
+    return (await this.searchAuditEntries({ limit })).items;
+  }
+
+  public async searchAuditEntries(filters: AuditFilters = {}): Promise<AuditPage> {
+    const safeLimit = Math.max(1, Math.min(Math.trunc(filters.limit ?? 100), 250));
+    const safeOffset = Math.max(0, Math.trunc(filters.offset ?? 0));
+    const values: unknown[] = [this.tenantId];
+    const clauses = ["a.tenant_id=$1"];
+    const add = (clause: string, value: unknown) => {
+      values.push(value);
+      clauses.push(clause.replace("$VALUE", `$${values.length}`));
+    };
+    if (filters.search?.trim()) add("concat_ws(' ', a.action, a.target_type, a.target_id, u.display_name, u.username, target_device.device_label, target_container.container_label, audit_location.location_name, a.details::text) ILIKE '%' || $VALUE || '%'", filters.search.trim().slice(0, 120));
+    if (filters.locationId) add("EXISTS (SELECT 1 FROM locations filter_location WHERE filter_location.tenant_id=a.tenant_id AND filter_location.location_id=$VALUE::uuid AND (a.target_id=filter_location.location_id OR a.details->>'locationId'=filter_location.location_id::text OR a.details->>'assignedLocationId'=filter_location.location_id::text OR a.details->>'previousLocationId'=filter_location.location_id::text OR a.details->'after'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'after'->>'assigned_location_id'=filter_location.location_id::text OR a.details->'before'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'before'->>'assigned_location_id'=filter_location.location_id::text))", filters.locationId);
+    if (filters.deviceId) add("(a.target_id=$VALUE::uuid OR a.details->>'deviceId'=$VALUE::text)", filters.deviceId);
+    if (filters.actorUserId) add("a.actor_id=$VALUE::uuid", filters.actorUserId);
+    if (filters.actionPrefix) add("a.action LIKE $VALUE || '%'", filters.actionPrefix.trim().slice(0, 64));
+    if (filters.targetType) add("a.target_type=$VALUE", filters.targetType.trim().slice(0, 64));
+    if (filters.from) add("a.occurred_at >= $VALUE::timestamptz", filters.from);
+    if (filters.to) add("a.occurred_at < $VALUE::timestamptz", filters.to);
+    const where = clauses.join(" AND ");
+    const queryValues = [...values, safeLimit, safeOffset];
     return this.transaction(async (client) => {
-      const result = await client.query(
-        `SELECT a.audit_id, a.occurred_at, a.actor_type, a.action, a.target_type, a.target_id, a.details,
-                u.display_name AS actor_display_name
+      const joins = `
            FROM audit_log a
            LEFT JOIN admin_users u ON u.tenant_id=a.tenant_id AND u.user_id=a.actor_id
-          WHERE a.tenant_id=$1
+           LEFT JOIN devices target_device ON target_device.tenant_id=a.tenant_id AND a.target_type='device' AND a.target_id=target_device.device_id
+           LEFT JOIN containers target_container ON target_container.tenant_id=a.tenant_id AND a.target_type='container' AND a.target_id=target_container.container_id
+           LEFT JOIN LATERAL (
+             SELECT l.location_id, l.location_name
+               FROM locations l
+              WHERE l.tenant_id=a.tenant_id
+                AND (a.target_id=l.location_id
+                  OR a.details->>'locationId'=l.location_id::text
+                  OR a.details->>'assignedLocationId'=l.location_id::text
+                  OR a.details->>'previousLocationId'=l.location_id::text
+                  OR a.details->'after'->>'assignedLocationId'=l.location_id::text
+                  OR a.details->'after'->>'assigned_location_id'=l.location_id::text
+                  OR a.details->'before'->>'assignedLocationId'=l.location_id::text
+                  OR a.details->'before'->>'assigned_location_id'=l.location_id::text)
+              ORDER BY l.location_name
+              LIMIT 1
+           ) audit_location ON true`;
+      const [countResult, result] = await Promise.all([
+        client.query<{ count: string }>(`SELECT count(*)::text AS count ${joins} WHERE ${where}`, values),
+        client.query(`SELECT a.audit_id, a.occurred_at, a.actor_type, a.action, a.target_type, a.target_id, a.details,
+                u.user_id AS actor_user_id, u.username AS actor_username, u.display_name AS actor_display_name,
+                COALESCE(target_device.device_label, target_container.container_label, audit_location.location_name, a.target_id::text) AS target_label,
+                audit_location.location_id, audit_location.location_name
+           ${joins}
+          WHERE ${where}
           ORDER BY a.occurred_at DESC, a.audit_id DESC
-          LIMIT $2`,
-        [this.tenantId, safeLimit]
-      );
-      return result.rows.map((row) => ({
-        auditId: String(row.audit_id), occurredAt: new Date(row.occurred_at as Date | string).toISOString(),
-        actorType: row.actor_type as AuditEntry["actorType"],
-        actorDisplayName: row.actor_display_name ? String(row.actor_display_name) : row.actor_type === "system" ? "StackTrack system" : row.actor_type === "device" ? "Scanner device" : "Unknown administrator",
-        action: String(row.action), targetType: String(row.target_type), targetId: row.target_id ? String(row.target_id) : null,
-        details: (row.details ?? {}) as Record<string, unknown>
-      }));
+          LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+          queryValues)
+      ]);
+      return {
+        items: result.rows.map((row) => ({
+          auditId: String(row.audit_id), occurredAt: new Date(row.occurred_at as Date | string).toISOString(),
+          actorType: row.actor_type as AuditEntry["actorType"],
+          actorDisplayName: row.actor_display_name ? String(row.actor_display_name) : row.actor_type === "system" ? "StackTrack system" : row.actor_type === "device" ? "Scanner device" : "Unknown administrator",
+          actorUsername: row.actor_username ? String(row.actor_username) : null,
+          action: String(row.action), targetType: String(row.target_type), targetId: row.target_id ? String(row.target_id) : null,
+          targetLabel: row.target_label ? String(row.target_label) : null,
+          locationId: row.location_id ? String(row.location_id) : null,
+          locationName: row.location_name ? String(row.location_name) : null,
+          details: (row.details ?? {}) as Record<string, unknown>
+        })),
+        total: Number(countResult.rows[0]?.count ?? 0),
+        limit: safeLimit,
+        offset: safeOffset
+      };
     });
   }
 

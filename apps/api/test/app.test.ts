@@ -359,6 +359,38 @@ describe("StackTrack API foundation", () => {
     expect(signIn).toHaveBeenCalledTimes(5);
   });
 
+  it("delegates governed audit filters and rejects malformed filters", async () => {
+    const searchAuditEntries = vi.fn().mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 });
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(ownerPrincipal), searchAuditEntries } as unknown as PostgresAdminAccess
+    });
+    const authorization = { authorization: `Bearer ${"e".repeat(32)}` };
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/admin/audit-log?locationId=66666666-6666-4666-8666-666666666666&deviceId=22222222-2222-4222-8222-222222222222&actionPrefix=device&targetType=device&from=2026-07-01&to=2026-07-31&limit=20&offset=0",
+      headers: authorization
+    });
+    const invalid = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/admin/audit-log?deviceId=not-a-uuid",
+      headers: authorization
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ total: 0, limit: 20, offset: 0 });
+    expect(searchAuditEntries).toHaveBeenCalledWith(expect.objectContaining({
+      locationId: "66666666-6666-4666-8666-666666666666",
+      deviceId,
+      actionPrefix: "device",
+      targetType: "device",
+      limit: 20,
+      offset: 0
+    }));
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toMatchObject({ error: "InvalidAuditFilter" });
+  });
+
   it("only emits CORS access headers for approved StackTrack browser origins", async () => {
     app = await createApp({ localMode: true });
     const request = {
