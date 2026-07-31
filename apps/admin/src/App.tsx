@@ -891,7 +891,7 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
       <section className="panel">
         <PanelTitle title="Recent activity" subtitle="Newest device observations" action="View full ledger" onClick={() => setPage("activity")} />
         <div className="table-wrap">
-          <table>
+         <table className="container-table">
             <thead><tr><th>Container</th><th>Observation</th><th>Location</th><th>Device time</th><th>Accuracy</th></tr></thead>
             <tbody>
               {recent.length === 0 ? <tr><td colSpan={5}><div className="dashboard-table-empty"><CheckCircle2 size={18} /><span><strong>No accepted observations yet</strong><small>New scanner observations will appear here after the first sync.</small></span></div></td></tr> : recent.map((event) => (
