@@ -119,6 +119,50 @@ interface DetailView {
 
 type OpenDetail = (detail: DetailView) => void;
 
+const projectionHealthLabels: Record<Projection["health"], string> = {
+  clean: "Clean",
+  warning: "Warning",
+  needs_review: "Needs review"
+};
+
+const loadStateLabels: Record<Projection["loadState"], string> = {
+  loaded: "Loaded",
+  empty: "Empty",
+  unknown: "Unknown"
+};
+
+const accuracyFlagLabels: Record<string, string> = {
+  ClockSkewWarning: "Clock timing warning",
+  ClockSkewReview: "Clock timing needs review",
+  ClockVerificationStale: "Clock verification is stale",
+  LateArrival: "Late upload",
+  DeviceSequenceGap: "Device sequence gap",
+  DeviceSequenceOutOfOrder: "Device sequence out of order",
+  DeviceSequenceCollision: "Device sequence conflict",
+  StaleReferenceData: "Reference data is stale"
+};
+
+function projectionHealthLabel(value: Projection["health"] | null | undefined): string {
+  return value ? projectionHealthLabels[value] ?? humanizeCode(value) : "No history";
+}
+
+function loadStateLabel(value: Projection["loadState"] | null | undefined): string {
+  return value ? loadStateLabels[value] ?? humanizeCode(value) : "Not observed";
+}
+
+function humanizeCode(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim()
+    .toLowerCase()
+    .replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+function accuracyFlagLabel(value: string): string {
+  return accuracyFlagLabels[value] ?? humanizeCode(value);
+}
+
 const pageTitles: Record<Page, { eyebrow: string; title: string; description: string }> = {
   dashboard: {
     eyebrow: "Operations overview",
@@ -429,6 +473,9 @@ function humanizeDetailValue(key: string, value: unknown, data?: OperationsData)
       const container = data.fixtures.containers.find((item) => item.containerId === text);
       if (container) return container.label;
     }
+    if (key === "health") return projectionHealthLabel(text as Projection["health"]);
+    if (key === "loadState" || key === "load_state") return loadStateLabel(text as Projection["loadState"]);
+    if (key === "accuracyFlag" || key === "accuracyFlags" || key === "warning" || key === "warnings") return accuracyFlagLabel(text);
     if (key === "source") return text.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
     if (key === "impactLevel") return text === "material" ? "Material change" : "Routine change";
     return text;
@@ -483,7 +530,7 @@ function EventEvidence({ events, data }: { events: StoredEvent[]; data: Operatio
     <div><span className="detail-event__label"><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{event.accuracyFlags.length ? <span className="detail-event__warning-count">{event.accuracyFlags.length} warning{event.accuracyFlags.length === 1 ? "" : "s"}</span> : <span className="detail-event__verified"><CheckCircle2 size={12} /> verified</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div>
     <strong>{locationName(event.locationId)}</strong>
     <span className="detail-event__id">{event.eventId} <CopyValueButton value={event.eventId} label="Copy" /></span>
-    <small>{event.accuracyFlags.length ? event.accuracyFlags.join(" · ") : "Timing and device order verified"}</small>
+    <small>{event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagLabel).join(" · ") : "Timing and device order verified"}</small>
     <details className="detail-event__more"><summary>View scan details</summary><DetailFacts items={[["Device", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Device sequence", String(event.deviceSequence)], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Effective", new Date(event.effectiveAt).toLocaleString()]]}/>{eventPayloadFacts(event, data).length > 0 ? <><span className="readable-details__label">Scan information</span><DetailFacts items={eventPayloadFacts(event, data)} /></> : <p className="detail-empty-note">No additional scan information was recorded.</p>}</details>
   </article>) : <EmptyState>No observations have been recorded for this item.</EmptyState>}</div>;
 }
@@ -927,7 +974,7 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
               return (
                 <button className="review-item" key={item.containerId} onClick={() => setPage("exceptions")}>
                   <span className="review-item__icon"><AlertTriangle size={19} /></span>
-                  <span><strong>{c?.label}</strong><small>{item.conflicts[0]?.reason.replace(/([A-Z])/g, " $1").trim()}</small></span>
+                  <span><strong>{c?.label}</strong><small>{item.conflicts[0] ? humanizeCode(item.conflicts[0].reason) : "Review evidence"}</small></span>
                   <Pill tone="warn">Review</Pill>
                   <ChevronRight size={17} />
                 </button>
@@ -1164,11 +1211,11 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
       recordIdLabel: "Container UUID",
       actions: projection?.health === "needs_review" ? <button className="secondary" onClick={() => setPage("exceptions")}><AlertTriangle size={15} /> Open review queue</button> : undefined,
       body: <><DetailFacts items={[
-        ["Current state", projection?.loadState ?? "Not observed"],
+        ["Current state", loadStateLabel(projection?.loadState)],
         ["Movement status", route.inTransit ? "In transit" : "Stationary / location confirmed"],
         ["Route", route.inTransit ? `${route.origin?.name ?? "Origin pending"} → ${route.destination?.name ?? "Destination pending"}` : route.segments.length ? `${route.segments.length} handoff${route.segments.length === 1 ? "" : "s"} recorded` : "No active movement"],
         ["Last known location", route.inTransit ? `In transit · last confirmed ${route.lastConfirmedLocation?.name ?? "not recorded"}` : locationName(projection?.locationId ?? null)],
-        ["History health", projection?.health ?? "No history"],
+        ["History health", projectionHealthLabel(projection?.health)],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"],
         ["Container UUID", container.containerId]
       ]}/><ContainerRouteSummary containerId={container.containerId} data={data}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
@@ -1189,10 +1236,10 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
       return [
         container.label,
         container.type,
-        projection?.loadState ?? "not observed",
+        loadStateLabel(projection?.loadState),
         locationName(projection?.locationId ?? null),
         projection?.lastObservedAt ?? "",
-        projection?.health ?? "no history"
+        projectionHealthLabel(projection?.health)
       ];
     })
   ]);
@@ -1212,7 +1259,7 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
             return <tr className="clickable-row" role="button" tabIndex={0} aria-label={`Open details for ${container.label}`} key={container.containerId} onClick={() => showContainer(container)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showContainer(container); } }}>
               <td><strong className="asset-label" title="Unique container label">{container.label}</strong></td>
               <td className="capitalize">{container.type}</td>
-              <td><Pill tone={projection?.loadState === "loaded" ? "blue" : "muted"}>{projection?.loadState ?? "Not observed"}</Pill></td>
+              <td><Pill tone={projection?.loadState === "loaded" ? "blue" : "muted"}>{loadStateLabel(projection?.loadState)}</Pill></td>
               <td><ContainerRouteCell route={route} /></td>
               <td>{relativeTime(projection?.lastObservedAt)}</td>
               <td>{projection?.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : projection?.administrativeCorrection ? <Pill tone="blue">Corrected</Pill> : projection ? <Pill tone="good">Clean</Pill> : <Pill tone="muted">No history</Pill>}</td>
@@ -1445,11 +1492,11 @@ function LocationWorkspacePage({ data, locationId, openDetail, setPage, session 
       eyebrow: "Location container",
       title: record?.label ?? "Tracked container",
       icon: <ContainerIcon size={18} />,
-      status: { label: projection.health === "needs_review" ? "Needs review" : projection.loadState, tone: projection.health === "needs_review" ? "warn" : projection.loadState === "loaded" ? "blue" : "good" },
+      status: { label: projection.health === "needs_review" ? "Needs review" : loadStateLabel(projection.loadState), tone: projection.health === "needs_review" ? "warn" : projection.loadState === "loaded" ? "blue" : "good" },
       summary: "This container is shown in the location workspace using its latest accepted projection and preserved scan evidence.",
       ...(record?.containerId ? { recordId: record.containerId } : {}),
       recordIdLabel: "Container ID",
-      body: <><DetailFacts items={[ ["Container type", record?.type ?? "Unknown"], ["Current state", projection.loadState], ["Official location", data.fixtures.locations.find((item) => item.locationId === projection.locationId)?.name ?? "In transit / not observed"], ["Last observed", relativeTime(projection.lastObservedAt)], ["History health", projection.health === "needs_review" ? "Needs review" : projection.health] ]} /><h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === projection.containerId)} data={data} /></>
+      body: <><DetailFacts items={[ ["Container type", record?.type ?? "Unknown"], ["Current state", loadStateLabel(projection.loadState)], ["Official location", data.fixtures.locations.find((item) => item.locationId === projection.locationId)?.name ?? "In transit / not observed"], ["Last observed", relativeTime(projection.lastObservedAt)], ["History health", projectionHealthLabel(projection.health)] ]} /><h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === projection.containerId)} data={data} /></>
     });
   };
   const openEvent = (event: StoredEvent) => openDetail({
@@ -1460,7 +1507,7 @@ function LocationWorkspacePage({ data, locationId, openDetail, setPage, session 
     summary: `Observed at ${location.name} by ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "a scanner"}.`,
     recordId: event.eventId,
     recordIdLabel: "Observation ID",
-    body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", location.name], ["Scanner", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Data quality", event.accuracyFlags.length ? event.accuracyFlags.join(", ") : "Verified"]]} /><h3 className="detail-section-title">Preserved evidence</h3><EventEvidence events={[event]} data={data} /></>
+     body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", location.name], ["Scanner", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Data quality", event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagLabel).join(", ") : "Verified"]]} /><h3 className="detail-section-title">Preserved evidence</h3><EventEvidence events={[event]} data={data} /></>
   });
   const typeLabel = locationTypeLabel(location.type);
   return <div className="location-focused-page">
@@ -1468,7 +1515,7 @@ function LocationWorkspacePage({ data, locationId, openDetail, setPage, session 
     <section className="location-focused-hero panel"><div className="location-focused-hero__identity"><span className={`location-title-icon location-title-icon--${location.type}`}><LocationTypeIcon location={location} size={23} /></span><div><span className="eyebrow">Focused operating location</span><h2>{location.name}</h2><p>{typeLabel} · {scanners.length} assigned scanner{scanners.length === 1 ? "" : "s"} · {scansLastDay} accepted scan{scansLastDay === 1 ? "" : "s"} in the last 24 hours</p><div className="location-focused-hero__tags"><Pill tone={openReviews.length ? "warn" : "good"}>{openReviews.length ? `${openReviews.length} review${openReviews.length === 1 ? "" : "s"} open` : "No open reviews"}</Pill><Pill tone={staleScanners.length ? "warn" : "good"}>{staleScanners.length ? `${staleScanners.length} stale scanner${staleScanners.length === 1 ? "" : "s"}` : "Scanner reports fresh"}</Pill></div></div></div><div className="location-focused-hero__actions"><button className={canManageScanners ? "primary" : "secondary"} onClick={() => setPage("devices")}><Smartphone size={15} /> {canManageScanners ? "Manage scanners" : "View scanners"}</button><button className="secondary" onClick={() => setPage("activity")}><Activity size={15} /> Local activity</button>{canRequestCorrections && <button className="secondary" onClick={() => setPage("corrections")}><FilePenLine size={15} /> Request correction</button>}</div></section>
     <section className="location-focused-metrics"><article><span className="location-focused-metric__icon location-focused-metric__icon--blue"><Boxes size={18} /></span><div><small>At this location</small><strong>{current.length}</strong><em>Latest projection</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--green"><ArrowRight size={18} /></span><div><small>Arriving</small><strong>{arriving.length}</strong><em>Destination receipt pending</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--orange"><Truck size={18} /></span><div><small>Leaving</small><strong>{leaving.length}</strong><em>Outbound handoff open</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--slate"><Smartphone size={18} /></span><div><small>Scanner coverage</small><strong>{scanners.filter((device) => device.isActive).length}/{scanners.length}</strong><em>{staleScanners.length ? `${staleScanners.length} report stale` : "Reports within 24 hours"}</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--cyan"><Activity size={18} /></span><div><small>Recent scans</small><strong>{scansLastDay}</strong><em>{flaggedScans ? `${flaggedScans} flagged for review` : "No scan-quality flags"}</em></div></article></section>
     <section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Physical workflow</span><h3>What is at, arriving to, and leaving this site</h3><p>Each lane is independent. A container can appear in multiple lanes over time, and a multi-hop route stays tied to its own recorded checkpoints.</p></div><Pill tone="blue">{current.length + arriving.length + leaving.length} active records</Pill></div><div className="workflow-lanes"><LocationWorkflowLane title="At this location" subtitle="Official current projection" tone="here" items={current} data={data} onOpen={openContainer} /><LocationWorkflowLane title="Arriving here" subtitle="Open handoffs with this destination" tone="arriving" items={arriving} data={data} onOpen={openContainer} /><LocationWorkflowLane title="Leaving here" subtitle="Open handoffs from this origin" tone="leaving" items={leaving} data={data} onOpen={openContainer} /></div></section>
-    <div className="location-focused-columns"><section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Local devices</span><h3>Scanner readiness</h3><p>Use Devices for changes; this summary makes local coverage visible without leaving the workspace.</p></div><button className="secondary" onClick={() => setPage("devices")}>Open Devices <ChevronRight size={14} /></button></div>{scanners.length ? <div className="location-scanner-list">{scanners.map((device) => <button key={device.deviceId} onClick={() => openDetail(deviceDetail(device, data))}><span className="location-scanner-list__icon"><Smartphone size={16} /></span><span><strong>{device.label}</strong><small>Scanner {scannerNumber(device.deviceId)} · {device.reportedAppVersion ?? "Version not reported"}</small></span><span className="location-scanner-list__state"><Pill tone={device.isActive ? "good" : "warn"}>{device.isActive ? "Enabled" : "Disabled"}</Pill><small>{relativeTime(device.lastReportedAt)}</small></span><ChevronRight size={14} /></button>)}</div> : <EmptyState>No scanners are assigned to this location.</EmptyState>}</section><section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Local attention</span><h3>Reviews and recent observations</h3><p>{openReviews.length ? "These review items are linked to evidence recorded at this location." : "The latest scanner activity is clear for this location."}</p></div><div className="location-focused-section__header-actions"><button className="secondary" onClick={() => setPage("activity")}>Activity <ChevronRight size={14} /></button>{openReviews.length > 0 && <button className="secondary" onClick={() => setPage("exceptions")}>Review queue <ChevronRight size={14} /></button>}</div></div>{openReviews.length > 0 && <div className="location-review-list">{openReviews.slice(0, 4).map((item) => <button key={item.reviewCaseId} onClick={() => setPage("exceptions")}><span className="location-review-list__icon"><AlertTriangle size={15} /></span><span><strong>{item.containerLabel}</strong><small>{item.reasonCode.replaceAll("_", " ")} · opened {relativeTime(item.openedAt)}</small></span><Pill tone="warn">Needs review</Pill><ChevronRight size={14} /></button>)}</div>}<div className="location-activity-list">{localEvents.slice(0, 5).map((event) => <button key={event.eventId} onClick={() => openEvent(event)}><span><strong>{eventLabel(event.eventType)}</strong><small>{containerFor(event.containerId)?.label ?? "Container"} · {data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Scanner"}</small></span><time>{relativeTime(event.eventAt)}</time><ChevronRight size={14} /></button>)}{localEvents.length === 0 && <div className="location-focused-empty">No scanner observations have been recorded at this location.</div>}</div></section></div>
+    <div className="location-focused-columns"><section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Local devices</span><h3>Scanner readiness</h3><p>Use Devices for changes; this summary makes local coverage visible without leaving the workspace.</p></div><button className="secondary" onClick={() => setPage("devices")}>Open Devices <ChevronRight size={14} /></button></div>{scanners.length ? <div className="location-scanner-list">{scanners.map((device) => <button key={device.deviceId} onClick={() => openDetail(deviceDetail(device, data))}><span className="location-scanner-list__icon"><Smartphone size={16} /></span><span><strong>{device.label}</strong><small>Scanner {scannerNumber(device.deviceId)} · {device.reportedAppVersion ?? "Version not reported"}</small></span><span className="location-scanner-list__state"><Pill tone={device.isActive ? "good" : "warn"}>{device.isActive ? "Enabled" : "Disabled"}</Pill><small>{relativeTime(device.lastReportedAt)}</small></span><ChevronRight size={14} /></button>)}</div> : <EmptyState>No scanners are assigned to this location.</EmptyState>}</section><section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Local attention</span><h3>Reviews and recent observations</h3><p>{openReviews.length ? "These review items are linked to evidence recorded at this location." : "The latest scanner activity is clear for this location."}</p></div><div className="location-focused-section__header-actions"><button className="secondary" onClick={() => setPage("activity")}>Activity <ChevronRight size={14} /></button>{openReviews.length > 0 && <button className="secondary" onClick={() => setPage("exceptions")}>Review queue <ChevronRight size={14} /></button>}</div></div>{openReviews.length > 0 && <div className="location-review-list">{openReviews.slice(0, 4).map((item) => <button key={item.reviewCaseId} onClick={() => setPage("exceptions")}><span className="location-review-list__icon"><AlertTriangle size={15} /></span><span><strong>{item.containerLabel}</strong><small>{humanizeCode(item.reasonCode)} · opened {relativeTime(item.openedAt)}</small></span><Pill tone="warn">Needs review</Pill><ChevronRight size={14} /></button>)}</div>}<div className="location-activity-list">{localEvents.slice(0, 5).map((event) => <button key={event.eventId} onClick={() => openEvent(event)}><span><strong>{eventLabel(event.eventType)}</strong><small>{containerFor(event.containerId)?.label ?? "Container"} · {data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Scanner"}</small></span><time>{relativeTime(event.eventAt)}</time><ChevronRight size={14} /></button>)}{localEvents.length === 0 && <div className="location-focused-empty">No scanner observations have been recorded at this location.</div>}</div></section></div>
     <section className="location-focused-health panel"><div><span className="eyebrow">Location health</span><h3>Trust signals for this site</h3><p>These signals describe evidence freshness, not the physical condition of containers.</p></div><div className="location-health-grid"><span><strong>{flaggedScans}</strong><small>Flagged observations</small><em>{flaggedScans ? "Review timing or device order" : "No scan flags"}</em></span><span><strong>{openReviews.length}</strong><small>Open reviews</small><em>{openReviews.length ? "Corporate decision may be needed" : "No local review queue"}</em></span><span><strong>{staleScanners.length}</strong><small>Stale scanners</small><em>{staleScanners.length ? "Confirm power and connectivity" : "All scanners reported recently"}</em></span><span><strong>{localEvents.length}</strong><small>Total observations</small><em>Retained in the immutable ledger</em></span></div></section>
   </div>;
 }
@@ -1542,9 +1589,9 @@ function LocationsPage({ data, focusedLocationId, openLocation, openDetail, setP
     eyebrow: "Route container",
     title: container(projection.containerId)?.label ?? "Tracked container",
     body: <><DetailFacts items={[
-      ["Current state", projection.loadState],
+      ["Current state", loadStateLabel(projection.loadState)],
       ["Official location", data.fixtures.locations.find((item) => item.locationId === projection.locationId)?.name ?? "Not observed"],
-      ["History health", projection.health],
+      ["History health", projectionHealthLabel(projection.health)],
       ["Last observed", relativeTime(projection.lastObservedAt)]
     ]}/><h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={eventsFor(projection.containerId)} data={data}/></>
   });
@@ -1770,7 +1817,7 @@ function LocationWorkflowLane({ title, subtitle, tone, items, data, onOpen }: { 
         : tone === "leaving"
           ? "Outbound handoff"
           : locationName(projection.locationId);
-      return <button key={projection.containerId} onClick={() => onOpen(projection)}><span><strong>{record?.label ?? "Unknown"}</strong><small>{record?.type} · {projection.loadState} · {routeLabel}</small><em>{routeDescription}{route.segments.length > 1 ? ` · ${route.segments.length} handoffs recorded` : ""}</em></span><Pill tone={projection.health === "needs_review" ? "warn" : projection.loadState === "loaded" ? "blue" : "good"}>{projection.health === "needs_review" ? "Review" : projection.loadState}</Pill><ChevronRight size={16} /></button>;
+      return <button key={projection.containerId} onClick={() => onOpen(projection)}><span><strong>{record?.label ?? "Unknown"}</strong><small>{record?.type} · {loadStateLabel(projection.loadState)} · {routeLabel}</small><em>{routeDescription}{route.segments.length > 1 ? ` · ${route.segments.length} handoffs recorded` : ""}</em></span><Pill tone={projection.health === "needs_review" ? "warn" : projection.loadState === "loaded" ? "blue" : "good"}>{projection.health === "needs_review" ? "Needs review" : loadStateLabel(projection.loadState)}</Pill><ChevronRight size={16} /></button>;
     }) : <div className="workflow-lane__empty">No containers in this workflow lane.</div>}</div>
     {items.length > 8 && <button className="workflow-lane__more" onClick={() => setExpanded((value) => !value)}>{expanded ? "Show fewer" : `Show all ${items.length}`}</button>}
   </section>;
@@ -1932,7 +1979,7 @@ function CorrectionRequestForm({
           </label>
           <div className="correction-current">
             <span>Current official view</span>
-            <strong>{projection?.loadState ?? "Unknown"} · {currentLocation?.name ?? "No confirmed location"}</strong>
+            <strong>{loadStateLabel(projection?.loadState)} · {currentLocation?.name ?? "No confirmed location"}</strong>
             {projection?.administrativeCorrection && <small>Includes approved correction {projection.administrativeCorrection.correctionRequestId.slice(0, 8)}</small>}
           </div>
           <div className="correction-form__grid">
@@ -2038,7 +2085,7 @@ function CorrectionCard({
         </div>
         <div className="correction-targets">
           {location && <span><MapPin size={15} /><small>Correct location</small><strong>{location.name}</strong></span>}
-          {item.proposedCorrection.loadState && <span><ContainerIcon size={15} /><small>Correct state</small><strong>{item.proposedCorrection.loadState}</strong></span>}
+          {item.proposedCorrection.loadState && <span><ContainerIcon size={15} /><small>Correct state</small><strong>{loadStateLabel(item.proposedCorrection.loadState)}</strong></span>}
         </div>
         <dl>
           <div><dt>Requested by</dt><dd>{item.requestedByDisplayName}</dd></div>
@@ -2239,7 +2286,7 @@ function LegacyActivityPage({ data, query, openDetail }: { data: OperationsData;
         ["Received at", new Date(event.receivedAt).toLocaleString()],
         ["Location", l(event.locationId) ?? "Unknown"],
         ["Event UUID", event.eventId]
-      ]}/><h3 className="detail-section-title">Accuracy evidence</h3><p className="detail-lead">{event.accuracyFlags.length ? event.accuracyFlags.join(" · ") : "No timing, ordering, or reference-data warnings were recorded."}</p><EventEvidence events={[event]} data={data}/></>
+        ]}/><h3 className="detail-section-title">Accuracy evidence</h3><p className="detail-lead">{event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagLabel).join(" · ") : "No timing, ordering, or reference-data warnings were recorded."}</p><EventEvidence events={[event]} data={data}/></>
     })}><div className="timeline__rail"><span>{index + 1}</span><i /></div><div className="timeline__card">
       <div><Pill tone="blue">{eventLabel(event.eventType)}</Pill><time>{new Date(event.eventAt).toLocaleString()}</time></div>
       <h3>{c(event.containerId)?.label} · {l(event.locationId)}</h3>
@@ -2442,7 +2489,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
     summary: "A single immutable scanner observation from the report scope.",
     recordId: event.eventId,
     recordIdLabel: "Event ID",
-    body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", locationName(event.locationId)], ["Scanner", `${deviceName(event.deviceId)} (${scannerNumber(event.deviceId)})`], ["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Latency", `${latencySeconds(event)} seconds`], ["Data flags", event.accuracyFlags.length ? event.accuracyFlags.join(", ") : "None"]]}/><h3 className="detail-section-title">Evidence</h3><EventEvidence events={[event]} data={data}/></>
+      body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", locationName(event.locationId)], ["Scanner", `${deviceName(event.deviceId)} (${scannerNumber(event.deviceId)})`], ["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Latency", `${latencySeconds(event)} seconds`], ["Data flags", event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagLabel).join(", ") : "None"]]}/><h3 className="detail-section-title">Evidence</h3><EventEvidence events={[event]} data={data}/></>
   });
   const reports = [
     { id: "movement", icon: Activity, title: "Movement ledger", text: "Every accepted container observation, with scanner, location, receipt latency, and data flags.", count: filteredEvents.length, tag: "Ready" },
@@ -2459,7 +2506,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   ] as const;
   const openReport = (report: typeof reports[number]) => {
     if (report.id === "movement") {
-      downloadCsv("stacktrack-movement-ledger.csv", [["Event ID", "Container", "Observation", "Location", "Scanner", "Observed at", "Received at", "Latency seconds", "Data flags"], ...filteredEvents.map((event) => [event.eventId, containerLabel(event.containerId), eventLabel(event.eventType), locationName(event.locationId), deviceName(event.deviceId), event.eventAt, event.receivedAt, latencySeconds(event), event.accuracyFlags.join("; ")])]);
+      downloadCsv("stacktrack-movement-ledger.csv", [["Event ID", "Container", "Observation", "Location", "Scanner", "Observed at", "Received at", "Latency seconds", "Data flags"], ...filteredEvents.map((event) => [event.eventId, containerLabel(event.containerId), eventLabel(event.eventType), locationName(event.locationId), deviceName(event.deviceId), event.eventAt, event.receivedAt, latencySeconds(event), event.accuracyFlags.map(accuracyFlagLabel).join("; ")])]);
       return;
     }
     if (report.id === "loads") {
@@ -2467,11 +2514,11 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       return;
     }
     if (report.id === "exceptions") {
-      downloadCsv("stacktrack-data-quality-exceptions.csv", [["Container", "Health", "Current location", "Conflicts", "Projection warnings", "Flagged observations", "Last observed"], ...filteredProjections.map((projection) => [containerLabel(projection.containerId), projection.health, locationName(projection.locationId), projection.conflicts.map((item) => item.reason).join("; "), projection.warnings.join("; "), filteredEvents.filter((event) => event.containerId === projection.containerId && event.accuracyFlags.length).length, projection.lastObservedAt ?? ""]) , ...flaggedEvents.filter((event) => !filteredProjections.some((projection) => projection.containerId === event.containerId)).map((event) => [containerLabel(event.containerId), "observation_flag", locationName(event.locationId), "", event.accuracyFlags.join("; "), 1, event.eventAt])]);
+      downloadCsv("stacktrack-data-quality-exceptions.csv", [["Container", "Health", "Current location", "Conflicts", "Projection warnings", "Flagged observations", "Last observed"], ...filteredProjections.map((projection) => [containerLabel(projection.containerId), projectionHealthLabel(projection.health), locationName(projection.locationId), projection.conflicts.map((item) => humanizeCode(item.reason)).join("; "), projection.warnings.map(accuracyFlagLabel).join("; "), filteredEvents.filter((event) => event.containerId === projection.containerId && event.accuracyFlags.length).length, projection.lastObservedAt ?? ""]) , ...flaggedEvents.filter((event) => !filteredProjections.some((projection) => projection.containerId === event.containerId)).map((event) => [containerLabel(event.containerId), "Observation flag", locationName(event.locationId), "", event.accuracyFlags.map(accuracyFlagLabel).join("; "), 1, event.eventAt])]);
       return;
     }
     if (report.id === "corrections") {
-      downloadCsv("stacktrack-correction-register.csv", [["Request ID", "Container", "Impact", "Status", "Requested by", "Requested at", "Proposed location", "Proposed state", "Request reason", "Latest decision by", "Latest decision at", "Latest decision reason"], ...filteredCorrections.map((item) => [item.correctionRequestId, item.containerLabel, item.impactLevel, item.status, item.requestedByDisplayName, item.requestedAt, locationName(item.proposedCorrection.locationId), item.proposedCorrection.loadState ?? "", item.reason, item.latestActorDisplayName ?? "", item.latestActionAt ?? "", item.latestActionReason ?? ""])]);
+      downloadCsv("stacktrack-correction-register.csv", [["Request ID", "Container", "Impact", "Status", "Requested by", "Requested at", "Proposed location", "Proposed state", "Request reason", "Latest decision by", "Latest decision at", "Latest decision reason"], ...filteredCorrections.map((item) => [item.correctionRequestId, item.containerLabel, item.impactLevel, item.status, item.requestedByDisplayName, item.requestedAt, locationName(item.proposedCorrection.locationId), item.proposedCorrection.loadState ? loadStateLabel(item.proposedCorrection.loadState) : "", item.reason, item.latestActorDisplayName ?? "", item.latestActionAt ?? "", item.latestActionReason ?? ""])]);
       return;
     }
     if (report.id === "devices") {
@@ -2483,11 +2530,11 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       return;
     }
     if (report.id === "transit") {
-      downloadCsv("stacktrack-transit-aging.csv", [["Container", "Origin", "Destination", "Sent at", "Age hours", "Health", "Receipt status"], ...transitRows.map((row) => [containerLabel(row.projection.containerId), locationName(row.originId), locationName(row.destinationId), row.outbound?.effectiveAt ?? "", row.ageHours === null ? "" : row.ageHours.toFixed(1), row.projection.health, row.outbound ? "Awaiting receipt" : "Missing outbound evidence"])]);
+      downloadCsv("stacktrack-transit-aging.csv", [["Container", "Origin", "Destination", "Sent at", "Age hours", "Health", "Receipt status"], ...transitRows.map((row) => [containerLabel(row.projection.containerId), locationName(row.originId), locationName(row.destinationId), row.outbound?.effectiveAt ?? "", row.ageHours === null ? "" : row.ageHours.toFixed(1), projectionHealthLabel(row.projection.health), row.outbound ? "Awaiting receipt" : "Missing outbound evidence"])]);
       return;
     }
     if (report.id === "routes") {
-      downloadCsv("stacktrack-multi-hop-route-ledger.csv", [["Container", "Hop", "Origin", "Destination", "Departed", "Received", "Status", "Health"], ...routeRows.map((row) => [row.container.label, row.container.containerId, row.segment.origin?.name ?? "Origin not recorded", row.segment.destination?.name ?? "Destination not recorded", row.segment.departedAt, row.segment.receivedAt ?? "", row.segment.status === "received" ? "Received" : row.segment.status === "superseded" ? "Superseded by later departure" : "Awaiting receipt", row.projection?.health ?? "No projection"]) ]);
+      downloadCsv("stacktrack-multi-hop-route-ledger.csv", [["Container", "Hop", "Origin", "Destination", "Departed", "Received", "Status", "Health"], ...routeRows.map((row) => [row.container.label, row.container.containerId, row.segment.origin?.name ?? "Origin not recorded", row.segment.destination?.name ?? "Destination not recorded", row.segment.departedAt, row.segment.receivedAt ?? "", row.segment.status === "received" ? "Received" : row.segment.status === "superseded" ? "Superseded by later departure" : "Awaiting receipt", projectionHealthLabel(row.projection?.health)]) ]);
       return;
     }
     if (report.id === "latency") {
@@ -3033,7 +3080,7 @@ function ReviewCaseCard({ reviewCase, data, session, onAction, onEvidence }: { r
   const act = async (action: ReviewAction) => { setError(null); setBusy(true); try { await onAction(action, reason); setReason(""); } catch (caught) { setError(caught instanceof Error ? caught.message : "Review decision could not be recorded."); } finally { setBusy(false); } };
   const projection = data.projections[reviewCase.containerId];
   const route = getContainerRouteContext(reviewCase.containerId, data);
-  return <article className={`exception-card ${isClosed ? "exception-card--closed" : ""}`}><div className="exception-card__icon"><AlertTriangle size={22} /></div><div className="exception-card__body"><div><Pill tone={isClosed ? "muted" : "warn"}>{reviewStatusLabel(reviewCase.status)}</Pill><span>{relativeTime(reviewCase.lastActionAt ?? reviewCase.openedAt)}</span></div><h2>{reviewCase.containerLabel} needs a review decision</h2><p>{reviewCase.reasonCode.replaceAll("_", " ")} · {projection?.conflicts.length ?? 0} current projection conflicts · {reviewCase.evidenceEventIds.length} preserved evidence event{reviewCase.evidenceEventIds.length === 1 ? "" : "s"}. {route.inTransit ? `Currently in transit from ${route.origin?.name ?? "an unconfirmed origin"} to ${route.destination?.name ?? "an unconfirmed destination"}.` : route.currentLocation ? `Last confirmed at ${route.currentLocation.name}.` : "Current location is not confirmed."}</p><div className="evidence"><span><strong>{reviewCase.actionCount}</strong> recorded actions</span><span><strong>{projection?.appliedEventIds.length ?? 0}</strong> applied events</span><span><strong>{projection?.warnings.length ?? 0}</strong> timing warnings</span></div>{reviewCase.lastActionReason && <div className="review-last-action"><strong>Latest reason:</strong> {reviewCase.lastActionReason}</div>}{manages && <label className="review-reason"><span>Decision reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder="State what was verified and who should act next." /></label>}{error && <div className="sign-in-error">{error}</div>}</div><div className="exception-card__actions"><button className="secondary" onClick={onEvidence}>View evidence</button>{manages && !isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("assigned")}>{busy ? "Recording…" : "Assign review"}</button>}{canResolve && !isClosed && <button className="primary" disabled={busy || reason.trim().length < 8} onClick={() => void act("resolved")}>{busy ? "Recording…" : "Resolve case"}</button>}{canResolve && isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("reopened")}>{busy ? "Recording…" : "Reopen case"}</button>}</div></article>;
+  return <article className={`exception-card ${isClosed ? "exception-card--closed" : ""}`}><div className="exception-card__icon"><AlertTriangle size={22} /></div><div className="exception-card__body"><div><Pill tone={isClosed ? "muted" : "warn"}>{reviewStatusLabel(reviewCase.status)}</Pill><span>{relativeTime(reviewCase.lastActionAt ?? reviewCase.openedAt)}</span></div><h2>{reviewCase.containerLabel} needs a review decision</h2><p>{humanizeCode(reviewCase.reasonCode)} · {projection?.conflicts.length ?? 0} current projection conflicts · {reviewCase.evidenceEventIds.length} preserved evidence event{reviewCase.evidenceEventIds.length === 1 ? "" : "s"}. {route.inTransit ? `Currently in transit from ${route.origin?.name ?? "an unconfirmed origin"} to ${route.destination?.name ?? "an unconfirmed destination"}.` : route.currentLocation ? `Last confirmed at ${route.currentLocation.name}.` : "Current location is not confirmed."}</p><div className="evidence"><span><strong>{reviewCase.actionCount}</strong> recorded actions</span><span><strong>{projection?.appliedEventIds.length ?? 0}</strong> applied events</span><span><strong>{projection?.warnings.length ?? 0}</strong> timing warnings</span></div>{reviewCase.lastActionReason && <div className="review-last-action"><strong>Latest reason:</strong> {reviewCase.lastActionReason}</div>}{manages && <label className="review-reason"><span>Decision reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder="State what was verified and who should act next." /></label>}{error && <div className="sign-in-error">{error}</div>}</div><div className="exception-card__actions"><button className="secondary" onClick={onEvidence}>View evidence</button>{manages && !isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("assigned")}>{busy ? "Recording…" : "Assign review"}</button>}{canResolve && !isClosed && <button className="primary" disabled={busy || reason.trim().length < 8} onClick={() => void act("resolved")}>{busy ? "Recording…" : "Resolve case"}</button>}{canResolve && isClosed && <button className="secondary" disabled={busy || reason.trim().length < 8} onClick={() => void act("reopened")}>{busy ? "Recording…" : "Reopen case"}</button>}</div></article>;
 }
 
 function ExceptionsPage({ data, openDetail, session, refresh }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession; refresh: () => Promise<void> }) {
@@ -3050,7 +3097,7 @@ function ExceptionsPage({ data, openDetail, session, refresh }: { data: Operatio
       recordIdLabel: "Review case UUID",
       body: <><DetailFacts items={[
         ["Case ID", item.reviewCaseId],
-        ["Reason code", item.reasonCode],
+        ["Review reason", humanizeCode(item.reasonCode)],
         ["Current status", reviewStatusLabel(item.status)],
         ["Recorded journey", routeLocationNames(getContainerRouteContext(item.containerId, data)).join(" → ") || "No handoffs recorded"],
         ["Evidence events", String(item.evidenceEventIds.length)],
