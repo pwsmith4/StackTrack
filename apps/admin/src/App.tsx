@@ -2251,11 +2251,14 @@ type ActivityEventNeighbors = {
 function activityEventColor(containerId: string): CSSProperties {
   let hash = 0;
   for (const character of containerId) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  const hue = hash % 360;
+  // Keep relationship colors in a calm blue/teal/violet range. Red and orange
+  // are reserved for genuine warnings so a normal container group never looks
+  // like an operational problem.
+  const hue = 160 + (hash % 130);
   return {
-    "--timeline-accent": `hsl(${hue} 62% 42%)`,
-    "--timeline-rail": `hsl(${hue} 54% 78%)`,
-    "--timeline-wash": `hsl(${hue} 58% 98%)`
+    "--timeline-accent": `hsl(${hue} 56% 40%)`,
+    "--timeline-rail": `hsl(${hue} 48% 78%)`,
+    "--timeline-wash": `hsl(${hue} 46% 98%)`
   } as CSSProperties;
 }
 
