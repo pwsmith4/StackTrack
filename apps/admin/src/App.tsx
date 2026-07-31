@@ -2265,11 +2265,31 @@ function activityEventOrder(left: StoredEvent, right: StoredEvent) {
     || left.eventId.localeCompare(right.eventId);
 }
 
+function activityLocalBoundary(dateValue: string, timeValue: string, endOfMinute = false) {
+  const dateParts = dateValue.split("-").map(Number);
+  if (dateParts.length !== 3 || !dateParts.every(Number.isFinite)) return null;
+  const [year, month, day] = dateParts;
+  const timeParts = timeValue ? timeValue.split(":").map(Number) : [endOfMinute ? 23 : 0, endOfMinute ? 59 : 0];
+  const [hours, minutes] = timeParts;
+  if (![year, month, day, hours, minutes].every(Number.isFinite)) return null;
+  const value = new Date(year!, month! - 1, day, hours, minutes, endOfMinute ? 59 : 0, endOfMinute ? 999 : 0);
+  return Number.isNaN(value.getTime()) ? null : value.getTime();
+}
+
+function activityMinutes(value: string) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return Number.isFinite(hours) && Number.isFinite(minutes) ? hours! * 60 + minutes! : null;
+}
+
 function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; setPage: (page: Page) => void }) {
-  const [eventFilter, setEventFilter] = useState<"all" | StoredEvent["eventType"]>("all");
-  const [locationFilter, setLocationFilter] = useState("");
-  const [deviceFilter, setDeviceFilter] = useState("");
+  const [eventFilters, setEventFilters] = useState<StoredEvent["eventType"][]>([]);
+  const [locationFilters, setLocationFilters] = useState<string[]>([]);
+  const [deviceFilters, setDeviceFilters] = useState<string[]>([]);
   const [windowFilter, setWindowFilter] = useState<ActivityWindow>("all");
+  const [fromDate, setFromDate] = useState("");
+  const [fromTime, setFromTime] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [toTime, setToTime] = useState("");
   const containerName = (id: string) => data.fixtures.containers.find((item) => item.containerId === id)?.label ?? "Unknown container";
   const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown location";
   const deviceFor = (id: string) => data.fixtures.devices.find((item) => item.deviceId === id);
@@ -2298,9 +2318,28 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
     previousContainerEvent.set(event.containerId, event);
     previousScannerEvent.set(event.deviceId, event);
   }
-  const cutoff = windowFilter === "today" ? Date.now() - 24 * 60 * 60 * 1000 : windowFilter === "7d" ? Date.now() - 7 * 24 * 60 * 60 * 1000 : windowFilter === "30d" ? Date.now() - 30 * 24 * 60 * 60 * 1000 : null;
+  const customFrom = fromDate ? activityLocalBoundary(fromDate, fromTime) : null;
+  const customTo = toDate ? activityLocalBoundary(toDate, toTime, true) : null;
+  const quickStart = windowFilter === "today" ? Date.now() - 24 * 60 * 60 * 1000 : windowFilter === "7d" ? Date.now() - 7 * 24 * 60 * 60 * 1000 : windowFilter === "30d" ? Date.now() - 30 * 24 * 60 * 60 * 1000 : null;
+  const lowerBound = customFrom === null ? quickStart : quickStart === null ? customFrom : Math.max(customFrom, quickStart);
+  const upperBound = customTo === null ? Date.now() : Math.min(customTo, Date.now());
+  const dateRangeError = customFrom !== null && customTo !== null && customFrom > customTo
+    ? "The start of the range must be before the end of the range."
+    : null;
+  const hasDateRange = Boolean(fromDate || toDate);
+  const fromMinutes = activityMinutes(fromTime);
+  const toMinutes = activityMinutes(toTime);
+  const locationOptions = data.fixtures.locations.map((location) => ({ value: location.locationId, label: location.name }));
+  const deviceOptions = data.fixtures.devices.map((device) => ({ value: device.deviceId, label: `${scannerNumber(device.deviceId)} · ${device.label}` }));
+  const actionOptions = [
+    { value: "load_assigned", label: "Marked full" },
+    { value: "batch_out", label: "Departed / in transit" },
+    { value: "batch_in", label: "Arrived" },
+    { value: "emptied", label: "Marked empty" }
+  ] as const;
   const events = data.events.filter((event) => {
     const device = deviceFor(event.deviceId);
+    const relatedLocationIds = [event.locationId, payloadLocationId(event, "sourceLocationId"), payloadLocationId(event, "destinationLocationId")].filter((value): value is string => Boolean(value));
     const searchable = [
       containerName(event.containerId),
       eventLabel(event.eventType),
@@ -2311,25 +2350,54 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
       String(event.payload.goodsType ?? ""),
       String(event.payload.secondaryValue ?? ""),
       locationName(event.locationId),
+      ...relatedLocationIds.map(locationName),
       device?.label ?? "",
       scannerNumber(event.deviceId),
       event.accuracyFlags.join(" ")
     ].join(" ").toLowerCase();
-    return (eventFilter === "all" || event.eventType === eventFilter) &&
+    const eventTimestamp = Date.parse(event.eventAt);
+    const eventLocalTime = new Date(eventTimestamp);
+    const eventMinutes = eventLocalTime.getHours() * 60 + eventLocalTime.getMinutes();
+    const timeOfDayMatches = hasDateRange || (fromMinutes === null && toMinutes === null)
+      ? true
+      : fromMinutes === null
+        ? eventMinutes <= toMinutes!
+        : toMinutes === null
+          ? eventMinutes >= fromMinutes
+          : fromMinutes <= toMinutes
+            ? eventMinutes >= fromMinutes && eventMinutes <= toMinutes
+            : eventMinutes >= fromMinutes || eventMinutes <= toMinutes;
+    return (!eventFilters.length || eventFilters.includes(event.eventType)) &&
       (!searchTerm || searchable.includes(searchTerm)) &&
-      (!locationFilter || event.locationId === locationFilter) &&
-      (!deviceFilter || event.deviceId === deviceFilter) &&
-      (cutoff === null || Date.parse(event.eventAt) >= cutoff);
+      (!locationFilters.length || locationFilters.some((locationId) => relatedLocationIds.includes(locationId))) &&
+      (!deviceFilters.length || deviceFilters.includes(event.deviceId)) &&
+      (lowerBound === null || eventTimestamp >= lowerBound) &&
+      eventTimestamp <= upperBound &&
+      timeOfDayMatches;
   }).sort((left, right) => -activityEventOrder(left, right));
   const visibleEvents = events.slice(0, 100);
-  const clearFilters = () => { setEventFilter("all"); setLocationFilter(""); setDeviceFilter(""); setWindowFilter("all"); };
-  const hasFilters = Boolean(searchTerm || locationFilter || deviceFilter || windowFilter !== "all" || eventFilter !== "all");
+  const clearFilters = () => { setEventFilters([]); setLocationFilters([]); setDeviceFilters([]); setWindowFilter("all"); setFromDate(""); setFromTime(""); setToDate(""); setToTime(""); };
+  const hasFilters = Boolean(searchTerm || locationFilters.length || deviceFilters.length || windowFilter !== "all" || eventFilters.length || fromDate || fromTime || toDate || toTime);
+  const filtersInvalid = Boolean(dateRangeError);
   return <section className="panel activity-page">
     <div className="activity-purpose"><div><span className="eyebrow">Operational feed</span><strong>Physical observations from scanners</strong><p>Use Activity to trace where a container was scanned and how the movement unfolded. For administrator changes, sign-ins, device controls, and approvals, use Audit trail.</p></div><button className="secondary" onClick={() => setPage("audit")}><ScrollText size={15} /> Open audit trail</button></div>
-    <div className="toolbar"><div className="filter-tabs">{(["all", "load_assigned", "batch_out", "batch_in", "emptied"] as const).map((value) => <button key={value} className={eventFilter === value ? "active" : ""} onClick={() => setEventFilter(value)}>{value === "all" ? "All events" : eventLabel(value)}</button>)}</div><span className="date-chip">{events.length} shown</span></div>
-    <div className="activity-filters"><label>Location<select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label>Scanner<select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option value={device.deviceId} key={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label><label>Time window<select value={windowFilter} onChange={(event) => setWindowFilter(event.target.value as ActivityWindow)}><option value="all">All available</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>{hasFilters && <button className="secondary activity-filters__clear" onClick={clearFilters}>Clear filters</button>}</div>
+    <div className="activity-filter-panel">
+      <div className="activity-filter-panel__header"><div><span className="eyebrow">Filter observations</span><h2>Choose exactly what to review</h2><p>Combine actions, locations, scanners, and time boundaries. Selecting several options matches any selected option within that field.</p></div><div className="activity-filter-panel__actions"><span className="date-chip">{events.length} shown</span><button className="secondary" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button></div></div>
+      <div className="activity-filters activity-filters--expanded">
+        <AuditMultiSelect label="Actions" options={actionOptions} selected={eventFilters} onToggle={(value) => setEventFilters((current) => current.includes(value as StoredEvent["eventType"]) ? current.filter((item) => item !== value) : [...current, value as StoredEvent["eventType"]])} onClear={() => setEventFilters([])} emptyLabel="All actions" />
+        <AuditMultiSelect label="Locations" options={locationOptions} selected={locationFilters} onToggle={(value) => setLocationFilters((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setLocationFilters([])} emptyLabel="All locations" />
+        <AuditMultiSelect label="Scanners" options={deviceOptions} selected={deviceFilters} onToggle={(value) => setDeviceFilters((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setDeviceFilters([])} emptyLabel="All scanners" />
+        <label>Quick time window<select value={windowFilter} onChange={(event) => setWindowFilter(event.target.value as ActivityWindow)}><option value="all">All available</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
+        <label>From date<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
+        <label>From time<input type="time" value={fromTime} onChange={(event) => setFromTime(event.target.value)} /></label>
+        <label>To date<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
+        <label>To time<input type="time" value={toTime} onChange={(event) => setToTime(event.target.value)} /></label>
+      </div>
+      {dateRangeError && <p className="activity-filter-error" role="alert">{dateRangeError}</p>}
+      {(fromDate || toDate || fromTime || toTime) && !filtersInvalid && <p className="activity-filter-help">{fromDate && !toDate ? `From ${fromDate}${fromTime ? ` at ${fromTime}` : ""} through now.` : toDate && !fromDate ? `Through ${toDate}${toTime ? ` at ${toTime}` : ""}.` : fromDate && toDate ? `${fromDate}${fromTime ? ` ${fromTime}` : ""} through ${toDate}${toTime ? ` ${toTime}` : ""}.` : `Daily events between ${fromTime || "00:00"} and ${toTime || "23:59"}${fromMinutes !== null && toMinutes !== null && fromMinutes > toMinutes ? " (overnight)" : ""}.`}</p>}
+    </div>
     {searchTerm && <p className="activity-search-summary">Searching event IDs, load codes, goods, containers, scanners, locations, and warning text for <strong>“{query.trim()}”</strong>.</p>}
-     {events.length ? <div className="timeline">{visibleEvents.map((event, index) => {
+     {filtersInvalid ? <EmptyState>Adjust the time range to see scanner observations.</EmptyState> : events.length ? <div className="timeline">{visibleEvents.map((event, index) => {
        const container = data.fixtures.containers.find((item) => item.containerId === event.containerId);
        const location = locationName(event.locationId);
        // Relationships are resolved against the complete event history, not the
