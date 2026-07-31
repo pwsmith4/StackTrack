@@ -43,7 +43,7 @@ export interface AdminPrincipal { tenantId: string; userId: string; username: st
 export interface AdminSession { token: string; principal: AdminPrincipal; expiresAt: string; }
 export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; actorUsername?: string | null; action: string; targetType: string; targetId: string | null; targetLabel?: string | null; locationId?: string | null; locationName?: string | null; details: Record<string, unknown>; }
 export interface AuditPage { items: AuditEntry[]; total: number; limit: number; offset: number; }
-export interface AuditSearchFilters { search?: string; locationId?: string; deviceId?: string; actorUserId?: string; actionPrefix?: string; targetType?: string; from?: string; to?: string; limit?: number; offset?: number; }
+export interface AuditSearchFilters { search?: string; locationId?: string; deviceId?: string; actorUserId?: string; actionPrefixes?: string[]; targetTypes?: string[]; actionPrefix?: string; targetType?: string; from?: string; to?: string; limit?: number; offset?: number; }
 export type ReviewAction = "assigned" | "approved" | "rejected" | "resolved" | "reopened";
 export interface ReviewCase { reviewCaseId: string; containerId: string; containerLabel: string; reasonCode: string; evidenceEventIds: string[]; openedAt: string; status: "opened" | ReviewAction; lastActionAt: string | null; lastActionReason: string | null; actionCount: number; }
 export type CorrectionImpact = "routine" | "material";
@@ -240,7 +240,7 @@ export async function listAuditEntries(session: AdminSession): Promise<AuditEntr
 export async function searchAuditEntries(session: AdminSession, filters: AuditSearchFilters = {}): Promise<AuditPage> {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
-    if (value !== undefined && value !== "") params.set(key, String(value));
+    if (value !== undefined && value !== "" && (!Array.isArray(value) || value.length > 0)) params.set(key, String(value));
   }
   const path = `/api/v1/local/admin/audit-log${params.toString() ? `?${params.toString()}` : ""}`;
   const response = await readWithRetry(path, session);
