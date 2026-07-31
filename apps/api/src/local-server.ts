@@ -57,7 +57,7 @@ try {
   ledger = fileLedger;
   dataDescription = `JSON fallback at ${dataPath}`;
 }
-const app = createApp({
+const app = await createApp({
   ledger,
   localMode: true,
   ...(referenceData ? { referenceData } : {}),

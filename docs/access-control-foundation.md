@@ -42,8 +42,12 @@ password must be a unique 12+ character value, not `password`.
 The pilot implementation now enforces these boundaries server-side:
 
 - the public admin page renders no tenant data until the API verifies a session;
+- browser API access is allowlisted to the StackTrack web origins, and sign-in
+  attempts are limited to five per fifteen minutes per client address;
 - sessions expire after 12 hours, can be explicitly signed out, and are revoked
   immediately if the account is disabled or its role changes;
+- an administrator created with a temporary password cannot view or manage
+  pilot operations until they replace it with their own 12+ character password;
 - Organization Owners can add a second Organization Owner (for example, the
   Goodwill Chief of IT), Operations Administrators, and Read-only Reviewers;
 - StackTrack will not allow the final active Organization Owner to be disabled

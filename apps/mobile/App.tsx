@@ -256,7 +256,11 @@ function AppContent() {
     if (!effectiveOnline) return;
     void fetch(`${API_URL}/api/v1/local/devices/${DEVICE_ID}/telemetry`, {
       method: "PATCH",
-      headers: { "content-type": "application/json", "x-stacktrack-tenant-id": TENANT_ID },
+      headers: {
+        "content-type": "application/json",
+        "x-stacktrack-tenant-id": TENANT_ID,
+        "x-stacktrack-device-id": DEVICE_ID
+      },
       body: JSON.stringify({ installationId: INSTALLATION_ID, appVersion: APP_REPORTED_VERSION, pendingOfflineScanCount: pending })
     }).catch(() => undefined);
   }, [effectiveOnline, pending]);

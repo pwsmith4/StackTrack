@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import {
   InMemoryEventLedger,
   projectContainer,
@@ -62,12 +63,37 @@ function publicEvent(event: StoredEvent) {
   return result;
 }
 
-export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
+export async function createApp(dependencies: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const ledger = dependencies.ledger ?? new InMemoryEventLedger();
   const now = dependencies.now ?? (() => new Date());
   const localMode = dependencies.localMode ?? false;
-  const requireAdmin = async (request: FastifyRequest, reply: FastifyReply): Promise<AdminPrincipal | null> => {
+  const browserOrigins = (process.env.STACKTRACK_ALLOWED_ORIGINS ?? [
+    "https://pwsmith4.github.io",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:8081",
+    "http://localhost:8081",
+    "http://127.0.0.1:8082",
+    "http://localhost:8082"
+  ].join(","))
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  // Authentication and administrative routes are deliberately bounded even in
+  // the isolated pilot. Route-specific limits below are tighter where an
+  // action can create access or repeatedly test a password.
+  await app.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: "1 minute",
+    keyGenerator: (request) => request.ip
+  });
+  const requireAdmin = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    options: { allowPendingPasswordChange?: boolean } = {}
+  ): Promise<AdminPrincipal | null> => {
     if (!dependencies.adminAccess) {
       reply.code(503).send({ error: "AdminAccessUnavailable", message: "Administrative sign-in has not been provisioned." });
       return null;
@@ -78,23 +104,36 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       reply.code(401).send({ error: "AdminAuthenticationRequired", message: "Sign in is required for this administrative action." });
       return null;
     }
+    if (principal.mustChangePassword && !options.allowPendingPasswordChange) {
+      reply.code(409).send({
+        error: "PasswordChangeRequired",
+        message: "Change the temporary password before viewing or managing pilot operations."
+      });
+      return null;
+    }
     return principal;
   };
 
-  app.addHook("onSend", async (_request, reply, payload) => {
+  app.addHook("onSend", async (request, reply, payload) => {
     if (localMode) {
-      reply.header("access-control-allow-origin", "*");
-      reply.header(
-        "access-control-allow-headers",
-        "authorization,content-type,cache-control,x-stacktrack-tenant-id,x-stacktrack-device-id"
-      );
-      reply.header("access-control-allow-methods", "GET,POST,PATCH,OPTIONS");
+      const origin = firstHeader(request.headers.origin);
+      if (origin && browserOrigins.includes(origin)) {
+        reply.header("access-control-allow-origin", origin);
+        reply.header("vary", "Origin");
+        reply.header(
+          "access-control-allow-headers",
+          "authorization,content-type,cache-control,x-stacktrack-tenant-id,x-stacktrack-device-id"
+        );
+        reply.header("access-control-allow-methods", "GET,POST,PATCH,OPTIONS");
+      }
     }
     return payload;
   });
 
   if (localMode) {
-    app.post<{ Body: { username?: string; password?: string } }>("/api/v1/local/admin/session", async (request, reply) => {
+    app.post<{ Body: { username?: string; password?: string } }>("/api/v1/local/admin/session", {
+      config: { rateLimit: { max: 5, timeWindow: "15 minutes" } }
+    }, async (request, reply) => {
       if (!dependencies.adminAccess || typeof request.body?.username !== "string" || typeof request.body?.password !== "string") {
         return reply.code(400).send({ error: "InvalidSignIn" });
       }
@@ -132,7 +171,7 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
     });
 
     app.post("/api/v1/local/admin/session/revoke", async (request, reply) => {
-      const principal = await requireAdmin(request, reply);
+      const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
       const token = readBearerToken(request);
       if (!principal || !token) return;
       await dependencies.adminAccess!.revokeSession(principal, token);
@@ -140,7 +179,7 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
     });
 
     app.patch<{ Body: { currentPassword?: string; newPassword?: string } }>("/api/v1/local/admin/me/password", async (request, reply) => {
-      const principal = await requireAdmin(request, reply);
+      const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
       const token = readBearerToken(request);
       const body = request.body;
       if (!principal || !token) return;
@@ -387,8 +426,14 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
     app.patch<{ Params: { deviceId: string }; Body: DeviceTelemetryUpdate }>(
       "/api/v1/local/devices/:deviceId/telemetry",
       async (request, reply) => {
-        const tenantId = readTenantId(request);
-        if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
+        const context = readContext(request);
+        if (!context) return reply.code(401).send({ error: "Unauthorized" });
+        if (context.deviceId !== request.params.deviceId) {
+          return reply.code(403).send({
+            error: "DeviceIdentityMismatch",
+            message: "A scanner can only report telemetry for its own device identifier."
+          });
+        }
         if (!dependencies.deviceAdministration) {
           return reply.code(501).send({ error: "DeviceAdministrationUnavailable" });
         }
@@ -403,7 +448,7 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
           return reply.code(400).send({ error: "InvalidDeviceTelemetry" });
         }
         const device = await dependencies.deviceAdministration.reportTelemetry(
-          tenantId,
+          context.tenantId,
           request.params.deviceId,
           update
         );

@@ -19,7 +19,7 @@ if (!databaseUrl) {
 const pool = new Pool({ connectionString: databaseUrl });
 await pool.query("SELECT 1");
 const ledger = new PostgresEventLedger(pool);
-const app = createApp({
+const app = await createApp({
   ledger,
   // The current interfaces use development headers and local inspection routes.
   // Never enable this outside the synthetic Azure test environment.
