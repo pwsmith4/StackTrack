@@ -36,7 +36,7 @@ import {
   Wifi,
   X
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   API_URL,
   ApiRequestError,
@@ -746,9 +746,10 @@ function PageContent({
 
 function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Page) => void }) {
   const projections = Object.values(data.projections).filter(Boolean) as Projection[];
+  const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
   const loaded = projections.filter((item) => item.loadState === "loaded").length;
   const transitId = data.fixtures.locations.find((item) => item.type === "in_transit")?.locationId;
-  const inTransit = projections.filter((item) => item.locationId === transitId).length;
+  const inTransit = transitId ? projections.filter((item) => item.locationId === transitId).length : 0;
   const review = projections.filter((item) => item.health === "needs_review").length;
   const pendingCorrections = data.correctionRequests.filter(
     (item) => item.status === "pending" || item.status === "reopened"
@@ -756,13 +757,8 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
   const recent = data.events.slice(0, 5);
   const locName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown";
   const container = (id: string) => data.fixtures.containers.find((item) => item.containerId === id);
-  const physicalLocations = [
-    data.fixtures.locations.find((item) => item.name === "Midtown Store"),
-    data.fixtures.locations.find((item) => item.type === "warehouse"),
-    data.fixtures.locations.find((item) => item.type === "donation_express")
-  ].filter((item): item is Location => Boolean(item));
   const transitItems = projections
-    .filter((item) => item.locationId === transitId)
+    .filter((item) => Boolean(transitId) && item.locationId === transitId)
     .map((projection) => {
       const outbound = data.events
         .filter((event) => event.containerId === projection.containerId && event.eventType === "batch_out")
@@ -789,6 +785,19 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
         destinationLocationId
       };
     });
+  const routeMap = new Map<string, DashboardRoute>();
+  transitItems.forEach((item) => {
+    const key = `${item.sourceLocationId ?? "unknown"}:${item.destinationLocationId ?? "unknown"}`;
+    const route = routeMap.get(key) ?? {
+      key,
+      origin: data.fixtures.locations.find((location) => location.locationId === item.sourceLocationId) ?? null,
+      destination: data.fixtures.locations.find((location) => location.locationId === item.destinationLocationId) ?? null,
+      items: []
+    };
+    route.items.push(item);
+    routeMap.set(key, route);
+  });
+  const activeRoutes = [...routeMap.values()].sort((left, right) => right.items.length - left.items.length);
   const transitLabels = transitItems.map((item) => item.label);
   const transitPreview = [
     ...transitLabels.slice(0, 6),
@@ -800,73 +809,61 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
   const staleDevices = activeDevices.filter((device) => !device.lastReportedAt || Date.now() - Date.parse(device.lastReportedAt) > 24 * 60 * 60 * 1000);
   const observationsLastDay = data.events.filter((event) => Date.now() - Date.parse(event.receivedAt) <= 24 * 60 * 60 * 1000).length;
   const availableLoadCodes = data.events.filter((event) => event.eventType === "load_assigned" && data.projections[event.containerId]?.activeLoadCodeId === event.loadCodeId).length;
+  const unobservedContainers = data.fixtures.containers.filter((item) => !data.projections[item.containerId]).length;
+  const observedContainers = data.fixtures.containers.length - unobservedContainers;
+  const coveragePercent = data.fixtures.containers.length ? Math.round((observedContainers / data.fixtures.containers.length) * 100) : 0;
+  const loadedPercent = data.fixtures.containers.length ? Math.round((loaded / data.fixtures.containers.length) * 100) : 0;
+  const attentionCount = review + pendingCorrections.length;
+  const reviewItems = projections.filter((item) => item.health === "needs_review");
 
   return (
     <>
       <div className="metric-grid">
-        <Metric icon={<ContainerIcon />} label="Tracked containers" value={data.fixtures.containers.length} detail="Across 4 location types" tone="blue" />
-        <Metric icon={<PackageCheck />} label="Currently loaded" value={loaded} detail={`${Math.round((loaded / data.fixtures.containers.length) * 100)}% of tracked assets`} tone="cyan" />
-        <Metric icon={<Truck />} label="In transit" value={inTransit} detail="Latest valid observation" tone="navy" />
-        <Metric icon={<AlertTriangle />} label="Needs attention" value={review + pendingCorrections.length} detail={review + pendingCorrections.length ? "Review or approval required" : "No open exceptions"} tone={review + pendingCorrections.length ? "orange" : "green"} />
+        <Metric icon={<ContainerIcon />} label="Tracked containers" value={data.fixtures.containers.length} detail={`${operatingLocations.length} active operating locations`} tone="blue" onClick={() => setPage("containers")} />
+        <Metric icon={<PackageCheck />} label="Currently loaded" value={loaded} detail={`${loadedPercent}% of tracked assets`} tone="cyan" onClick={() => setPage("containers")} />
+        <Metric icon={<Truck />} label="In transit" value={inTransit} detail="Awaiting destination receipt" tone="navy" onClick={() => setPage("locations")} />
+        <Metric icon={<AlertTriangle />} label="Needs attention" value={attentionCount} detail={attentionCount ? `${review} history issue${review === 1 ? "" : "s"} · ${pendingCorrections.length} approval${pendingCorrections.length === 1 ? "" : "s"}` : "No open exceptions"} tone={attentionCount ? "orange" : "green"} onClick={() => setPage("exceptions")} />
       </div>
 
       <section className="panel operations-pulse">
         <PanelTitle title="Operations pulse" subtitle="Signals that help administrators prioritize today’s work" />
         <div className="pulse-grid">
-          <button className="pulse-card pulse-card--blue" onClick={() => setPage("devices")}><span className="pulse-card__icon"><Wifi size={18} /></span><span><small>Scanner coverage</small><strong>{activeDevices.length} of {data.fixtures.devices.length} enabled</strong><em>{staleDevices.length ? `${staleDevices.length} need a check-in` : "All enabled scanners reported recently"}</em></span><ChevronRight size={16} /></button>
-          <button className="pulse-card pulse-card--cyan" onClick={() => setPage("activity")}><span className="pulse-card__icon"><Activity size={18} /></span><span><small>Recent observations</small><strong>{observationsLastDay} in the last 24 hours</strong><em>Open Activity to trace movement and scanner timing</em></span><ChevronRight size={16} /></button>
+          <button className="pulse-card pulse-card--blue" onClick={() => setPage("devices")}><span className="pulse-card__icon"><Wifi size={18} /></span><span><small>Scanner coverage</small><strong>{activeDevices.length} of {data.fixtures.devices.length} enabled</strong><em>{staleDevices.length ? `${staleDevices.length} stale report${staleDevices.length === 1 ? "" : "s"} · review Devices` : activeDevices.length ? "All enabled scanners reported recently" : "No scanners are enabled"}</em></span><ChevronRight size={16} /></button>
+          <button className="pulse-card pulse-card--cyan" onClick={() => setPage("activity")}><span className="pulse-card__icon"><Activity size={18} /></span><span><small>Recent observations</small><strong>{observationsLastDay} in the last 24 hours</strong><em>{observationsLastDay ? "Open Activity to trace movement and scanner timing" : "No accepted observations in the last 24 hours"}</em></span><ChevronRight size={16} /></button>
           <button className="pulse-card pulse-card--navy" onClick={() => setPage("loads")}><span className="pulse-card__icon"><PackageCheck size={18} /></span><span><small>Load codes ready</small><strong>{availableLoadCodes} available for handoff</strong><em>{availableLoadCodes ? "Open Load codes to select a validated handoff." : "No validated handoff codes are ready."}</em></span><ChevronRight size={16} /></button>
+          <button className="pulse-card pulse-card--green" onClick={() => setPage("containers")}><span className="pulse-card__icon"><ContainerIcon size={18} /></span><span><small>Observation coverage</small><strong>{observedContainers} of {data.fixtures.containers.length} observed</strong><em>{unobservedContainers ? `${unobservedContainers} container${unobservedContainers === 1 ? " has" : "s have"} no confirmed history` : `All registered containers have history · ${coveragePercent}% coverage`}</em></span><ChevronRight size={16} /></button>
         </div>
       </section>
 
       <div className="dashboard-grid">
         <section className="panel network-panel">
-          <PanelTitle title="Route flow" subtitle="Live movement on a representative store-to-warehouse route" action="View all locations" onClick={() => setPage("locations")} />
-          <div className="flow">
-            {physicalLocations.map((location, index) => {
-              const count = projections.filter((item) => item.locationId === location.locationId).length;
-              const Icon = location.type === "warehouse" ? Building2 : Boxes;
-              const nextLocation = physicalLocations[index + 1];
-              const laneItems = nextLocation
-                ? transitItems.filter(
-                    (item) =>
-                      item.sourceLocationId === location.locationId &&
-                      item.destinationLocationId === nextLocation.locationId
-                  )
-                : [];
-              return (
-                <Fragment key={location.locationId}>
-                  <div className="flow-node">
-                    <span className="flow-node__icon"><Icon size={20} /></span>
-                    <strong>{shortLocationName(location)}</strong>
-                    <small>{count} at location</small>
-                  </div>
-                  {nextLocation && (
-                    <TransitLane
-                      from={location}
-                      to={nextLocation}
-                      items={laneItems}
-                    />
-                  )}
-                </Fragment>
-              );
-            })}
-          </div>
+          <PanelTitle title="Active route monitor" subtitle={activeRoutes.length ? `${inTransit} container${inTransit === 1 ? "" : "s"} moving across ${activeRoutes.length} active route${activeRoutes.length === 1 ? "" : "s"}` : "No active transfers are waiting for a destination receipt"} action="View all locations" onClick={() => setPage("locations")} />
+          {activeRoutes.length ? <div className="dashboard-route-list">{activeRoutes.slice(0, 4).map((route) => {
+            const labels = route.items.slice(0, 3).map((item) => item.label).join(", ");
+            const remaining = route.items.length - Math.min(route.items.length, 3);
+            return <button className="dashboard-route" key={route.key} onClick={() => setPage("locations")} aria-label={`View ${route.items.length} containers moving from ${route.origin?.name ?? "origin pending"} to ${route.destination?.name ?? "destination pending"}`}>
+              <span className="dashboard-route__endpoint"><span className="dashboard-route__endpoint-icon">{route.origin ? <LocationTypeIcon location={route.origin} size={17} /> : <MapPin size={17} />}</span><span><strong title={route.origin?.name ?? "Origin pending"}>{route.origin?.name ?? "Origin pending"}</strong><small>{route.origin ? locationTypeLabel(route.origin.type) : "Origin not confirmed"}</small></span></span>
+              <span className="dashboard-route__motion"><span className="dashboard-route__status">{route.items.length} moving</span><span className="dashboard-route__track" aria-hidden="true"><i /><b><ContainerIcon size={13} /></b><em /></span><small>{labels}{remaining > 0 ? ` +${remaining} more` : ""}</small></span>
+              <span className="dashboard-route__endpoint"><span className="dashboard-route__endpoint-icon dashboard-route__endpoint-icon--destination">{route.destination ? <LocationTypeIcon location={route.destination} size={17} /> : <MapPin size={17} />}</span><span><strong title={route.destination?.name ?? "Destination pending"}>{route.destination?.name ?? "Destination pending"}</strong><small>{route.destination ? locationTypeLabel(route.destination.type) : "Receipt destination pending"}</small></span></span>
+              <ChevronRight size={16} />
+            </button>;
+          })}</div> : <div className="dashboard-route-empty"><span><CheckCircle2 size={20} /></span><div><strong>No containers are currently in transit.</strong><p>All latest valid observations point to a confirmed physical location. New transfers will appear here after a batch-out scan.</p></div></div>}
+          {activeRoutes.length > 4 && <p className="dashboard-route-more">+ {activeRoutes.length - 4} additional active routes. Open Locations for the complete network view.</p>}
           <div className={`transit-summary ${inTransit ? "transit-summary--active" : ""}`}>
             <span className="transit-summary__icon"><Truck size={19} /></span>
             <div>
               <strong>{inTransit ? `${inTransit} container${inTransit === 1 ? "" : "s"} currently between locations` : "No containers currently between locations"}</strong>
-              <span>{inTransit ? `${transitPreview} remain in transit until a destination receipt is scanned.` : "All tracked containers have a confirmed physical location."}</span>
+              <span>{inTransit ? `${transitPreview} remain in transit until a destination receipt is scanned.` : unobservedContainers ? `${unobservedContainers} container${unobservedContainers === 1 ? " has" : "s have"} no accepted observation yet.` : "All tracked containers have a confirmed physical location."}</span>
             </div>
             <Pill tone={inTransit ? "blue" : "good"}>{inTransit ? "Moving" : "Clear"}</Pill>
           </div>
         </section>
 
         <section className="panel review-panel">
-          <PanelTitle title="Attention center" subtitle="Items that could change the official state" action="Open queue" onClick={() => setPage("exceptions")} />
-          {review === 0 && pendingCorrections.length === 0 ? <EmptyState>All container histories are internally consistent.</EmptyState> : (
+          <PanelTitle title="Attention center" subtitle={attentionCount ? `${attentionCount} item${attentionCount === 1 ? "" : "s"} need a review or approval` : "No open review or approval items"} action="Open queue" onClick={() => setPage("exceptions")} />
+          {attentionCount === 0 ? <EmptyState>All container histories are internally consistent.</EmptyState> : (
             <>
-            {projections.filter((item) => item.health === "needs_review").map((item) => {
+            {reviewItems.slice(0, 3).map((item) => {
               const c = container(item.containerId);
               return (
                 <button className="review-item" key={item.containerId} onClick={() => setPage("exceptions")}>
@@ -885,6 +882,7 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
                 <ChevronRight size={17} />
               </button>
             ))}
+            {attentionCount > reviewItems.slice(0, 3).length + Math.min(pendingCorrections.length, 4) && <p className="review-panel__more">More items are waiting in the review queue.</p>}
             </>
           )}
         </section>
@@ -896,7 +894,7 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
           <table>
             <thead><tr><th>Container</th><th>Observation</th><th>Location</th><th>Device time</th><th>Accuracy</th></tr></thead>
             <tbody>
-              {recent.map((event) => (
+              {recent.length === 0 ? <tr><td colSpan={5}><div className="dashboard-table-empty"><CheckCircle2 size={18} /><span><strong>No accepted observations yet</strong><small>New scanner observations will appear here after the first sync.</small></span></div></td></tr> : recent.map((event) => (
                 <tr key={event.eventId}>
                   <td><strong>{container(event.containerId)?.label}</strong><small>{container(event.containerId)?.type}</small></td>
                   <td>{eventLabel(event.eventType)}</td>
@@ -913,47 +911,16 @@ function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Pa
   );
 }
 
-function shortLocationName(location: Location) {
-  return location.name
-    .replace("South Sacramento ", "")
-    .replace("Auburn Boulevard ", "");
+interface DashboardRoute {
+  key: string;
+  origin: Location | null;
+  destination: Location | null;
+  items: { containerId: string; label: string; sourceLocationId: string | null; destinationLocationId: string | null }[];
 }
 
-function TransitLane({
-  from,
-  to,
-  items
-}: {
-  from: Location;
-  to: Location;
-  items: { containerId: string; label: string }[];
-}) {
-  const active = items.length > 0;
-  const labels = items.map((item) => item.label).join(", ");
-  const routeLabel = active
-    ? `${labels} in transit from ${shortLocationName(from)} to ${shortLocationName(to)}`
-    : `No containers in transit from ${shortLocationName(from)} to ${shortLocationName(to)}`;
-
-  return (
-    <div className={`flow-lane ${active ? "flow-lane--active" : ""}`} aria-label={routeLabel}>
-      <span className="flow-lane__status">{active ? `${items.length} MOVING` : "ROUTE CLEAR"}</span>
-      <div className="flow-lane__track" aria-hidden="true">
-        <span className="flow-lane__line" />
-        {active && <span className="flow-lane__vehicle"><ContainerIcon size={14} /></span>}
-        <span className="flow-lane__arrow" />
-      </div>
-      <span className="flow-lane__caption">{active ? `${labels} in transit` : "No active loads"}</span>
-    </div>
-  );
-}
-
-function Metric({ icon, label, value, detail, tone }: { icon: ReactNode; label: string; value: number; detail: string; tone: string }) {
-  return (
-    <div className="metric">
-      <div className={`metric__icon metric__icon--${tone}`}>{icon}</div>
-      <div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>
-    </div>
-  );
+function Metric({ icon, label, value, detail, tone, onClick }: { icon: ReactNode; label: string; value: number; detail: string; tone: string; onClick?: () => void }) {
+  const content = <><div className={`metric__icon metric__icon--${tone}`}>{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div></>;
+  return onClick ? <button type="button" className="metric metric--action" onClick={onClick} aria-label={`${label}: ${value}. ${detail}`}>{content}</button> : <div className="metric">{content}</div>;
 }
 
 function PanelTitle({ title, subtitle, action, onClick }: { title: string; subtitle: string; action?: string; onClick?: () => void }) {
