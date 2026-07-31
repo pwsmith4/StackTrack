@@ -123,7 +123,7 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
   containers: {
     eyebrow: "Reusable assets",
     title: "Containers",
-    description: "Search every tracked bin, cart, and gaylord by its unique label."
+    description: "Search every tracked bin, cart, and gaylord by its unique container label. Select a row for history and technical details."
   },
   loads: {
     eyebrow: "Production handoff",
@@ -654,7 +654,7 @@ export function App() {
                   ref={searchRef}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder={page === "audit" ? "Use the audit filters below" : page === "activity" ? "Search container, event, scanner, or location" : page === "loads" ? "Search load code, container, goods, or location" : page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : "Search label or code"}
+                  placeholder={page === "audit" ? "Use the audit filters below" : page === "activity" ? "Search container, event, scanner, or location" : page === "loads" ? "Search load code, container, goods, or location" : page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : page === "containers" ? "Search container label or ID" : "Search label or code"}
                   aria-label="Search"
                 />
                 <kbd>⌘ K</kbd>
@@ -1043,7 +1043,10 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
   useEffect(() => setPageIndex(0), [query]);
   const locationName = (id: string | null) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Not yet observed";
   const rows = data.fixtures.containers
-    .filter((item) => item.label.toLowerCase().includes(query.toLowerCase()))
+    // Keep the UUID searchable for support workflows without presenting it in
+    // the everyday table. The human-facing label is the unique identifier
+    // staff use on printed tags and scanner screens.
+    .filter((item) => `${item.label} ${item.containerId}`.toLowerCase().includes(query.toLowerCase()))
     .filter((item) => filter === "all" || (data.projections[item.containerId]?.loadState ?? "unknown") === filter);
   const filterCount = (value: typeof filter) => data.fixtures.containers.filter((item) =>
     value === "all" || (data.projections[item.containerId]?.loadState ?? "unknown") === value
@@ -1097,19 +1100,19 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
   ]);
   return (
     <section className="panel">
-      <div className="toolbar"><div className="filter-tabs">{(["all", "loaded", "empty", "unknown"] as const).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => { setFilter(value); setPageIndex(0); }}>{value[0]!.toUpperCase() + value.slice(1)} <b>{filterCount(value)}</b></button>)}</div><button className="secondary" onClick={exportRows}><Download size={16} /> Export CSV</button></div>
+      <div className="toolbar"><div className="filter-tabs">{(["all", "loaded", "empty", "unknown"] as const).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => { setFilter(value); setPageIndex(0); }}>{value[0]!.toUpperCase() + value.slice(1)} <b>{filterCount(value)}</b></button>)}</div><div className="container-toolbar-actions"><span className="container-table-note"><CircleHelp size={13} /> Labels are unique; technical ID is in Details.</span><button className="secondary" onClick={exportRows}><Download size={16} /> Export CSV</button></div></div>
       {movementRows.length > 0 && <div className="container-movement-summary">
         <div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each route shows the last confirmed origin and planned destination. The movement closes when the destination receipt is scanned.</p></div></div>
         <div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.first)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`${group.origin?.name ?? "Origin pending"} to ${group.destination?.name ?? "Destination pending"}`}>{group.origin?.name ?? "Origin pending"} <ArrowRight size={12} /> {group.destination?.name ?? "Destination pending"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional route{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div>
       </div>}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Asset label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>History health</th></tr></thead>
+          <thead><tr><th>Container label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>History health</th></tr></thead>
           <tbody>{visibleRows.map((container) => {
             const projection = data.projections[container.containerId];
             const route = getContainerRouteContext(container.containerId, data);
-            return <tr className="clickable-row" key={container.containerId} onClick={() => showContainer(container)}>
-              <td><strong className="asset-label">{container.label}</strong><small>{container.containerId.slice(0, 13)}…</small></td>
+            return <tr className="clickable-row" role="button" tabIndex={0} aria-label={`Open details for ${container.label}`} key={container.containerId} onClick={() => showContainer(container)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showContainer(container); } }}>
+              <td><strong className="asset-label" title="Unique container label">{container.label}</strong></td>
               <td className="capitalize">{container.type}</td>
               <td><Pill tone={projection?.loadState === "loaded" ? "blue" : "muted"}>{projection?.loadState ?? "Not observed"}</Pill></td>
               <td><ContainerRouteCell route={route} /></td>
