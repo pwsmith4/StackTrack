@@ -55,8 +55,55 @@ describe("admin API reads", () => {
       events: [],
       reviewCases: [],
       auditEntries: [],
+      warnings: [],
       projections: {}
     });
     expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("keeps core operations available and identifies an unavailable supporting feed", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        tenant: { tenantId: session.principal.tenantId, name: "Goodwill Local" },
+        locations: [],
+        devices: [],
+        deviceAssignments: [],
+        containers: [],
+        goodsTypes: []
+      }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "Audit permission is missing." }), {
+        status: 403,
+        statusText: "Forbidden",
+        headers: { "content-type": "application/json" }
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(loadOperationsData(session)).resolves.toMatchObject({
+      fixtures: { tenant: { name: "Goodwill Local" } },
+      events: [],
+      reviewCases: [],
+      auditEntries: [],
+      warnings: [{
+        endpoint: "/api/v1/local/admin/audit-log",
+        status: 403,
+        message: "GET /api/v1/local/admin/audit-log failed (403): Audit permission is missing."
+      }]
+    });
+  });
+
+  it("includes the endpoint and status when a core request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ message: "Database permission denied." }),
+      { status: 403, statusText: "Forbidden", headers: { "content-type": "application/json" } }
+    )));
+
+    await expect(loadOperationsData(session)).rejects.toMatchObject({
+      status: 403,
+      path: "/api/v1/local/reference-data",
+      message: "GET /api/v1/local/reference-data failed (403): Database permission denied."
+    });
   });
 });

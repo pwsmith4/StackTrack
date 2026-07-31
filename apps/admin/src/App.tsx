@@ -54,6 +54,7 @@ import {
   type DeviceAssignment,
   type Fixtures,
   type Location,
+  type OperationsWarning,
   type Projection,
   type ReviewCase,
   type ReviewAction,
@@ -77,6 +78,7 @@ interface OperationsData {
   events: StoredEvent[];
   reviewCases: ReviewCase[];
   auditEntries: AuditEntry[];
+  warnings: OperationsWarning[];
   projections: Record<string, Projection | null>;
 }
 
@@ -350,6 +352,22 @@ export function App() {
   const reviewCount = data
     ? Object.values(data.projections).filter((projection) => projection?.health === "needs_review").length
     : 0;
+  const connectionState = loading
+    ? "checking"
+    : error
+      ? "disconnected"
+      : data?.warnings.length
+        ? "degraded"
+        : "connected";
+  const connectionLabel = connectionState === "checking"
+    ? "Checking Azure API"
+    : connectionState === "disconnected"
+      ? "API disconnected"
+      : connectionState === "degraded"
+        ? "API connected with warnings"
+        : API_URL.includes("127.0.0.1") || API_URL.includes("localhost")
+          ? "Local API connected"
+          : "Azure test API connected";
 
   if (!session) {
     return <div className="authentication-shell"><SignInDialog onClose={() => undefined} onSuccess={establishSession} /></div>;
@@ -418,8 +436,8 @@ export function App() {
           <button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="Open menu"><Menu /></button>
           <Mark compact />
           <div className="topbar__right">
-            <span className={`connection ${error ? "connection--error" : ""}`}>
-              <i /> {error ? "API disconnected" : API_URL.includes("127.0.0.1") || API_URL.includes("localhost") ? "Local API connected" : "Azure test API connected"}
+            <span className={`connection connection--${connectionState}`}>
+              <i /> {connectionLabel}
             </span>
             <button className="icon-button" onClick={() => void refresh()} aria-label="Refresh data">
               <RefreshCw size={18} className={loading ? "spin" : ""} />
@@ -458,8 +476,18 @@ export function App() {
           {error && (
             <div className="api-error">
               <Cloud size={22} />
-              <span><strong>The test API could not be reached.</strong> Expected at {API_URL}. The interface remains available for review.</span>
+              <span><strong>The test API request failed.</strong> {error} API: {API_URL}</span>
               <button onClick={() => void refresh()}>Try again</button>
+            </div>
+          )}
+          {!error && data && data.warnings.length > 0 && (
+            <div className="api-error api-error--warning">
+              <AlertTriangle size={22} />
+              <span>
+                <strong>Core operations are connected, but {data.warnings.length === 1 ? "one supporting feed is" : `${data.warnings.length} supporting feeds are`} unavailable.</strong>
+                {" "}{data.warnings.map((warning) => warning.message).join(" ")}
+              </span>
+              <button onClick={() => void refresh()}>Retry</button>
             </div>
           )}
 

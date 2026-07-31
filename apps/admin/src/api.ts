@@ -4,7 +4,10 @@ export const API_URL =
 export const TENANT_ID = "10000000-0000-4000-8000-000000000001";
 
 export class ApiRequestError extends Error {
-  public constructor(readonly status: number, message: string) { super(message); this.name = "ApiRequestError"; }
+  public constructor(readonly status: number, readonly path: string, message: string) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
 }
 
 export interface Location {
@@ -42,6 +45,7 @@ export interface AdminSession { token: string; principal: AdminPrincipal; expire
 export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; action: string; targetType: string; targetId: string | null; details: Record<string, unknown>; }
 export type ReviewAction = "assigned" | "approved" | "rejected" | "resolved" | "reopened";
 export interface ReviewCase { reviewCaseId: string; containerId: string; containerLabel: string; reasonCode: string; evidenceEventIds: string[]; openedAt: string; status: "opened" | ReviewAction; lastActionAt: string | null; lastActionReason: string | null; actionCount: number; }
+export interface OperationsWarning { endpoint: string; status: number | null; message: string; }
 
 export interface Container {
   containerId: string;
@@ -119,7 +123,11 @@ async function getJson<T>(path: string, session: AdminSession): Promise<T> {
   const response = await readWithRetry(path, session);
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { message?: string } | null;
-    throw new ApiRequestError(response.status, detail?.message ?? `${response.status} ${response.statusText}`);
+    throw new ApiRequestError(
+      response.status,
+      path,
+      `GET ${path} failed (${response.status}): ${detail?.message ?? response.statusText}`
+    );
   }
   return response.json() as Promise<T>;
 }
@@ -166,7 +174,11 @@ async function postJson<T>(path: string, body: unknown, session: AdminSession): 
   const response = await fetch(`${API_URL}${path}`, { method: "POST", headers: { ...adminHeaders(session), "content-type": "application/json" }, body: JSON.stringify(body) });
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { message?: string } | null;
-    throw new ApiRequestError(response.status, detail?.message ?? `${response.status} ${response.statusText}`);
+    throw new ApiRequestError(
+      response.status,
+      path,
+      `POST ${path} failed (${response.status}): ${detail?.message ?? response.statusText}`
+    );
   }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
@@ -186,8 +198,16 @@ export async function listAdminUsers(session: AdminSession): Promise<AdminPrinci
 }
 
 export async function listAuditEntries(session: AdminSession): Promise<AuditEntry[]> {
-  const response = await readWithRetry("/api/v1/local/admin/audit-log", session);
-  if (!response.ok) throw new ApiRequestError(response.status, "Could not load the governance timeline.");
+  const path = "/api/v1/local/admin/audit-log";
+  const response = await readWithRetry(path, session);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new ApiRequestError(
+      response.status,
+      path,
+      `GET ${path} failed (${response.status}): ${detail?.message ?? response.statusText}`
+    );
+  }
   return ((await response.json()) as { items: AuditEntry[] }).items;
 }
 
@@ -210,22 +230,40 @@ export async function reviewCaseAction(session: AdminSession, reviewCaseId: stri
   return response.item;
 }
 
+function operationWarning(endpoint: string, error: unknown): OperationsWarning {
+  return {
+    endpoint,
+    status: error instanceof ApiRequestError ? error.status : null,
+    message: error instanceof Error ? error.message : `GET ${endpoint} could not be completed.`
+  };
+}
+
 export async function loadOperationsData(session: AdminSession) {
   const fixtures = await getJson<Fixtures>("/api/v1/local/reference-data", session);
-  const [eventsResult, statesResult, reviewCasesResult, auditResult] = await Promise.all([
+  const [eventsResult, statesResult] = await Promise.all([
     getJson<{ items: StoredEvent[] }>("/api/v1/local/events", session),
-    getJson<{ items: Projection[] }>("/api/v1/containers/states", session),
+    getJson<{ items: Projection[] }>("/api/v1/containers/states", session)
+  ]);
+  const [reviewCasesResult, auditResult] = await Promise.allSettled([
     getJson<{ items: ReviewCase[] }>("/api/v1/local/review-cases", session),
     listAuditEntries(session)
   ]);
+  const warnings: OperationsWarning[] = [];
+  const reviewCases = reviewCasesResult.status === "fulfilled"
+    ? reviewCasesResult.value.items
+    : (warnings.push(operationWarning("/api/v1/local/review-cases", reviewCasesResult.reason)), []);
+  const auditEntries = auditResult.status === "fulfilled"
+    ? auditResult.value
+    : (warnings.push(operationWarning("/api/v1/local/admin/audit-log", auditResult.reason)), []);
   const projectionById = new Map(
     statesResult.items.map((projection) => [projection.containerId, projection])
   );
   return {
     fixtures,
     events: eventsResult.items,
-    reviewCases: reviewCasesResult.items,
-    auditEntries: auditResult,
+    reviewCases,
+    auditEntries,
+    warnings,
     projections: Object.fromEntries(
       fixtures.containers.map((container) => [
         container.containerId,
