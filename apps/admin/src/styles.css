@@ -471,6 +471,7 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .clickable-timeline:hover .timeline__card { border-color: #9bcbdc; background: #f8fcfd; box-shadow: 0 3px 10px rgba(0, 58, 111, .05); }
 .timeline__card { min-width: 0; padding: 12px 14px 13px; border: 1px solid #e2e9ed; border-left: 3px solid #d5e7ee; background: white; transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
 .clickable-timeline--linked .timeline__card { border-left-color: #67bfd8; background: #fbfeff; }
+.clickable-timeline--linked .timeline__rail span { border-color: #8bcadc; background: #effafe; }
 .timeline__card-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .timeline__card-heading > span { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
 .timeline__relationship { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid #c8e5ee; border-radius: 3px; color: #247591; background: #edf9fc; font-size: 8px; font-weight: 700; line-height: 1.2; }
