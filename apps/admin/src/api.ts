@@ -88,16 +88,35 @@ export interface Projection {
 }
 
 const headers = { "x-stacktrack-tenant-id": TENANT_ID };
+const readRetryDelaysMs = [750, 2_000, 5_000];
+const retryableReadStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function adminHeaders(session?: AdminSession | null) {
   return session ? { authorization: `Bearer ${session.token}` } : {};
 }
 
-async function getJson<T>(path: string, session: AdminSession): Promise<T> {
+async function readWithRetry(path: string, session: AdminSession): Promise<Response> {
   const joiner = path.includes("?") ? "&" : "?";
-  const response = await fetch(`${API_URL}${path}${joiner}refresh=${Date.now()}`, {
-    headers: { ...headers, ...adminHeaders(session), "cache-control": "no-cache" }
-  });
+  const url = `${API_URL}${path}${joiner}refresh=${Date.now()}`;
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { ...headers, ...adminHeaders(session), "cache-control": "no-cache" }
+      });
+      if (!retryableReadStatuses.has(response.status) || attempt >= readRetryDelaysMs.length) {
+        return response;
+      }
+    } catch (error) {
+      if (attempt >= readRetryDelaysMs.length) throw error;
+    }
+
+    await new Promise((resolve) => globalThis.setTimeout(resolve, readRetryDelaysMs[attempt]));
+  }
+}
+
+async function getJson<T>(path: string, session: AdminSession): Promise<T> {
+  const response = await readWithRetry(path, session);
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { message?: string } | null;
     throw new ApiRequestError(response.status, detail?.message ?? `${response.status} ${response.statusText}`);
@@ -161,13 +180,13 @@ export async function changeOwnPassword(session: AdminSession, currentPassword: 
 }
 
 export async function listAdminUsers(session: AdminSession): Promise<AdminPrincipal[]> {
-  const response = await fetch(`${API_URL}/api/v1/local/admin/users`, { headers: { ...adminHeaders(session) } });
+  const response = await readWithRetry("/api/v1/local/admin/users", session);
   if (!response.ok) throw new Error("Could not load administrator accounts.");
   return ((await response.json()) as { items: AdminPrincipal[] }).items;
 }
 
 export async function listAuditEntries(session: AdminSession): Promise<AuditEntry[]> {
-  const response = await fetch(`${API_URL}/api/v1/local/admin/audit-log`, { headers: { ...adminHeaders(session), "cache-control": "no-cache" } });
+  const response = await readWithRetry("/api/v1/local/admin/audit-log", session);
   if (!response.ok) throw new ApiRequestError(response.status, "Could not load the governance timeline.");
   return ((await response.json()) as { items: AuditEntry[] }).items;
 }
