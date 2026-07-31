@@ -50,7 +50,10 @@ jobs:
       - name: Build production admin
         working-directory: production
         env:
-          VITE_API_URL: ${{ vars.STACKTRACK_API_URL }}
+          # The stable site uses the frozen main API. The explicit fallback
+          # keeps the pilot working until the optional repository variable is
+          # added without putting any credential in source control.
+          VITE_API_URL: ${{ vars.STACKTRACK_MAIN_API_URL || 'https://stacktrack-api-main.livelyrock-97a45fca.westus3.azurecontainerapps.io' }}
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
         run: |
           npm run check --workspace @stacktrack/admin
@@ -61,7 +64,7 @@ jobs:
       - name: Build testing admin
         working-directory: preview
         env:
-          VITE_API_URL: ${{ vars.STACKTRACK_API_URL }}
+          VITE_API_URL: ${{ vars.STACKTRACK_TEST_API_URL || vars.STACKTRACK_API_URL || 'https://stacktrack-api-test.livelyrock-97a45fca.westus3.azurecontainerapps.io' }}
           VITE_BASE_PATH: /${{ github.event.repository.name }}/testing/
         run: |
           npm run check --workspace @stacktrack/admin
