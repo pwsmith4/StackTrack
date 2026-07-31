@@ -855,7 +855,7 @@ function PageContent({
   onSignOut: () => Promise<void>;
 }) {
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} />;
-  if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
+  if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
   if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
@@ -1164,24 +1164,30 @@ function ContainerRouteCell({ route }: { route: ContainerRouteContext }) {
   );
 }
 
-function ContainerRouteSummary({ containerId, data }: { containerId: string; data: OperationsData }) {
+function RouteLocationLink({ location, fallback, onOpenLocation }: { location: Location | null; fallback: string; onOpenLocation: (locationId: string) => void }) {
+  if (!location) return <strong>{fallback}</strong>;
+  return <button type="button" className="detail-route-summary__location-link" onClick={() => onOpenLocation(location.locationId)} title={`Open ${location.name} location workspace`}><strong>{location.name}</strong><ChevronRight size={13} aria-hidden="true" /></button>;
+}
+
+function ContainerRouteSummary({ containerId, data, onOpenLocation }: { containerId: string; data: OperationsData; onOpenLocation: (locationId: string) => void }) {
   const route = getContainerRouteContext(containerId, data);
   const current = data.events.filter((event) => event.containerId === containerId).sort((left, right) => Date.parse(left.effectiveAt) - Date.parse(right.effectiveAt)).at(-1);
   const currentName = route.currentLocation?.name ?? "Not confirmed";
   return <div className={`detail-route-summary ${route.inTransit ? "detail-route-summary--active" : ""}`}>
     <div className="detail-route-summary__heading"><span><Truck size={15} /> Route context</span><Pill tone={route.inTransit ? "blue" : "good"}>{route.inTransit ? "In transit" : "Physical location confirmed"}</Pill></div>
     {route.inTransit && <div className="detail-route-summary__path">
-      <div><small>Origin</small><strong>{route.origin?.name ?? "Origin not confirmed"}</strong></div>
-      <span className="detail-route-summary__connector" aria-hidden="true"><i /><ArrowRight size={16} /></span>
-      <div><small>Destination</small><strong>{route.destination?.name ?? "Destination pending"}</strong></div>
-    </div>}
-    {!route.inTransit && route.segments.length > 0 && <div className="detail-route-summary__journey"><small>Recorded journey</small><strong>{routeLocationNames(route).join("  →  ")}</strong></div>}
+       <div><small>Origin</small><RouteLocationLink location={route.origin} fallback="Origin not confirmed" onOpenLocation={onOpenLocation} /></div>
+       <span className="detail-route-summary__connector" aria-hidden="true"><i /><ArrowRight size={16} /></span>
+       <div><small>Destination</small><RouteLocationLink location={route.destination} fallback="Destination pending" onOpenLocation={onOpenLocation} /></div>
+     </div>}
+     {!route.inTransit && route.segments.length > 0 && <div className="detail-route-summary__journey"><small>Recorded journey</small><strong>{routeLocationNames(route).join("  →  ")}</strong></div>}
+     {!route.inTransit && route.currentLocation && <button type="button" className="detail-route-summary__workspace-link" onClick={() => onOpenLocation(route.currentLocation!.locationId)}>Open {currentName} location workspace <ChevronRight size={13} aria-hidden="true" /></button>}
     <small className="detail-route-summary__note">{route.inTransit ? `Movement is active from ${route.origin?.name ?? "the last confirmed location"} to ${route.destination?.name ?? "the destination"}. A destination receipt will close this hop.` : current ? `Last authoritative observation: ${eventLabel(current.eventType)} at ${currentName}. ${route.segments.length > 1 ? `${route.segments.length} handoffs are recorded for this container.` : ""}` : "No route observations are recorded yet."}</small>
     {route.unresolvedSegmentCount > 0 && !route.inTransit && <div className="detail-route-summary__warning"><AlertTriangle size={14} /> {route.unresolvedSegmentCount} handoff{route.unresolvedSegmentCount === 1 ? "" : "s"} still lacks a matching receipt.</div>}
   </div>;
 }
 
-function ContainersPage({ data, query, openDetail, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; setPage: (page: Page) => void }) {
+function ContainersPage({ data, query, openDetail, openLocation, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void }) {
   const [filter, setFilter] = useState<"all" | "loaded" | "empty" | "unknown">("all");
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -1218,7 +1224,7 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
         ["History health", projectionHealthLabel(projection?.health)],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"],
         ["Container UUID", container.containerId]
-      ]}/><ContainerRouteSummary containerId={container.containerId} data={data}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
+      ]}/><ContainerRouteSummary containerId={container.containerId} data={data} onOpenLocation={openLocation}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
     });
   };
   const movementRows = data.fixtures.containers.map((container) => ({ container, route: getContainerRouteContext(container.containerId, data) })).filter((item) => item.route.inTransit);

@@ -985,6 +985,11 @@ footer > span:first-child { display: none; }
 .detail-route-summary__path > .detail-route-summary__connector::before { background: linear-gradient(90deg, #8bd4ea, var(--blue-800)); }
 .detail-route-summary__path small { color: #7d8993; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
 .detail-route-summary__path strong { overflow: hidden; color: #344957; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.detail-route-summary__location-link, .detail-route-summary__workspace-link { display: inline-flex; align-items: center; gap: 4px; width: fit-content; min-width: 0; padding: 2px 0; border: 0; background: transparent; color: #344957; text-align: left; }
+.detail-route-summary__location-link strong { overflow: hidden; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.detail-route-summary__location-link svg, .detail-route-summary__workspace-link svg { flex: none; color: var(--blue-800); }
+.detail-route-summary__location-link:hover strong, .detail-route-summary__workspace-link:hover { color: var(--blue-800); text-decoration: underline; text-underline-offset: 2px; }
+.detail-route-summary__workspace-link { margin-top: 10px; color: var(--blue-800); font-size: 9px; font-weight: 800; }
 .detail-route-summary__journey { display: grid; gap: 5px; margin-top: 14px; padding: 10px; border: 1px solid #dce9ee; background: #fff; }
 .detail-route-summary__journey small { color: #7d8993; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
 .detail-route-summary__journey strong { color: #344957; font-size: 10px; line-height: 1.55; }
