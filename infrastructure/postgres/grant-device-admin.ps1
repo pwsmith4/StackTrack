@@ -28,7 +28,7 @@ try {
   & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$migrationPath
   if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack device operations migration failed." }
   @"
-GRANT UPDATE (assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack_app;
+GRANT UPDATE (device_label, assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack_app;
 GRANT UPDATE (required_app_version) ON devices TO stacktrack_app;
 GRANT UPDATE (last_reported_at, reported_app_version, pending_offline_scan_count) ON device_installations TO stacktrack_app;
 GRANT SELECT, INSERT ON device_assignment_history TO stacktrack_app;
