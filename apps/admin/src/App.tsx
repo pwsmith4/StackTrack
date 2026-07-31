@@ -849,7 +849,7 @@ export function App() {
           {loading && !data ? (
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
-            <PageContent page={page} {...(locationId ? { locationId } : {})} data={data} query={query} setPage={setPage} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
+             <PageContent page={page} {...(locationId ? { locationId } : {})} data={data} query={query} setQuery={setQuery} setPage={setPage} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
           ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
@@ -878,6 +878,7 @@ function PageContent({
   locationId,
   data,
   query,
+  setQuery,
   setPage,
   openLocation,
   openDetail,
@@ -891,6 +892,7 @@ function PageContent({
   locationId?: string | undefined;
   data: OperationsData;
   query: string;
+  setQuery: (query: string) => void;
   setPage: (page: Page) => void;
   openLocation: (locationId: string) => void;
   openDetail: OpenDetail;
@@ -908,7 +910,7 @@ function PageContent({
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
   if (page === "audit") return <AuditTrailPage data={data} session={session!} openDetail={openDetail} />;
-  if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
+  if (page === "devices") return <DevicesPage data={data} query={query} setQuery={setQuery} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
   return <SettingsPage data={data} setPage={setPage} session={session} refresh={refresh} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
 }
@@ -2345,20 +2347,73 @@ function LegacyActivityPage({ data, query, openDetail }: { data: OperationsData;
   ))}</div></section>;
 }
 
-function DevicesPage({ data, query, openDetail, refresh, session, onRequestSignIn }: { data: OperationsData; query: string; openDetail: OpenDetail; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void }) {
+type DeviceStatusFilter = "all" | "enabled" | "disabled" | "stale" | "attention";
+type DeviceSort = "attention" | "status" | "location" | "last_reported" | "scanner_id" | "name" | "observations";
+
+function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRequestSignIn }: { data: OperationsData; query: string; setQuery: (query: string) => void; openDetail: OpenDetail; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; tone: "success" | "error" } | null>(null);
+  const [locationFilter, setLocationFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<DeviceStatusFilter>("all");
+  const [versionFilter, setVersionFilter] = useState("all");
+  const [sortOrder, setSortOrder] = useState<DeviceSort>("attention");
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false);
-  const matchingDevices = data.fixtures.devices.filter((device) => {
-    const assignedLocation = data.fixtures.locations.find((location) => location.locationId === device.assignedLocationId)?.name ?? "";
+  const allLocations = data.fixtures.locations
+    .filter((location) => location.type !== "in_transit")
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const locationName = (locationId: string | null | undefined) => data.fixtures.locations.find((location) => location.locationId === locationId)?.name ?? "Unknown location";
+  const isStale = (device: Device) => {
+    if (!device.lastReportedAt) return true;
+    const reportedAt = Date.parse(device.lastReportedAt);
+    return !Number.isFinite(reportedAt) || Date.now() - reportedAt > 24 * 60 * 60 * 1000;
+  };
+  const needsAttention = (device: Device) => !device.isActive || isStale(device) || !device.reportedAppVersion;
+  const versions = Array.from(new Set(data.fixtures.devices.map((device) => device.reportedAppVersion).filter((version): version is string => Boolean(version)))).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const searchTerm = query.trim().toLowerCase();
+  const filteredDevices = data.fixtures.devices.filter((device) => {
+    const assignedLocation = locationName(device.assignedLocationId);
     const previousLocations = data.fixtures.deviceAssignments
       .filter((entry) => entry.deviceId === device.deviceId)
       .flatMap((entry) => [entry.previousLocationId, entry.assignedLocationId])
-      .map((locationId) => data.fixtures.locations.find((location) => location.locationId === locationId)?.name ?? "")
+      .map((locationId) => locationName(locationId))
       .join(" ");
     const searchText = `${device.label} ${scannerNumber(device.deviceId)} ${assignedLocation} ${previousLocations}`.toLowerCase();
-    return searchText.includes(query.trim().toLowerCase());
+    const statusMatches = statusFilter === "all"
+      || (statusFilter === "enabled" && device.isActive)
+      || (statusFilter === "disabled" && !device.isActive)
+      || (statusFilter === "stale" && isStale(device))
+      || (statusFilter === "attention" && needsAttention(device));
+    const versionMatches = versionFilter === "all"
+      || (versionFilter === "not_reported" && !device.reportedAppVersion)
+      || device.reportedAppVersion === versionFilter;
+    return (!searchTerm || searchText.includes(searchTerm))
+      && (locationFilter === "all" || device.assignedLocationId === locationFilter || (locationFilter === "unknown" && !data.fixtures.locations.some((location) => location.locationId === device.assignedLocationId)))
+      && statusMatches
+      && versionMatches;
   });
+  const sortDevices = (devices: Device[]) => [...devices].sort((left, right) => {
+    const leftLocation = locationName(left.assignedLocationId);
+    const rightLocation = locationName(right.assignedLocationId);
+    if (sortOrder === "attention") {
+      const score = (device: Device) => (device.isActive ? 0 : 4) + (isStale(device) ? 3 : 0) + (!device.reportedAppVersion ? 2 : 0);
+      return score(right) - score(left) || leftLocation.localeCompare(rightLocation) || left.label.localeCompare(right.label);
+    }
+    if (sortOrder === "status") return Number(right.isActive) - Number(left.isActive) || leftLocation.localeCompare(rightLocation) || left.label.localeCompare(right.label);
+    if (sortOrder === "location") return leftLocation.localeCompare(rightLocation) || left.label.localeCompare(right.label);
+    if (sortOrder === "last_reported") {
+      const leftReported = left.lastReportedAt ? Date.parse(left.lastReportedAt) : Number.NEGATIVE_INFINITY;
+      const rightReported = right.lastReportedAt ? Date.parse(right.lastReportedAt) : Number.NEGATIVE_INFINITY;
+      return rightReported - leftReported || left.label.localeCompare(right.label);
+    }
+    if (sortOrder === "scanner_id") return scannerNumber(left.deviceId).localeCompare(scannerNumber(right.deviceId), undefined, { numeric: true });
+    if (sortOrder === "observations") return data.events.filter((event) => event.deviceId === right.deviceId).length - data.events.filter((event) => event.deviceId === left.deviceId).length || left.label.localeCompare(right.label);
+    return left.label.localeCompare(right.label) || leftLocation.localeCompare(rightLocation);
+  });
+  const matchingDevices = sortDevices(filteredDevices);
+  const staleCount = data.fixtures.devices.filter(isStale).length;
+  const disabledCount = data.fixtures.devices.filter((device) => !device.isActive).length;
+  const hasFilters = Boolean(searchTerm) || locationFilter !== "all" || statusFilter !== "all" || versionFilter !== "all" || sortOrder !== "attention";
+  const clearFilters = () => { setQuery(""); setLocationFilter("all"); setStatusFilter("all"); setVersionFilter("all"); setSortOrder("attention"); };
   const save = async (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => {
     if (!session) { onRequestSignIn(); return; }
     setBusyId(device.deviceId); setNotice(null);
@@ -2373,11 +2428,20 @@ function DevicesPage({ data, query, openDetail, refresh, session, onRequestSignI
   };
   return <>
     <div className="device-guidance"><ShieldCheck size={20} /><span><strong>Scanner control is an accountable action.</strong> The app reports its installed version; assignments and scanner-name changes become permanent history, with an optional move note. Offline scans remain on the scanner until it reconnects, so this console shows the last confirmed report—not a live offline queue.</span></div>
-    {!session && <div className="access-lock"><ShieldCheck size={20}/><span><strong>Sign in to change scanners.</strong> You can inspect device records now; changes are locked until a verified Organization Owner or Operations Administrator signs in.</span><button className="secondary" onClick={onRequestSignIn}>Sign in</button></div>}
-    {notice && <div className={`device-notice ${notice.tone === "error" ? "device-notice--error" : ""}`}>{notice.text}</div>}
-    {query.trim() && <p className="device-search-summary">Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners matching “{query.trim()}”. Searches include the current and previous assigned locations.</p>}
-    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator", "location_manager"].includes(session.principal.role))} canMoveAcrossLocations={session?.principal.role === "organization_owner"} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
-  </>;
+     {!session && <div className="access-lock"><ShieldCheck size={20}/><span><strong>Sign in to change scanners.</strong> You can inspect device records now; changes are locked until a verified Organization Owner or Operations Administrator signs in.</span><button className="secondary" onClick={onRequestSignIn}>Sign in</button></div>}
+     {notice && <div className={`device-notice ${notice.tone === "error" ? "device-notice--error" : ""}`}>{notice.text}</div>}
+     <section className="device-filter-panel" aria-label="Filter and sort scanners">
+       <div className="device-filter-panel__header"><div><span className="eyebrow">Fleet view</span><h2>Find the right scanner</h2><p>The search box above checks scanner ID, name, current location, and previous assigned locations. Use these controls to narrow the fleet by operational state.</p></div><button className="secondary" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button></div>
+       <div className="device-filter-panel__grid">
+         <label><span>Assigned location</span><select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="all">All locations</option>{allLocations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}{location.isActive === false ? " (inactive)" : ""}</option>)}<option value="unknown">Unknown location</option></select></label>
+         <label><span>Scanner status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as DeviceStatusFilter)}><option value="all">All scanners</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="stale">No report in 24+ hours</option><option value="attention">Needs attention</option></select></label>
+         <label><span>Installed version</span><select value={versionFilter} onChange={(event) => setVersionFilter(event.target.value)}><option value="all">All versions</option><option value="not_reported">Version not reported</option>{versions.map((version) => <option key={version} value={version}>{version}</option>)}</select></label>
+         <label><span>Sort scanners by</span><select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as DeviceSort)}><option value="attention">Attention first</option><option value="status">Status (enabled first)</option><option value="location">Location A–Z</option><option value="last_reported">Last report (newest)</option><option value="scanner_id">Scanner ID</option><option value="name">Scanner name A–Z</option><option value="observations">Most observations</option></select></label>
+       </div>
+       <div className="device-filter-panel__summary"><strong>Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners</strong><span>{data.fixtures.devices.length - disabledCount} enabled</span><span>{disabledCount} disabled</span><span>{staleCount} need a fresh report</span>{searchTerm && <span>Search: “{query.trim()}”</span>}</div>
+     </section>
+     {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator", "location_manager"].includes(session.principal.role))} canMoveAcrossLocations={session?.principal.role === "organization_owner"} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState><span>No scanners match the current search and filters.</span><button className="secondary" onClick={clearFilters}>Clear filters</button></EmptyState>}
+   </>;
 }
 
 function deviceDetail(device: Device, data: OperationsData): DetailView {
