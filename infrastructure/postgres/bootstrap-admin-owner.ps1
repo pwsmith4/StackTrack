@@ -4,7 +4,8 @@ param(
   [Parameter(Mandatory = $true)] [ValidatePattern("^[a-zA-Z0-9_]+$")] [string]$AdminLogin,
   [string]$TenantId = "10000000-0000-4000-8000-000000000001",
   [string]$Username = "root",
-  [string]$DisplayName = "StackTrack Organization Owner"
+  [string]$DisplayName = "StackTrack Organization Owner",
+  [switch]$ResetExisting
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,13 +45,26 @@ $env:PGSSLMODE = "require"
 try {
   & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$migrationPath
   if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack admin access migration failed." }
-  $sql = @"
+  $sql = if ($ResetExisting) { @"
+GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
+GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
+INSERT INTO admin_users (tenant_id, username, display_name, role, password_hash, must_change_password)
+VALUES (:'tenant_id'::uuid, :'username', :'display_name', 'organization_owner', :'password_hash', false)
+ON CONFLICT (tenant_id, username) DO UPDATE
+  SET display_name = EXCLUDED.display_name,
+      role = 'organization_owner',
+      password_hash = EXCLUDED.password_hash,
+      is_active = true,
+      must_change_password = false,
+      support_expires_at = NULL,
+      updated_at = clock_timestamp();
+"@ } else { @"
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
 INSERT INTO admin_users (tenant_id, username, display_name, role, password_hash, must_change_password)
 VALUES (:'tenant_id'::uuid, :'username', :'display_name', 'organization_owner', :'password_hash', false)
 ON CONFLICT (tenant_id, username) DO NOTHING;
-"@
+"@ }
   $sql | & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --set="tenant_id=$TenantId" --set="username=$username" --set="display_name=$DisplayName" --set="password_hash=$passwordHash"
   if ($LASTEXITCODE -ne 0) { throw "Creating the Organization Owner failed." }
   Write-Host "Organization Owner '$username' is ready. The password was never written to disk."
