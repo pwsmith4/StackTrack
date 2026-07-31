@@ -696,8 +696,8 @@ footer > span:first-child { display: none; }
 .audit-entry:last-child { border-bottom: 0; }
 .audit-entry__header { display: flex; justify-content: space-between; gap: 16px; }
 .audit-entry__headline { display: flex; align-items: center; gap: 10px; }
-.audit-entry__headline strong { display: block; color: var(--ink); font-size: 15px; }
-.audit-entry__action { display: block; margin-top: 3px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.audit-entry__headline strong { display: block; max-width: 760px; color: var(--ink); font-size: 15px; line-height: 1.35; }
+.audit-entry__action { display: block; margin-top: 4px; color: var(--blue-800); font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .audit-entry__time { display: grid; justify-items: end; gap: 3px; text-align: right; }
 .audit-entry__time strong { color: var(--blue); font-size: 12px; }
 .audit-entry__time time { color: var(--muted); font-size: 11px; }
@@ -709,6 +709,11 @@ footer > span:first-child { display: none; }
 .audit-entry__summary { margin: 0 0 10px 42px; color: var(--muted); font-size: 12px; }
 .audit-entry--interactive { cursor: pointer; transition: background .15s ease, box-shadow .15s ease; }
 .audit-entry--interactive:hover { margin-inline: -10px; padding-inline: 10px; background: #f8fbfd; box-shadow: inset 3px 0 0 var(--cyan); }
+.audit-entry--interactive:focus-visible { outline: 3px solid rgba(0, 161, 214, .34); outline-offset: 3px; }
+.audit-technical-details { margin: 18px 0 0; border: 1px solid #e2e9ee; background: #f8fafb; }
+.audit-technical-details summary { padding: 10px 12px; color: var(--blue-800); cursor: pointer; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.audit-technical-details .detail-facts { margin: 0; border-top: 1px solid #e2e9ee; border-inline: 0; }
+.audit-technical-id { color: #496171; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; word-break: break-all; }
 .audit-page__pagination { justify-content: center; padding-top: 17px; }
 .audit-page__pagination span { min-width: 150px; color: var(--muted); font-size: 12px; text-align: center; }
 .activity-page { display: grid; gap: 16px; }

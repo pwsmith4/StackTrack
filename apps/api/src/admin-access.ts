@@ -255,6 +255,10 @@ export class PostgresAdminAccess {
            LEFT JOIN admin_users u ON u.tenant_id=a.tenant_id AND u.user_id=a.actor_id
            LEFT JOIN devices target_device ON target_device.tenant_id=a.tenant_id AND a.target_type='device' AND a.target_id=target_device.device_id
            LEFT JOIN containers target_container ON target_container.tenant_id=a.tenant_id AND a.target_type='container' AND a.target_id=target_container.container_id
+           LEFT JOIN review_cases target_review ON target_review.tenant_id=a.tenant_id AND a.target_type='review_case' AND a.target_id=target_review.review_case_id
+           LEFT JOIN containers target_review_container ON target_review_container.tenant_id=target_review.tenant_id AND target_review.container_id=target_review_container.container_id
+           LEFT JOIN correction_requests target_correction ON target_correction.tenant_id=a.tenant_id AND a.target_type='correction_request' AND a.target_id=target_correction.correction_request_id
+           LEFT JOIN containers target_correction_container ON target_correction_container.tenant_id=target_correction.tenant_id AND target_correction.container_id=target_correction_container.container_id
            LEFT JOIN LATERAL (
              SELECT l.location_id, l.location_name
                FROM locations l
@@ -274,7 +278,16 @@ export class PostgresAdminAccess {
         client.query<{ count: string }>(`SELECT count(*)::text AS count ${joins} WHERE ${where}`, values),
         client.query(`SELECT a.audit_id, a.occurred_at, a.actor_type, a.action, a.target_type, a.target_id, a.details,
                 u.user_id AS actor_user_id, u.username AS actor_username, u.display_name AS actor_display_name,
-                COALESCE(target_device.device_label, target_container.container_label, audit_location.location_name, a.target_id::text) AS target_label,
+                COALESCE(target_device.device_label, target_container.container_label, target_review_container.container_label, target_correction_container.container_label,
+                  CASE a.target_type
+                    WHEN 'admin_user' THEN 'Administrator account'
+                    WHEN 'device' THEN 'Scanner'
+                    WHEN 'container' THEN 'Container'
+                    WHEN 'review_case' THEN 'Review case'
+                    WHEN 'correction_request' THEN 'Correction request'
+                    WHEN 'location' THEN audit_location.location_name
+                    ELSE NULL
+                  END) AS target_label,
                 audit_location.location_id, audit_location.location_name
            ${joins}
           WHERE ${where}
