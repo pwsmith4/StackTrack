@@ -6,7 +6,7 @@ const pbkdf2 = promisify(pbkdf2Callback);
 const passwordIterations = 210_000;
 const sessionLifetimeMs = 1000 * 60 * 60 * 12;
 
-export type AdminRole = "organization_owner" | "operations_administrator" | "read_only_reviewer" | "support";
+export type AdminRole = "organization_owner" | "operations_administrator" | "location_manager" | "read_only_reviewer" | "support";
 export type ManagedAdminRole = Exclude<AdminRole, "support">;
 
 export interface AdminPrincipal {
@@ -15,6 +15,8 @@ export interface AdminPrincipal {
   readonly username: string;
   readonly displayName: string;
   readonly role: AdminRole;
+  /** Assigned operating locations for Location Managers. Other roles are network-wide. */
+  readonly locationIds?: readonly string[];
   readonly supportExpiresAt: string | null;
   readonly isActive: boolean;
   readonly mustChangePassword: boolean;
@@ -31,12 +33,14 @@ export interface NewAdminUser {
   readonly displayName: string;
   readonly role: ManagedAdminRole;
   readonly temporaryPassword: string;
+  readonly locationIds?: readonly string[];
 }
 
 export interface AdminUserUpdate {
   readonly displayName?: string;
   readonly role?: ManagedAdminRole;
   readonly isActive?: boolean;
+  readonly locationIds?: readonly string[];
 }
 
 export interface AuditEntry {
@@ -63,6 +67,8 @@ export interface AuditFilters {
   readonly targetTypes?: readonly string[];
   readonly actionPrefix?: string;
   readonly targetType?: string;
+  /** Internal scope constraint used for Location Manager audit views. */
+  readonly locationIds?: readonly string[];
   readonly from?: string;
   readonly to?: string;
   readonly limit?: number;
@@ -79,13 +85,20 @@ export interface AuditPage {
 type AdminRow = Record<string, unknown>;
 
 function rowPrincipal(row: AdminRow): AdminPrincipal {
-  return {
+  const rawLocationIds = row.location_ids;
+  const locationIds = Array.isArray(rawLocationIds)
+    ? rawLocationIds.map(String)
+    : typeof rawLocationIds === "string" && rawLocationIds.length > 0
+      ? rawLocationIds.replace(/[{}]/g, "").split(",").filter(Boolean)
+      : [];
+  const principal: AdminPrincipal = {
     tenantId: String(row.tenant_id), userId: String(row.user_id), username: String(row.username),
     displayName: String(row.display_name), role: row.role as AdminRole,
     supportExpiresAt: row.support_expires_at ? new Date(String(row.support_expires_at)).toISOString() : null,
     isActive: row.is_active === undefined ? true : Boolean(row.is_active),
     mustChangePassword: Boolean(row.must_change_password)
   };
+  return locationIds.length > 0 ? { ...principal, locationIds } : principal;
 }
 
 function validatePassword(password: string, label = "Password"): void {
@@ -110,9 +123,25 @@ function validateUsername(usernameInput: string): string {
 }
 
 function validateManagedRole(role: unknown): asserts role is ManagedAdminRole {
-  if (!(["organization_owner", "operations_administrator", "read_only_reviewer"] as const).includes(role as ManagedAdminRole)) {
+  if (!(["organization_owner", "operations_administrator", "location_manager", "read_only_reviewer"] as const).includes(role as ManagedAdminRole)) {
     throw new Error("Choose a valid StackTrack administrator role.");
   }
+}
+
+function validateAdminActionReason(reasonInput: string): string {
+  const reason = reasonInput.trim();
+  if (reason.length < 8 || reason.length > 500) {
+    throw new Error("A password reset needs a clear reason of 8-500 characters.");
+  }
+  return reason;
+}
+
+function normalizeLocationIds(locationIds: readonly string[] | undefined): string[] {
+  const values = [...new Set((locationIds ?? []).map((value) => String(value).trim()).filter(Boolean))];
+  if (values.some((value) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))) {
+    throw new Error("Location assignments must use valid StackTrack location IDs.");
+  }
+  return values;
 }
 
 export async function hashPassword(password: string, salt = randomBytes(16).toString("base64url")): Promise<string> {
@@ -159,7 +188,10 @@ export class PostgresAdminAccess {
     const username = usernameInput.trim().toLowerCase();
     return this.transaction(async (client) => {
       const user = await client.query(
-        `SELECT tenant_id, user_id, username, display_name, role, support_expires_at, is_active, must_change_password, password_hash
+        `SELECT admin_users.tenant_id, admin_users.user_id, admin_users.username, admin_users.display_name, admin_users.role, admin_users.support_expires_at, admin_users.is_active, admin_users.must_change_password, admin_users.password_hash,
+                (SELECT COALESCE(array_agg(scope.location_id::text ORDER BY scope.location_id), ARRAY[]::text[])
+                   FROM admin_user_locations scope
+                  WHERE scope.tenant_id = admin_users.tenant_id AND scope.user_id = admin_users.user_id) AS location_ids
            FROM admin_users
           WHERE tenant_id = $1 AND username = $2 AND is_active
             AND (support_expires_at IS NULL OR support_expires_at > clock_timestamp())`,
@@ -184,7 +216,10 @@ export class PostgresAdminAccess {
     const tokenHash = createHash("sha256").update(token).digest("hex");
     return this.transaction(async (client) => {
       const found = await client.query(
-        `SELECT u.tenant_id, u.user_id, u.username, u.display_name, u.role, u.support_expires_at, u.is_active, u.must_change_password
+        `SELECT u.tenant_id, u.user_id, u.username, u.display_name, u.role, u.support_expires_at, u.is_active, u.must_change_password,
+                (SELECT COALESCE(array_agg(scope.location_id::text ORDER BY scope.location_id), ARRAY[]::text[])
+                   FROM admin_user_locations scope
+                  WHERE scope.tenant_id = u.tenant_id AND scope.user_id = u.user_id) AS location_ids
            FROM admin_sessions s JOIN admin_users u ON u.tenant_id=s.tenant_id AND u.user_id=s.user_id
           WHERE s.tenant_id=$1 AND s.token_sha256=$2 AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
             AND u.is_active AND (u.support_expires_at IS NULL OR u.support_expires_at > clock_timestamp())`,
@@ -223,7 +258,11 @@ export class PostgresAdminAccess {
 
   public async listUsers(): Promise<AdminPrincipal[]> {
     return this.transaction(async (client) => {
-      const result = await client.query(`SELECT tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password FROM admin_users WHERE tenant_id=$1 ORDER BY role, username`, [this.tenantId]);
+      const result = await client.query(`SELECT u.tenant_id,u.user_id,u.username,u.display_name,u.role,u.support_expires_at,u.is_active,u.must_change_password,
+                (SELECT COALESCE(array_agg(scope.location_id::text ORDER BY scope.location_id), ARRAY[]::text[])
+                   FROM admin_user_locations scope
+                  WHERE scope.tenant_id = u.tenant_id AND scope.user_id = u.user_id) AS location_ids
+           FROM admin_users u WHERE u.tenant_id=$1 ORDER BY u.role, u.username`, [this.tenantId]);
       return result.rows.map(rowPrincipal);
     });
   }
@@ -249,6 +288,42 @@ export class PostgresAdminAccess {
     else if (filters.actionPrefix) add("a.action LIKE $VALUE || '%'", filters.actionPrefix.trim().slice(0, 64));
     if (filters.targetTypes?.length) add("a.target_type = ANY($VALUE::text[])", filters.targetTypes.slice(0, 12).map((targetType) => targetType.trim().slice(0, 64)));
     else if (filters.targetType) add("a.target_type=$VALUE", filters.targetType.trim().slice(0, 64));
+    if (filters.locationIds) {
+      const locationIds = filters.locationIds.slice(0, 100);
+      add(`(
+        EXISTS (
+          SELECT 1 FROM locations scoped_location
+           WHERE scoped_location.tenant_id=a.tenant_id
+             AND scoped_location.location_id = ANY($VALUE::uuid[])
+             AND (
+               a.target_id=scoped_location.location_id
+               OR a.details->>'locationId'=scoped_location.location_id::text
+               OR a.details->>'assignedLocationId'=scoped_location.location_id::text
+               OR a.details->>'previousLocationId'=scoped_location.location_id::text
+               OR a.details->'after'->>'assignedLocationId'=scoped_location.location_id::text
+               OR a.details->'after'->>'assigned_location_id'=scoped_location.location_id::text
+               OR a.details->'before'->>'assignedLocationId'=scoped_location.location_id::text
+               OR a.details->'before'->>'assigned_location_id'=scoped_location.location_id::text
+             )
+        )
+        OR (a.target_type='device' AND EXISTS (
+          SELECT 1 FROM devices scoped_device
+           WHERE scoped_device.tenant_id=a.tenant_id
+             AND scoped_device.device_id=a.target_id
+             AND scoped_device.assigned_location_id = ANY($VALUE::uuid[])
+        ))
+        OR (a.target_type IN ('container','review_case','correction_request') AND EXISTS (
+          SELECT 1 FROM asset_events scoped_event
+           WHERE scoped_event.tenant_id=a.tenant_id
+             AND scoped_event.location_id = ANY($VALUE::uuid[])
+             AND (
+               (a.target_type='container' AND scoped_event.container_id=a.target_id)
+               OR (a.target_type='review_case' AND EXISTS (SELECT 1 FROM review_cases scoped_review WHERE scoped_review.tenant_id=a.tenant_id AND scoped_review.review_case_id=a.target_id AND scoped_event.event_id = ANY(scoped_review.evidence_event_ids)))
+               OR (a.target_type='correction_request' AND EXISTS (SELECT 1 FROM correction_requests scoped_correction WHERE scoped_correction.tenant_id=a.tenant_id AND scoped_correction.correction_request_id=a.target_id AND scoped_correction.container_id=scoped_event.container_id))
+             )
+        ))
+      )`, locationIds);
+    }
     if (filters.from) add("a.occurred_at >= $VALUE::timestamptz", filters.from);
     if (filters.to) add("a.occurred_at < $VALUE::timestamptz", filters.to);
     const where = clauses.join(" AND ");
@@ -324,16 +399,47 @@ export class PostgresAdminAccess {
     const displayName = validateDisplayName(input.displayName);
     validateManagedRole(input.role);
     validatePassword(input.temporaryPassword, "Temporary password");
+    const locationIds = normalizeLocationIds(input.locationIds);
+    if (input.role === "location_manager" && locationIds.length === 0) {
+      throw new Error("Assign at least one operating location to a Location Manager.");
+    }
+    if (input.role !== "location_manager" && locationIds.length > 0) {
+      throw new Error("Location assignments are only valid for Location Managers.");
+    }
     const passwordHash = await hashPassword(input.temporaryPassword);
     return this.transaction(async (client) => {
+      if (locationIds.length > 0) {
+        const locations = await client.query(
+          `SELECT location_id
+            FROM locations
+            WHERE tenant_id=$1 AND is_active
+              AND lower(location_name) NOT IN ('unknown location', 'in transit')
+              AND location_id = ANY($2::uuid[])`,
+          [this.tenantId, locationIds]
+        );
+        if (locations.rows.length !== locationIds.length) {
+          throw new Error("Every assigned location must be an active location in this organization.");
+        }
+      }
       const result = await client.query(
         `INSERT INTO admin_users (tenant_id,username,display_name,role,password_hash,must_change_password)
          VALUES ($1,$2,$3,$4,$5,true)
          RETURNING tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password`,
         [this.tenantId, username, displayName, input.role, passwordHash]
       );
-      const user = rowPrincipal(result.rows[0]);
-      await this.audit(client, actor, "admin.user_created", user.userId, { username:user.username, role:user.role });
+      const user = { ...rowPrincipal(result.rows[0]), locationIds };
+      for (const locationId of locationIds) {
+        await client.query(
+          `INSERT INTO admin_user_locations (tenant_id,user_id,location_id,assigned_by)
+           VALUES ($1,$2,$3,$4)`,
+          [this.tenantId, user.userId, locationId, actor.userId]
+        );
+      }
+      await this.audit(client, actor, "admin.user_created", user.userId, {
+        username: user.username,
+        role: user.role,
+        locationIds
+      });
       return user;
     });
   }
@@ -342,18 +448,45 @@ export class PostgresAdminAccess {
     if (actor.role !== "organization_owner") throw new Error("Only Organization Owners can manage administrator accounts.");
     if (input.role !== undefined) validateManagedRole(input.role);
     if (input.displayName !== undefined) validateDisplayName(input.displayName);
-    if (input.role === undefined && input.displayName === undefined && input.isActive === undefined) throw new Error("Choose at least one administrator account change.");
+    if (input.role === undefined && input.displayName === undefined && input.isActive === undefined && input.locationIds === undefined) throw new Error("Choose at least one administrator account change.");
     return this.transaction(async (client) => {
-      const found = await client.query(`SELECT tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password FROM admin_users WHERE tenant_id=$1 AND user_id=$2 FOR UPDATE`, [this.tenantId, userId]);
+      const found = await client.query(`SELECT u.tenant_id,u.user_id,u.username,u.display_name,u.role,u.support_expires_at,u.is_active,u.must_change_password,
+                (SELECT COALESCE(array_agg(scope.location_id::text ORDER BY scope.location_id), ARRAY[]::text[])
+                   FROM admin_user_locations scope
+                  WHERE scope.tenant_id = u.tenant_id AND scope.user_id = u.user_id) AS location_ids
+           FROM admin_users u WHERE u.tenant_id=$1 AND u.user_id=$2 FOR UPDATE`, [this.tenantId, userId]);
       const target = found.rows[0] as AdminRow | undefined;
       if (!target) throw new Error("Administrator account was not found.");
       const existing = rowPrincipal(target);
-      if (existing.userId === actor.userId && (input.role !== undefined || input.isActive === false)) {
+      if (existing.userId === actor.userId && (input.role !== undefined || input.isActive === false || input.locationIds !== undefined)) {
         throw new Error("Use another Organization Owner to change your own role or disable your account.");
       }
       const role = input.role ?? existing.role;
       const isActive = input.isActive ?? existing.isActive;
       const displayName = input.displayName === undefined ? existing.displayName : validateDisplayName(input.displayName);
+      const requestedLocationIds = input.locationIds === undefined
+        ? (existing.locationIds ?? [])
+        : normalizeLocationIds(input.locationIds);
+      if (role === "location_manager" && requestedLocationIds.length === 0) {
+        throw new Error("Assign at least one operating location to a Location Manager.");
+      }
+      if (role !== "location_manager" && input.locationIds !== undefined && requestedLocationIds.length > 0) {
+        throw new Error("Location assignments are only valid for Location Managers.");
+      }
+      const locationIds = role === "location_manager" ? requestedLocationIds : [];
+      if (locationIds.length > 0) {
+        const locations = await client.query(
+          `SELECT location_id
+            FROM locations
+            WHERE tenant_id=$1 AND is_active
+              AND lower(location_name) NOT IN ('unknown location', 'in transit')
+              AND location_id = ANY($2::uuid[])`,
+          [this.tenantId, locationIds]
+        );
+        if (locations.rows.length !== locationIds.length) {
+          throw new Error("Every assigned location must be an active location in this organization.");
+        }
+      }
       if (existing.role === "organization_owner" && (role !== "organization_owner" || !isActive)) {
         const count = await client.query(`SELECT count(*)::int AS count FROM admin_users WHERE tenant_id=$1 AND role='organization_owner' AND is_active AND user_id <> $2`, [this.tenantId, existing.userId]);
         if (Number(count.rows[0]?.count ?? 0) < 1) throw new Error("StackTrack must retain at least one active Organization Owner.");
@@ -366,10 +499,18 @@ export class PostgresAdminAccess {
       if (!isActive || role !== existing.role) {
         await client.query(`UPDATE admin_sessions SET revoked_at=clock_timestamp() WHERE tenant_id=$1 AND user_id=$2 AND revoked_at IS NULL`, [this.tenantId, existing.userId]);
       }
-      const user = rowPrincipal(updated.rows[0]);
+      await client.query(`DELETE FROM admin_user_locations WHERE tenant_id=$1 AND user_id=$2`, [this.tenantId, existing.userId]);
+      for (const locationId of locationIds) {
+        await client.query(
+          `INSERT INTO admin_user_locations (tenant_id,user_id,location_id,assigned_by)
+           VALUES ($1,$2,$3,$4)`,
+          [this.tenantId, existing.userId, locationId, actor.userId]
+        );
+      }
+      const user = { ...rowPrincipal(updated.rows[0]), locationIds };
       await this.audit(client, actor, "admin.user_updated", user.userId, {
-        before: { displayName: existing.displayName, role: existing.role, isActive: existing.isActive },
-        after: { displayName: user.displayName, role: user.role, isActive: user.isActive },
+        before: { displayName: existing.displayName, role: existing.role, isActive: existing.isActive, locationIds: existing.locationIds },
+        after: { displayName: user.displayName, role: user.role, isActive: user.isActive, locationIds },
         sessionsRevoked: !isActive || role !== existing.role
       });
       return user;
@@ -379,7 +520,8 @@ export class PostgresAdminAccess {
   public async resetUserPassword(
     actor: AdminPrincipal,
     userId: string,
-    temporaryPassword: string
+    temporaryPassword: string,
+    reasonInput = "Owner initiated password reset"
   ): Promise<AdminPrincipal> {
     if (actor.role !== "organization_owner") {
       throw new Error("Only Organization Owners can reset administrator passwords.");
@@ -388,11 +530,15 @@ export class PostgresAdminAccess {
       throw new Error("Use your own account security form to change your password.");
     }
     validatePassword(temporaryPassword, "Temporary password");
+    const reason = validateAdminActionReason(reasonInput);
     const passwordHash = await hashPassword(temporaryPassword);
     return this.transaction(async (client) => {
       const found = await client.query(
-        `SELECT tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password
-           FROM admin_users
+        `SELECT u.tenant_id,u.user_id,u.username,u.display_name,u.role,u.support_expires_at,u.is_active,u.must_change_password,
+                (SELECT COALESCE(array_agg(scope.location_id::text ORDER BY scope.location_id), ARRAY[]::text[])
+                   FROM admin_user_locations scope
+                  WHERE scope.tenant_id = u.tenant_id AND scope.user_id = u.user_id) AS location_ids
+           FROM admin_users u
           WHERE tenant_id=$1 AND user_id=$2
           FOR UPDATE`,
         [this.tenantId, userId]
@@ -415,6 +561,7 @@ export class PostgresAdminAccess {
       const user = rowPrincipal({ ...target, must_change_password: true });
       await this.audit(client, actor, "admin.password_reset", user.userId, {
         username: user.username,
+        reason,
         sessionsRevoked: true,
         mustChangePassword: true
       });

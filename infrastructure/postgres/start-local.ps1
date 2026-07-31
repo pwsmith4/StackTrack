@@ -12,6 +12,7 @@ $logPath = Join-Path $logDirectory "postgres.log"
 $migrationPath = Join-Path $PSScriptRoot "migrations\001_accuracy_foundation.sql"
 $deviceOperationsMigrationPath = Join-Path $PSScriptRoot "migrations\002_device_operations.sql"
 $adminAccessMigrationPath = Join-Path $PSScriptRoot "migrations\003_admin_access.sql"
+$locationManagerMigrationPath = Join-Path $PSScriptRoot "migrations\004_location_manager_access.sql"
 $port = if ($env:STACKTRACK_POSTGRES_PORT) {
   [int]$env:STACKTRACK_POSTGRES_PORT
 } else {
@@ -126,6 +127,17 @@ if ($LASTEXITCODE -ne 0) {
   throw "The StackTrack admin access migration failed."
 }
 
+& $psql `
+  --host=127.0.0.1 `
+  --port=$port `
+  --username=postgres `
+  --dbname=stacktrack `
+  --set=ON_ERROR_STOP=1 `
+  --file=$locationManagerMigrationPath
+if ($LASTEXITCODE -ne 0) {
+  throw "The StackTrack location manager migration failed."
+}
+
 $grantSql = @"
 GRANT CONNECT ON DATABASE stacktrack TO stacktrack;
 GRANT USAGE ON SCHEMA public TO stacktrack;
@@ -137,6 +149,7 @@ GRANT UPDATE (last_reported_at, reported_app_version, pending_offline_scan_count
 GRANT SELECT, INSERT ON device_assignment_history TO stacktrack;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack;
+GRANT SELECT, INSERT, DELETE ON admin_user_locations TO stacktrack;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack;
 "@
 

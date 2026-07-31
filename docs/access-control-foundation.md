@@ -12,7 +12,7 @@ access control.
 | --- | --- | --- | --- |
 | **Organization Owner** | Goodwill corporate authority for the tenant. At least two people should hold this role: the operational program owner and the Chief of IT. | Yes | Yes |
 | **Operations Administrator** | Daily operational and device management. | No | Yes |
-| **Location Manager (proposed)** | Store, Donation Xpress, or warehouse lead who can resolve local exceptions without seeing or changing the wider network. | No | Yes, only for assigned locations |
+| **Location Manager** | Store, Donation Xpress, or warehouse lead who can keep assigned local work moving without seeing or changing the wider network. | No | Yes, only for assigned locations |
 | **Read-only reviewer** | Audit, reporting, and exception review without changes. | No | View only |
 | **StackTrack Support** | Time-limited, explicitly approved vendor troubleshooting access. | No | Only the granted scope |
 
@@ -42,11 +42,12 @@ original evidence IDs. An Organization Owner (or a separately designated
 corporate approver) decides material changes; the API must enforce the scope
 server-side rather than trusting a hidden UI control.
 
-To activate this role, Goodwill needs to provide the Entra group or HR source
-that identifies a manager and the authoritative mapping from a user to one or
-more location IDs. Until that mapping exists, the console presents this as a
-design-ready governance model and keeps live writes limited to the existing
-corporate roles.
+The pilot now stores this mapping in `admin_user_locations`. An Organization
+Owner assigns one or more active location IDs when creating or editing a
+Location Manager. The API applies the same scope to reference data, activity,
+containers, review cases, corrections, device controls, and audit searches;
+the web UI is not trusted to enforce it. Goodwill can later replace the manual
+assignment step with an Entra group or HR directory mapping.
 
 Until a scoped support-grant workflow is introduced, the pilot treats support
 as read-only: it cannot alter scanners, users, or review decisions.
@@ -80,8 +81,9 @@ The pilot implementation now enforces these boundaries server-side:
 - an administrator created with a temporary password cannot view or manage
   pilot operations until they replace it with their own 12+ character password;
 - an Organization Owner can reset another active administrator's password;
-  that action revokes the target's sessions and forces a new private password
-  at the next sign-in;
+  the reset requires an audit reason in the console, revokes the target's
+  sessions, and forces a new private password at the next sign-in. Passwords
+  are one-way PBKDF2 hashes and are never displayed to an administrator;
 - Organization Owners can add a second Organization Owner (for example, the
   Goodwill Chief of IT), Operations Administrators, and Read-only Reviewers;
 - StackTrack will not allow the final active Organization Owner to be disabled
@@ -89,6 +91,12 @@ The pilot implementation now enforces these boundaries server-side:
 - scanner moves, renames, availability changes, account changes, password
   changes, review decisions, and correction decisions all write an
   authenticated actor to `audit_log`.
+
+The pilot password bridge does not claim to provide multi-factor
+authentication. For production, Goodwill should use Entra ID with Conditional
+Access/MFA for Organization Owners and administrators; the local reset flow is
+already separated so that an Entra-backed step-up check can be required before
+issuing a temporary password.
 
 ## Governed correction policy implemented for the pilot
 

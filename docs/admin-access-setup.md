@@ -25,6 +25,13 @@ local-only example and must never be used in Azure.
 - **Read-only Reviewer** — reviews data and exports reports without changing
   operational records.
 
+## Location Manager role
+
+Location Managers are scoped to one or more stores, Donation Xpress sites, or
+warehouses by an Organization Owner. They can manage assigned scanners and
+request evidence-based corrections for those sites, but cannot add users,
+approve corrections, or access another location.
+
 ## What the pilot console enforces
 
 - New users begin with a temporary password and a password-change reminder.
@@ -42,5 +49,19 @@ local-only example and must never be used in Azure.
 - The Needs review page records every decision as an append-only action with a
   required reason. Only an Organization Owner can resolve a material case.
 
-The initial password route is only a temporary pilot bridge. Production should
-use Goodwill Microsoft Entra sign-in and map Entra object IDs to these roles.
+### Location Manager scope
+
+Location Managers are created and scoped by an Organization Owner in the
+directory. Select all active stores, Donation Xpress sites, or warehouses they
+are responsible for. The API applies that scope to every read and write; a
+scope change takes effect on the next request and is recorded in the audit
+trail. They can manage assigned scanners and request evidence-based
+corrections, but cannot add administrators, approve corrections, or change a
+different location.
+
+An Organization Owner can issue a temporary password for an active account.
+The owner supplies a reason, the reset revokes existing sessions, and the user
+chooses a private password at next sign-in. Password hashes are never shown to
+administrators. The pilot password route is only a temporary bridge; production
+should use Goodwill Microsoft Entra sign-in and MFA and map Entra object IDs to
+these roles.

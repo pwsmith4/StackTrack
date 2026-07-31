@@ -16,6 +16,7 @@ Retirement is a soft close, not a destructive delete. The console first loads a
 dependency review showing:
 
 - scanners currently assigned to the site;
+- Location Managers currently scoped to the site;
 - containers whose latest recorded observation is there;
 - load codes generated there; and
 - the number of immutable observations that mention the site.
@@ -25,6 +26,11 @@ should normally be moved individually first. If a scanner cannot be updated,
 the owner can move remaining scanners to the system-managed **Unknown location**
 or choose another active site. Every move creates assignment history and an audit
 event. No old scan, load-code origin, or event location is rewritten.
+
+Retirement is blocked while a Location Manager still includes the site in their
+scope. Open **Settings -> Administrator directory**, reassign each manager to
+their remaining operating sites (or change their role), then rerun the
+dependency check. StackTrack never silently removes a person's access.
 
 Retired names remain in reference data so historical records stay readable, but
 they are removed from new operating-location and scanner-assignment choices.

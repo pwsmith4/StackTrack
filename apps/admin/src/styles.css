@@ -1069,6 +1069,47 @@ footer > span:first-child { display: none; }
 @media (max-width: 600px) { .settings-action-grid, .settings-reference__grid { grid-template-columns: 1fr; } .settings-action-card { min-height: 82px; } .settings-reference__item { grid-template-columns: auto minmax(0, 1fr); } .settings-reference__item .pill { grid-column: 2; justify-self: start; margin-top: 0; } }
 @media (max-width: 900px) { .location-governance__roles { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .location-governance__intro { grid-template-columns: auto minmax(0, 1fr); } .location-governance__intro > .pill { grid-column: 2; justify-self: start; } .location-governance__workflow > div { grid-template-columns: 1fr; gap: 8px; } .location-governance__workflow > div > svg { display: none; } }
+
+/* Administrator directory: make scope and lifecycle controls readable at a glance. */
+.admin-directory__owner-callout { display: flex; align-items: flex-start; gap: 12px; margin: 16px 0; padding: 14px 16px; border-left: 3px solid var(--cyan); background: #eef8fc; color: #536f7d; }
+.admin-directory__owner-callout > svg { flex: none; color: var(--blue-800); }
+.admin-directory__owner-callout div { display: grid; gap: 4px; }
+.admin-directory__owner-callout strong { color: #214b63; font-size: 11px; }
+.admin-directory__owner-callout span { font-size: 9.5px; line-height: 1.5; }
+.admin-role-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 16px 0 22px; border: 1px solid var(--line); background: var(--line); }
+.admin-role-legend article { display: grid; align-content: start; gap: 6px; min-width: 0; padding: 13px; background: #fff; }
+.admin-role-legend article strong { color: #273b49; font-size: 10.5px; }
+.admin-role-legend article span { color: #73828c; font-size: 8.5px; line-height: 1.45; }
+.admin-role-legend .pill { justify-self: start; }
+.admin-account { align-items: flex-start !important; }
+.admin-account__scope { display: block; margin-top: 3px; color: #617b89 !important; font-size: 8.5px !important; }
+.admin-account__self { max-width: 250px; padding: 9px 11px; border-left: 2px solid #b6d8e5; background: #f5fafc; line-height: 1.45; }
+.admin-account__controls { align-items: start; }
+.admin-account__control-actions { display: flex; flex-wrap: wrap; gap: 7px; grid-column: 1 / -1; }
+.admin-account__control-actions button { min-height: 36px; }
+.admin-user-form--owner { display: grid; gap: 14px; }
+.admin-user-form--owner > div:first-child { display: block; margin: 0; }
+.admin-user-form--owner > div:first-child p { max-width: 700px; }
+.admin-user-form__grid { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 10px !important; margin: 0 !important; }
+.admin-user-form__grid label { min-width: 0; }
+.admin-user-form__grid small { color: #7a8791; font-size: 8.5px; line-height: 1.4; text-transform: none; letter-spacing: normal; }
+.admin-scope-picker { margin: 0; padding: 12px; border: 1px solid #cfe0e8; background: #f8fbfc; }
+.admin-scope-picker legend { padding: 0 5px; color: #456170; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .6px; }
+.admin-scope-picker legend small { display: block; margin-top: 4px; color: #82919a; font-size: 8.5px; font-weight: 400; letter-spacing: normal; text-transform: none; }
+.admin-scope-picker > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 7px; }
+.admin-scope-picker__option { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 9px; border: 1px solid #dce8ed; background: #fff; cursor: pointer; }
+.admin-scope-picker__option--selected { border-color: #6ec3df; background: #eef9fc; }
+.admin-scope-picker__option input { width: auto; min-height: 0; margin: 2px 0 0; }
+.admin-scope-picker__option span { display: grid; gap: 3px; min-width: 0; }
+.admin-scope-picker__option strong { overflow: hidden; color: #2b4e60; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.admin-scope-picker__option small { color: #82919a; font-size: 8px; }
+.admin-scope-picker__empty { display: block; margin-top: 8px; color: #a55b3b; font-size: 8.5px; }
+.admin-account__reset { grid-template-columns: minmax(0, 1fr) minmax(160px, 1fr) auto; gap: 8px; align-items: end; }
+.admin-account__reset p { grid-column: 1 / -1; margin: 0; color: #6f7e87; font-size: 9px; line-height: 1.45; }
+.admin-account__reset label { display: grid; gap: 5px; color: #596e7b; font-size: 8px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; }
+.admin-account__reset textarea { min-height: 45px; resize: vertical; padding: 8px 9px; border: 1px solid #bdc9d2; font: inherit; font-size: 9px; }
+@media (max-width: 1080px) { .admin-role-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-user-form__grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } .admin-scope-picker > div { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .admin-role-legend, .admin-user-form__grid, .admin-scope-picker > div { grid-template-columns: 1fr !important; } .admin-account__self { max-width: none; width: 100%; box-sizing: border-box; } }
 @media (max-width: 900px) { .load-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .load-filter-grid .load-filter--wide { grid-column: span 2; } }
 @media (max-width: 600px) { .load-filter-panel__header { align-items: stretch; flex-direction: column; } .load-filter-panel__header > div:last-child { width: 100%; } .load-filter-panel__header > div:last-child button { flex: 1; justify-content: center; } .load-filter-grid { grid-template-columns: 1fr; } .load-filter-grid .load-filter--wide { grid-column: auto; } }
 @media (max-width: 600px) { .detail-drawer__body { padding: 20px; } .detail-drawer__header { padding: 18px 20px; } .detail-drawer__record { margin-inline: 20px; } .detail-drawer__actions { padding-inline: 20px; } .detail-danger-zone { align-items: stretch; flex-direction: column; } .danger-button { width: 100%; } }

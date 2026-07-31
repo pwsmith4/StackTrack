@@ -14,6 +14,7 @@ $postgresBin = @("C:\Program Files\PostgreSQL\18\bin", "C:\Program Files\Postgre
 if (-not $postgresBin) { throw "psql.exe was not found in PostgreSQL 18 or 16." }
 $psql = Join-Path $postgresBin "psql.exe"
 $migrationPath = Join-Path $PSScriptRoot "migrations\003_admin_access.sql"
+$locationManagerMigrationPath = Join-Path $PSScriptRoot "migrations\004_location_manager_access.sql"
 
 function Read-PlainSecret([string]$Prompt) {
   $secure = Read-Host -AsSecureString $Prompt
@@ -56,12 +57,15 @@ $env:PGSSLMODE = "require"
 try {
   & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$migrationPath
   if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack admin access migration failed." }
+  & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$locationManagerMigrationPath
+  if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack location manager migration failed." }
   $sql = if ($ResetExisting) { @"
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
 GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
+GRANT SELECT, INSERT, DELETE ON admin_user_locations TO stacktrack_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
 INSERT INTO admin_users (tenant_id, username, display_name, role, password_hash, must_change_password)
 VALUES (:'tenant_id'::uuid, :'username', :'display_name', 'organization_owner', :'password_hash', false)
@@ -79,6 +83,7 @@ GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
 GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
+GRANT SELECT, INSERT, DELETE ON admin_user_locations TO stacktrack_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
 INSERT INTO admin_users (tenant_id, username, display_name, role, password_hash, must_change_password)
 VALUES (:'tenant_id'::uuid, :'username', :'display_name', 'organization_owner', :'password_hash', false)

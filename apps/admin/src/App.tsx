@@ -62,6 +62,7 @@ import {
   retireLocation,
   type AdminPrincipal,
   type AdminSession,
+  type ManagedAdminRole,
   type AuditEntry,
   type AuditPage,
   type Container,
@@ -656,7 +657,7 @@ export function App() {
           )}
           <button className="user-card" onClick={() => session ? setDetail({
             eyebrow: "Signed-in profile", title: session.principal.displayName, icon: <UserRound size={18} />, status: { label: roleLabel(session.principal.role), tone: session.principal.role === "organization_owner" ? "blue" : "good" }, summary: "Your verified administrator identity and current browser session.", recordId: session.principal.userId, recordIdLabel: "Administrator ID",
-            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically. Every administrative change is attributed to this account.</p><h3 className="detail-section-title">Account access</h3><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", "Goodwill operations"]]}/><h3 className="detail-section-title">Session security</h3><div className="profile-security-card"><CheckCircle2 size={18}/><div><strong>Server-verified session</strong><span>Expires {new Date(session.expiresAt).toLocaleString()}</span><small>Signing out revokes this browser session on the server.</small></div></div><div className="detail-danger-zone"><div><strong>End this session</strong><p>Sign out when you leave this workstation. You can sign back in with your administrator account.</p></div><button className="danger-button" onClick={() => void signOut()}>Sign out</button></div></>
+            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically. Every administrative change is attributed to this account.</p><h3 className="detail-section-title">Account access</h3><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", session.principal.role === "organization_owner" ? "Goodwill-wide full control" : session.principal.role === "location_manager" ? `${session.principal.locationIds?.length ?? 0} assigned operating locations` : "All operating locations"]]}/><h3 className="detail-section-title">Session security</h3><div className="profile-security-card"><CheckCircle2 size={18}/><div><strong>Server-verified session</strong><span>Expires {new Date(session.expiresAt).toLocaleString()}</span><small>Signing out revokes this browser session on the server.</small></div></div><div className="detail-danger-zone"><div><strong>End this session</strong><p>Sign out when you leave this workstation. You can sign back in with your administrator account.</p></div><button className="danger-button" onClick={() => void signOut()}>Sign out</button></div></>
           }) : setSignInOpen(true)}>
             <span className="avatar">{session ? initials(session.principal.displayName) : "?"}</span>
             <span><strong>{session ? session.principal.displayName : "Admin sign in"}</strong><small>{session ? roleLabel(session.principal.role) : "Operational changes locked"}</small></span>
@@ -745,7 +746,7 @@ export function App() {
 }
 
 function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase(); }
-function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
+function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", location_manager: "Location Manager", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
 
 function SignInDialog({ onClose: _onClose, onSuccess }: { onClose: () => void; onSuccess: (session: AdminSession) => void }) {
   const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
@@ -1542,6 +1543,7 @@ function LocationAdministrationPanel({
   const selectedTargetLocation = activeLocations.find((location) => location.locationId === retireTarget);
   const targetIsUnknown = retireTarget === "unknown";
   const hasDevices = Boolean(dependencies?.devices.length);
+  const hasManagers = Boolean(dependencies?.managers.length);
 
   const resetRetirement = () => {
     setDependencies(null);
@@ -1642,13 +1644,14 @@ function LocationAdministrationPanel({
       <div className="location-retire-form__controls"><label><span>Location to retire</span><select value={retireLocationId} onChange={(event) => { setRetireLocationId(event.target.value); resetRetirement(); }} disabled={busy}><option value="">Select an active location</option>{activeLocations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label><button className="secondary" type="button" disabled={busy || !retireLocationId} onClick={() => void inspectDependencies()}>{busy ? "Checking…" : "Check dependencies"}</button></div>
       {dependencies && selectedRetireLocation && <div className="location-dependency-review">
         <div className="location-dependency-review__headline"><div><span className="eyebrow">Before you retire {selectedRetireLocation.name}</span><strong>Review what will be affected.</strong></div><button className="icon-button" type="button" aria-label="Clear dependency review" onClick={resetRetirement}><X size={16} /></button></div>
-        <div className="location-dependency-grid"><div><b>{dependencies.devices.length}</b><span>assigned scanners</span></div><div><b>{dependencies.currentContainerCount}</b><span>containers last observed here</span></div><div><b>{dependencies.loadCodeCount}</b><span>load codes created here</span></div><div><b>{dependencies.observationCount}</b><span>immutable observations</span></div></div>
+        <div className="location-dependency-grid"><div><b>{dependencies.devices.length}</b><span>assigned scanners</span></div><div><b>{dependencies.managers.length}</b><span>scoped Location Managers</span></div><div><b>{dependencies.currentContainerCount}</b><span>containers last observed here</span></div><div><b>{dependencies.loadCodeCount}</b><span>load codes created here</span></div><div><b>{dependencies.observationCount}</b><span>immutable observations</span></div></div>
         {hasDevices && <div className="location-retire-warning"><AlertTriangle size={18} /><div><strong>Scanners are still assigned to this location.</strong><p>Move them individually from the Devices page when possible. If one cannot be updated, choose a destination below so it remains usable without claiming it is at a closed site.</p><button className="secondary" type="button" onClick={() => setPage("devices")}><Smartphone size={14} /> Open scanner administration</button></div></div>}
+        {hasManagers && <div className="location-retire-warning location-retire-warning--manager"><AlertTriangle size={18} /><div><strong>Location Manager access is still assigned.</strong><p>Update these administrator scopes in Settings before retiring the site. StackTrack will not silently remove a manager’s access or leave a stale assignment behind.</p><ul>{dependencies.managers.map((manager) => <li key={manager.userId}>{manager.displayName} <span>@{manager.username}</span></li>)}</ul><button className="secondary" type="button" onClick={() => setPage("settings")}><UserRound size={14} /> Open administrator access</button></div></div>}
         {!hasDevices && <div className="location-retire-safe"><CheckCircle2 size={17} /><span>No scanners are assigned. Historical container observations and load codes will remain linked to this location name.</span></div>}
         <label className="location-retire-destination"><span>Remaining scanner destination {hasDevices ? "(required)" : "(optional)"}</span><select value={retireTarget} onChange={(event) => setRetireTarget(event.target.value)} disabled={busy}><option value="">Move scanners first (recommended)</option><option value="unknown">Unknown location</option>{activeLocations.filter((location) => location.locationId !== selectedRetireLocation.locationId).map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label>
         <div className="location-retire-history-note"><ScrollText size={16} /><span><strong>History is preserved.</strong> {dependencies.currentContainerCount ? `${dependencies.currentContainerCount} container${dependencies.currentContainerCount === 1 ? " remains" : "s remain"} recorded against this name;` : "No containers are currently observed here;"} the original scan events and load-code origins will not be edited.</span></div>
         <label className="location-retire-confirm"><span>Type “{selectedRetireLocation.name}” to confirm</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder={selectedRetireLocation.name} disabled={busy} /></label>
-        <button className="primary location-retire-button" type="submit" disabled={busy || confirmation.trim() !== selectedRetireLocation.name || (hasDevices && !retireTarget)}>{busy ? "Retiring…" : "Retire this location"}</button>
+        <button className="primary location-retire-button" type="submit" disabled={busy || hasManagers || confirmation.trim() !== selectedRetireLocation.name || (hasDevices && !retireTarget)}>{busy ? "Retiring…" : hasManagers ? "Update manager scopes first" : "Retire this location"}</button>
       </div>}
     </form>}
     {retired.length > 0 && <div className="location-retired-list"><div><strong>Retired location names</strong><small>Kept so historical records stay understandable; they are not available for new scanner assignments.</small></div><div>{retired.map((location) => <span key={location.locationId}><MapPin size={13} />{location.name}<Pill tone="muted">Retired</Pill></span>)}</div></div>}
@@ -1777,7 +1780,8 @@ function CorrectionRequestForm({
   );
   const canRequest =
     session.principal.role === "organization_owner" ||
-    session.principal.role === "operations_administrator";
+    session.principal.role === "operations_administrator" ||
+    session.principal.role === "location_manager";
   const changed =
     (locationId !== "" && locationId !== projection?.locationId) ||
     (loadState !== "" && loadState !== projection?.loadState);
@@ -2180,7 +2184,7 @@ function DevicesPage({ data, query, openDetail, refresh, session, onRequestSignI
     {!session && <div className="access-lock"><ShieldCheck size={20}/><span><strong>Sign in to change scanners.</strong> You can inspect device records now; changes are locked until a verified Organization Owner or Operations Administrator signs in.</span><button className="secondary" onClick={onRequestSignIn}>Sign in</button></div>}
     {notice && <div className={`device-notice ${notice.tone === "error" ? "device-notice--error" : ""}`}>{notice.text}</div>}
     {query.trim() && <p className="device-search-summary">Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners matching “{query.trim()}”. Searches include the current and previous assigned locations.</p>}
-    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator"].includes(session.principal.role))} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
+    {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator", "location_manager"].includes(session.principal.role))} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState>No scanners match that device, scanner ID, or location search.</EmptyState>}
   </>;
 }
 
@@ -2701,15 +2705,15 @@ function SettingsPage({ data, setPage, session, onRequestSignIn, onPasswordChang
     </section>
     <section className="location-governance panel">
       <PanelTitle title="Location access model" subtitle="A practical boundary between local operations and corporate governance." action="Open corrections" onClick={() => setPage("corrections")} />
-      <div className="location-governance__intro"><span><ShieldCheck size={20} /></span><div><strong>Recommended for rollout: add scoped Location Managers.</strong><p>Managers at a store, Donation Xpress site, or warehouse should be able to keep work moving without silently changing the corporate record. Their changes should create a reasoned request that corporate administrators can review.</p></div><Pill tone="muted">Design ready</Pill></div>
-      <div className="location-governance__roles"><article><span className="location-governance__role-icon"><MapPin size={17} /></span><div><h3>Location Manager</h3><p>Scoped to assigned locations. Can enable or disable local scanners, request a container correction, and record a reason for a local operational change.</p><small>Cannot add admins, change organization policy, approve their own material correction, or edit another location.</small></div><Pill tone="muted">Proposed</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--admin"><UserRound size={17} /></span><div><h3>Operations Administrator</h3><p>Network-wide operational control. Can manage scanners, triage exceptions, and request corrections across locations.</p><small>Should not approve material corrections when they are the requester.</small></div><Pill tone="good">Current</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--owner"><ShieldCheck size={17} /></span><div><h3>Organization Owner</h3><p>Corporate governance. Manages administrator access and approves, rejects, or reopens official-state corrections with a reason.</p><small>Use sparingly; keep at least two active owners for continuity and dual control.</small></div><Pill tone="blue">Current</Pill></article></div>
+      <div className="location-governance__intro"><span><ShieldCheck size={20} /></span><div><strong>Access levels are enforced by the API.</strong><p>Location Managers keep work moving at assigned sites while Organization Owners retain full governance. Every scope change and password reset is recorded without exposing a stored password.</p></div><Pill tone="good">Available now</Pill></div>
+      <div className="location-governance__roles"><article><span className="location-governance__role-icon"><MapPin size={17} /></span><div><h3>Location Manager</h3><p>Scoped to assigned locations. Can manage local scanners and request a container correction with a reason.</p><small>Cannot add admins, change policy, approve corrections, or edit another location.</small></div><Pill tone="good">Location-scoped</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--admin"><UserRound size={17} /></span><div><h3>Operations Administrator</h3><p>Network-wide operational control. Can manage scanners, triage exceptions, and request corrections across locations.</p><small>Approval and account governance remain with an Organization Owner.</small></div><Pill tone="good">Network operations</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--owner"><ShieldCheck size={17} /></span><div><h3>Organization Owner</h3><p>Full control across Goodwill: administrator access, locations, devices, corrections, approvals, and settings.</p><small>Keep at least two active owners for continuity and dual control.</small></div><Pill tone="blue">Full control</Pill></article></div>
       <div className="location-governance__workflow"><span className="eyebrow">Accountable change path</span><div><span><b>1</b><strong>Local manager records what happened</strong><small>Location, scanner, container, and reason.</small></span><ArrowRight size={15} /><span><b>2</b><strong>Corporate queue receives the request</strong><small>Original scan evidence remains unchanged.</small></span><ArrowRight size={15} /><span><b>3</b><strong>Owner approves or rejects</strong><small>A separate decision and reason are audited.</small></span></div></div>
     </section>
     <section className="settings-reference panel">
       <PanelTitle title="Operating policies" subtitle="Reference only — these policies are enforced by the service and are not interactive settings." />
       <div className="settings-reference__grid">{settings.map((setting) => <article className="settings-reference__item" key={setting.title}><span className="settings-reference__icon"><setting.icon size={18} /></span><div><h3>{setting.title}</h3><p>{setting.text}</p></div><Pill tone="muted">Reference</Pill></article>)}</div>
     </section>
-    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
+    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} locations={data.fixtures.locations} />}</>;
 }
 
 function AccountSecurity({ session, required = false, onPasswordChanged, onSignOut }: { session: AdminSession; required?: boolean; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
@@ -2742,7 +2746,7 @@ function LegacyAdminDirectory({ session }: { session: AdminSession }) {
   return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners control who can manage operations." /><div className="admin-directory__users">{users?.map((user) => <article key={user.userId}><span className="avatar">{initials(user.displayName)}</span><div><strong>{user.displayName}</strong><small>@{user.username}</small></div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill></article>) ?? <div className="skeleton"/>}</div><form className="admin-user-form" onSubmit={(event) => void submit(event)}><h3>Add administrator</h3><p>New accounts must change their temporary password before receiving access.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form></section>;
 }
 
-function AdminDirectory({ session }: { session: AdminSession }) {
+function LegacyAdminDirectoryV2({ session }: { session: AdminSession }) {
   const [users, setUsers] = useState<AdminPrincipal[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -2777,13 +2781,13 @@ function AdminDirectory({ session }: { session: AdminSession }) {
     finally { setBusy(false); }
   };
   return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners govern access. Role changes and disabled accounts immediately invalidate the affected person’s active browser sessions." />
-    <div className="admin-directory__users">{users?.map((user) => <ManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} busy={busy} onSave={save} onReset={resetPassword} />) ?? <div className="skeleton"/>}</div>
+    <div className="admin-directory__users">{users?.map((user) => <LegacyManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} busy={busy} onSave={save} onReset={resetPassword} />) ?? <div className="skeleton"/>}</div>
     {error && <div className="sign-in-error">{error}</div>}
     <form className="admin-user-form" onSubmit={(event) => void addUser(event)}><h3>Add administrator</h3><p>Use an Operations Administrator for normal data and scanner work. Only nominate another Organization Owner when they need full access governance.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div><button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form>
   </section>;
 }
 
-function ManagedAccountRow({ user, currentUserId, busy, onSave, onReset }: { user: AdminPrincipal; currentUserId: string; busy: boolean; onSave: (userId: string, update: { displayName?: string; role?: "organization_owner" | "operations_administrator" | "read_only_reviewer"; isActive?: boolean }) => Promise<void>; onReset: (userId: string, temporaryPassword: string) => Promise<void> }) {
+function LegacyManagedAccountRow({ user, currentUserId, busy, onSave, onReset }: { user: AdminPrincipal; currentUserId: string; busy: boolean; onSave: (userId: string, update: { displayName?: string; role?: "organization_owner" | "operations_administrator" | "read_only_reviewer"; isActive?: boolean }) => Promise<void>; onReset: (userId: string, temporaryPassword: string) => Promise<void> }) {
   const [displayName, setDisplayName] = useState(user.displayName);
   const [role, setRole] = useState(user.role);
   const [resetOpen, setResetOpen] = useState(false);
@@ -2799,6 +2803,105 @@ function ManagedAccountRow({ user, currentUserId, busy, onSave, onReset }: { use
     catch (caught) { setResetError(caught instanceof Error ? caught.message : "Could not reset this password."); }
   };
   return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}><span className="avatar">{initials(user.displayName)}</span><div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">Password change pending</Pill>}</div></div>{self ? <small className="admin-account__self">Use another Organization Owner to change your role or disable this account.</small> : <div className="admin-account__controls"><input aria-label={`${user.username} display name`} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={`${user.username} role`} value={role} disabled={busy} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role: role as "organization_owner" | "operations_administrator" | "read_only_reviewer" } : {}) })}>Save</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable" : "Enable"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Reset password"}</button>{resetOpen && <div className="admin-account__reset"><input aria-label={`Temporary password for ${user.username}`} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}</article>;
+}
+
+type EditableAdminRole = Exclude<ManagedAdminRole, "support">;
+type AdminDirectoryUpdate = { displayName?: string; role?: EditableAdminRole; isActive?: boolean; locationIds?: string[] };
+
+function adminRoleTone(role: AdminPrincipal["role"]): PillTone {
+  return role === "organization_owner" ? "blue" : role === "operations_administrator" ? "good" : role === "location_manager" ? "blue" : "muted";
+}
+
+function AdminDirectory({ session, locations }: { session: AdminSession; locations: Location[] }) {
+  const [users, setUsers] = useState<AdminPrincipal[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [username, setUsername] = useState("");
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [role, setRole] = useState<EditableAdminRole>("operations_administrator");
+  const [locationIds, setLocationIds] = useState<string[]>([]);
+  const activeLocations = locations.filter((location) => location.isActive !== false && location.type !== "in_transit");
+  const refreshUsers = useCallback(async () => {
+    try { setUsers(await listAdminUsers(session)); setError(null); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load administrator accounts."); }
+  }, [session]);
+  useEffect(() => { void refreshUsers(); }, [refreshUsers]);
+  const addUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (role === "location_manager" && locationIds.length === 0) {
+      setError("Choose at least one location for a Location Manager.");
+      return;
+    }
+    setBusy(true); setError(null);
+    try {
+      await createAdminUser(session, { displayName, username, temporaryPassword, role, ...(role === "location_manager" ? { locationIds } : {}) });
+      setDisplayName(""); setUsername(""); setTemporaryPassword(""); setRole("operations_administrator"); setLocationIds([]);
+      await refreshUsers();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); }
+    finally { setBusy(false); }
+  };
+  const save = async (userId: string, update: AdminDirectoryUpdate) => {
+    setBusy(true); setError(null);
+    try { await updateAdminUser(session, userId, update); await refreshUsers(); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update account."); }
+    finally { setBusy(false); }
+  };
+  const resetPassword = async (userId: string, password: string, reason: string) => {
+    setBusy(true); setError(null);
+    try { await resetAdminPassword(session, userId, password, reason); await refreshUsers(); }
+    catch (caught) { throw caught instanceof Error ? caught : new Error("Could not reset account password."); }
+    finally { setBusy(false); }
+  };
+  return <section className="admin-directory">
+    <PanelTitle title="Administrator directory" subtitle="Organization Owners have full control. Every other account is explicit about its operating scope, and no administrator can view another person’s stored password." />
+    <div className="admin-directory__owner-callout"><ShieldCheck size={20} /><div><strong>Signed in as Organization Owner</strong><span>You can add, scope, disable, and reset administrator accounts. Passwords are stored only as one-way hashes; a reset issues a one-time temporary password that the user must replace.</span></div></div>
+    <div className="admin-role-legend">
+      <article><Pill tone="blue">Full control</Pill><strong>Organization Owner</strong><span>Users, locations, devices, corrections, approvals, and settings across Goodwill.</span></article>
+      <article><Pill tone="good">Network operations</Pill><strong>Operations Administrator</strong><span>Daily scanner, exception, correction-request, and data workflows across locations.</span></article>
+      <article><Pill tone="blue">Location-scoped</Pill><strong>Location Manager</strong><span>Only assigned stores, Donation Xpress sites, or warehouses; changes remain reasoned and reviewable.</span></article>
+      <article><Pill tone="muted">View only</Pill><strong>Read-only Reviewer</strong><span>Can investigate evidence and reports without changing operational state.</span></article>
+    </div>
+    <div className="admin-directory__users">{users?.map((user) => <ManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} locations={activeLocations} busy={busy} onSave={save} onReset={resetPassword} />) ?? <div className="skeleton" />}</div>
+    {error && <div className="sign-in-error">{error}</div>}
+    <form className="admin-user-form admin-user-form--owner" onSubmit={(event) => void addUser(event)}>
+      <div><span className="eyebrow">Create access</span><h3>Add an administrator</h3><p>Give each person the least access needed. The temporary password is never retrievable after this form is cleared; the user replaces it privately on first sign-in.</p></div>
+      <div className="admin-user-form__grid"><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label><label>Role<select value={role} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>One-time temporary password<input required minLength={12} type="password" autoComplete="new-password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /><small>12+ characters. It is hashed immediately and cannot be viewed later.</small></label></div>
+      {role === "location_manager" && <LocationScopePicker locations={activeLocations} value={locationIds} onChange={setLocationIds} />}
+      <button className="primary" disabled={busy}>{busy ? "Creating…" : "Create administrator"}</button>
+    </form>
+  </section>;
+}
+
+function LocationScopePicker({ locations, value, onChange }: { locations: Location[]; value: string[]; onChange: (value: string[]) => void }) {
+  const toggle = (locationId: string) => onChange(value.includes(locationId) ? value.filter((id) => id !== locationId) : [...value, locationId]);
+  return <fieldset className="admin-scope-picker"><legend>Assigned locations <small>Select every site this manager is responsible for.</small></legend><div>{locations.map((location) => <label key={location.locationId} className={value.includes(location.locationId) ? "admin-scope-picker__option admin-scope-picker__option--selected" : "admin-scope-picker__option"}><input type="checkbox" checked={value.includes(location.locationId)} onChange={() => toggle(location.locationId)} /><span><strong>{location.name}</strong><small>{location.type === "donation_express" ? "Donation Xpress" : location.type === "warehouse" ? "Warehouse" : "Store"}</small></span></label>)}</div>{value.length === 0 && <small className="admin-scope-picker__empty">No locations selected yet.</small>}</fieldset>;
+}
+
+function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onReset }: { user: AdminPrincipal; currentUserId: string; locations: Location[]; busy: boolean; onSave: (userId: string, update: AdminDirectoryUpdate) => Promise<void>; onReset: (userId: string, temporaryPassword: string, reason: string) => Promise<void> }) {
+  const [displayName, setDisplayName] = useState(user.displayName);
+  const [role, setRole] = useState<EditableAdminRole>(user.role === "support" ? "read_only_reviewer" : user.role);
+  const [locationIds, setLocationIds] = useState<string[]>(user.locationIds ?? []);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [resetReason, setResetReason] = useState("");
+  const [resetError, setResetError] = useState<string | null>(null);
+  useEffect(() => { setDisplayName(user.displayName); setRole(user.role === "support" ? "read_only_reviewer" : user.role); setLocationIds(user.locationIds ?? []); }, [user.displayName, user.role, (user.locationIds ?? []).join(",")]);
+  const self = user.userId === currentUserId;
+  const changed = displayName.trim() !== user.displayName || role !== user.role || (role === "location_manager" ? locationIds.join(",") !== (user.locationIds ?? []).join(",") : (user.locationIds ?? []).length > 0);
+  const assignedLocationNames = locationIds.map((locationId) => locations.find((location) => location.locationId === locationId)?.name).filter((name): name is string => Boolean(name));
+  const submitReset = async () => {
+    if (temporaryPassword.length < 12) { setResetError("Use at least 12 characters."); return; }
+    setResetError(null);
+    if (resetReason.trim().length < 8) { setResetError("Add a clear reason (at least 8 characters) for the audit trail."); return; }
+    try { await onReset(user.userId, temporaryPassword, resetReason.trim()); setTemporaryPassword(""); setResetReason(""); setResetOpen(false); }
+    catch (caught) { setResetError(caught instanceof Error ? caught.message : "Could not reset this password."); }
+  };
+  return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}>
+    <span className="avatar">{initials(user.displayName)}</span>
+    <div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={adminRoleTone(user.role)}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">First password change pending</Pill>}</div><small className="admin-account__scope">{user.role === "location_manager" ? (user.locationIds?.length ? "Assigned to " + user.locationIds.length + " location" + (user.locationIds.length === 1 ? "" : "s") : "No locations assigned") : user.role === "read_only_reviewer" ? "Network view only" : "Network-wide access"}</small></div>
+    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{role === "location_manager" && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...(role === "location_manager" || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button></div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}
+  </article>;
 }
 
 function DeviceCard({ device, data, operatingLocations, busy, canManage, onSave, onDetails }: { device: Device; data: OperationsData; operatingLocations: Location[]; busy: boolean; canManage: boolean; onSave: (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => Promise<void>; onDetails: () => void }) {
