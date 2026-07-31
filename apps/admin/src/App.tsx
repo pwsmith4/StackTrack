@@ -2272,7 +2272,7 @@ function auditEntryDetail(entry: AuditEntry, data: OperationsData): DetailView {
       {entry.details.reason && typeof entry.details.reason === "string" && <div className="detail-callout"><ShieldCheck size={19} /><span><strong>Recorded reason:</strong> {entry.details.reason}</span></div>}
       <h3 className="detail-section-title">What changed</h3>
       <ReadableDetails details={entry.details} data={data} />
-      <details className="audit-technical-details"><summary>Technical references</summary><DetailFacts items={[["Audit action code", entry.action], ["Technical target ID", entry.targetId ? <code className="audit-technical-id">{entry.targetId}</code> : "Not recorded"]]} /></details>
+      {entry.targetId && <details className="audit-technical-details"><summary>Record identifiers</summary><DetailFacts items={[["Technical target ID", <code className="audit-technical-id">{entry.targetId}</code>]]} /></details>}
       {evidenceEvents.length > 0 && <><h3 className="detail-section-title">Related operational evidence</h3><EventEvidence events={evidenceEvents} data={data} /></>}
     </>
   };
