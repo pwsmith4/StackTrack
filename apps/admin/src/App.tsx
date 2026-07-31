@@ -98,6 +98,12 @@ interface DetailView {
   readonly eyebrow: string;
   readonly title: string;
   readonly body: ReactNode;
+  readonly icon?: ReactNode;
+  readonly status?: { label: string; tone: PillTone };
+  readonly summary?: string;
+  readonly recordId?: string;
+  readonly recordIdLabel?: string;
+  readonly actions?: ReactNode;
 }
 
 type OpenDetail = (detail: DetailView) => void;
@@ -198,7 +204,9 @@ function EmptyState({ children }: { children: ReactNode }) {
   );
 }
 
-function Pill({ tone, children }: { tone: "good" | "warn" | "blue" | "muted"; children: ReactNode }) {
+type PillTone = "good" | "warn" | "blue" | "muted";
+
+function Pill({ tone, children }: { tone: PillTone; children: ReactNode }) {
   return <span className={`pill pill--${tone}`}>{children}</span>;
 }
 
@@ -255,15 +263,49 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
   URL.revokeObjectURL(url);
 }
 
+async function copyText(value: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.focus();
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+function CopyValueButton({ value, label = "Copy" }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return <button className="detail-copy-button" type="button" onClick={() => void copyText(value).then((success) => { if (success) { setCopied(true); window.setTimeout(() => setCopied(false), 1600); } })}>
+    <ClipboardCheck size={14} /> {copied ? "Copied" : label}
+  </button>;
+}
+
 function DetailDrawer({ detail, onClose }: { detail: DetailView; onClose: () => void }) {
   return (
     <>
       <button className="detail-scrim" onClick={onClose} aria-label="Close details" />
       <aside className="detail-drawer" role="dialog" aria-modal="true" aria-label={detail.title}>
         <div className="detail-drawer__header">
-          <div><span className="eyebrow">{detail.eyebrow}</span><h2>{detail.title}</h2></div>
+          <div className="detail-drawer__heading">
+            <div className="detail-drawer__heading-top"><span className="detail-drawer__icon">{detail.icon ?? <ShieldCheck size={18} />}</span><span className="eyebrow">{detail.eyebrow}</span>{detail.status && <Pill tone={detail.status.tone}>{detail.status.label}</Pill>}</div>
+            <h2>{detail.title}</h2>
+            {detail.summary && <p>{detail.summary}</p>}
+          </div>
           <button className="icon-button" onClick={onClose} aria-label="Close details"><X size={18} /></button>
         </div>
+        {detail.recordId && <div className="detail-drawer__record"><div><span>{detail.recordIdLabel ?? "Record ID"}</span><code>{detail.recordId}</code></div><CopyValueButton value={detail.recordId} label="Copy ID" /></div>}
+        {detail.actions && <div className="detail-drawer__actions">{detail.actions}</div>}
         <div className="detail-drawer__body">{detail.body}</div>
       </aside>
     </>
@@ -277,10 +319,11 @@ function DetailFacts({ items }: { items: readonly [string, ReactNode][] }) {
 function EventEvidence({ events, data }: { events: StoredEvent[]; data: OperationsData }) {
   const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown";
   return <div className="detail-events">{events.length ? events.map((event) => <article key={event.eventId}>
-    <div><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill><time>{new Date(event.eventAt).toLocaleString()}</time></div>
+    <div><span className="detail-event__label"><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{event.accuracyFlags.length ? <span className="detail-event__warning-count">{event.accuracyFlags.length} warning{event.accuracyFlags.length === 1 ? "" : "s"}</span> : <span className="detail-event__verified"><CheckCircle2 size={12} /> verified</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div>
     <strong>{locationName(event.locationId)}</strong>
-    <span>{event.eventId}</span>
+    <span className="detail-event__id">{event.eventId} <CopyValueButton value={event.eventId} label="Copy" /></span>
     <small>{event.accuracyFlags.length ? event.accuracyFlags.join(" · ") : "Timing and device order verified"}</small>
+    <details className="detail-event__more"><summary>View evidence details</summary><DetailFacts items={[["Device", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Device sequence", String(event.deviceSequence)], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Effective", new Date(event.effectiveAt).toLocaleString()]]}/><pre>{JSON.stringify(event.payload, null, 2)}</pre></details>
   </article>) : <EmptyState>No observations have been recorded for this item.</EmptyState>}</div>;
 }
 
@@ -351,6 +394,7 @@ export function App() {
   const setPage = (next: Page) => {
     window.location.hash = `/${next}`;
     setPageState(next);
+    setDetail(null);
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -555,7 +599,7 @@ function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: 
 function SignInDialog({ onClose: _onClose, onSuccess }: { onClose: () => void; onSuccess: (session: AdminSession) => void }) {
   const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { onSuccess(await signIn(username, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Sign-in failed."); } finally { setBusy(false); } };
-  return <section className="sign-in-dialog" role="dialog" aria-modal="true" aria-label="Administrator sign in"><ShieldCheck size={28}/><span className="eyebrow">SECURE PILOT ACCESS</span><h2>Sign in to view operations.</h2><p>Container, route, device, and report data stays unavailable until the StackTrack API verifies an approved account.</p><form onSubmit={(event) => void submit(event)}><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form><small>Production will use Goodwill Microsoft Entra sign-in. This password route is for the isolated test pilot only.</small></section>;
+  return <section className="sign-in-dialog" role="dialog" aria-modal="true" aria-label="Administrator sign in"><div className="sign-in-dialog__brand"><Mark /></div><div className="sign-in-dialog__icon"><ShieldCheck size={25}/></div><span className="eyebrow">SECURE PILOT ACCESS</span><h2>Sign in to view operations.</h2><p>Container, route, device, and report data stays unavailable until the StackTrack API verifies an approved account.</p><div className="sign-in-dialog__trust"><span><CheckCircle2 size={14}/> Server-verified access</span><span><ShieldCheck size={14}/> Audit-ready changes</span></div><form onSubmit={(event) => void submit(event)}><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form><small>Production will use Goodwill Microsoft Entra sign-in. This password route is for the isolated test pilot only.</small></section>;
 }
 
 function PageContent({
@@ -582,13 +626,13 @@ function PageContent({
   onSignOut: () => Promise<void>;
 }) {
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} />;
-  if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} />;
+  if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} />;
+  if (page === "locations") return <LocationsPage data={data} openDetail={openDetail} setPage={setPage} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "audit") return <AuditTrailPage data={data} session={session!} />;
+  if (page === "audit") return <AuditTrailPage data={data} session={session!} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
   return <SettingsPage data={data} openDetail={openDetail} session={session} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
@@ -806,7 +850,27 @@ function PanelTitle({ title, subtitle, action, onClick }: { title: string; subti
   );
 }
 
-function ContainersPage({ data, query, openDetail }: { data: OperationsData; query: string; openDetail: OpenDetail }) {
+function ContainerRouteSummary({ events, data }: { events: StoredEvent[]; data: OperationsData }) {
+  const transitId = data.fixtures.locations.find((location) => location.type === "in_transit")?.locationId;
+  const ordered = [...events].sort((left, right) => Date.parse(left.effectiveAt) - Date.parse(right.effectiveAt));
+  const departure = [...ordered].reverse().find((event) => event.eventType === "batch_out");
+  const destinationId = typeof departure?.payload.destinationLocationId === "string" ? departure.payload.destinationLocationId : null;
+  const originEvent = departure
+    ? ordered.filter((event) => event.eventId !== departure.eventId && event.locationId !== transitId && Date.parse(event.effectiveAt) < Date.parse(departure.effectiveAt)).at(-1)
+    : ordered[0];
+  const name = (id: string | null | undefined) => data.fixtures.locations.find((location) => location.locationId === id)?.name ?? "Not confirmed";
+  const origin = originEvent ? name(originEvent.locationId) : "Not confirmed";
+  const destination = destinationId ? name(destinationId) : "Destination pending";
+  const current = ordered.at(-1);
+  const inTransit = current?.locationId === transitId;
+  return <div className={`detail-route-summary ${inTransit ? "detail-route-summary--active" : ""}`}>
+    <div className="detail-route-summary__heading"><span><Truck size={15} /> Route context</span><Pill tone={inTransit ? "blue" : "good"}>{inTransit ? "In transit" : "Physical location confirmed"}</Pill></div>
+    <div className="detail-route-summary__path"><div><small>Origin</small><strong>{origin}</strong></div><ArrowRight size={17} /><div><small>Destination</small><strong>{destination}</strong></div></div>
+    <small className="detail-route-summary__note">{inTransit ? "The container remains in transit until a destination receipt is scanned." : current ? `Last authoritative observation: ${eventLabel(current.eventType)} at ${name(current.locationId)}.` : "No route observations are recorded yet."}</small>
+  </div>;
+}
+
+function ContainersPage({ data, query, openDetail, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; setPage: (page: Page) => void }) {
   const [filter, setFilter] = useState<"all" | "loaded" | "empty" | "unknown">("all");
   const [pageIndex, setPageIndex] = useState(0);
   const pageSize = 25;
@@ -825,13 +889,19 @@ function ContainersPage({ data, query, openDetail }: { data: OperationsData; que
     openDetail({
       eyebrow: `${container.type} record`,
       title: container.label,
+      icon: <ContainerIcon size={18} />,
+      status: projection?.health === "needs_review" ? { label: "Needs review", tone: "warn" } : { label: projection?.loadState === "loaded" ? "Loaded" : projection?.loadState === "empty" ? "Empty" : "Not observed", tone: projection?.loadState === "loaded" ? "blue" : projection?.loadState === "empty" ? "good" : "muted" },
+      summary: "Immutable container record with current projection, official corrections, and the complete observation history.",
+      recordId: container.containerId,
+      recordIdLabel: "Container UUID",
+      actions: projection?.health === "needs_review" ? <button className="secondary" onClick={() => setPage("exceptions")}><AlertTriangle size={15} /> Open review queue</button> : undefined,
       body: <><DetailFacts items={[
         ["Current state", projection?.loadState ?? "Not observed"],
         ["Last known location", locationName(projection?.locationId ?? null)],
         ["History health", projection?.health ?? "No history"],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"],
         ["Container UUID", container.containerId]
-      ]}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
+      ]}/><ContainerRouteSummary events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={data.events.filter((event) => event.containerId === container.containerId)} data={data}/></>
     });
   };
   const exportRows = () => downloadCsv("stacktrack-containers.csv", [
@@ -915,6 +985,11 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
             <div className="load-card__bottom"><span>Created {relativeTime(event.eventAt)}</span><button onClick={() => openDetail({
               eyebrow: "Load code history",
               title: String(event.payload.displayLoadCode ?? event.loadCodeId),
+              icon: <PackageCheck size={18} />,
+              status: { label: isActive(event) ? "Available" : "Used", tone: isActive(event) ? "good" : "muted" },
+              summary: "Validated production handoff linked to an immutable mark-full observation.",
+              recordId: event.loadCodeId ?? event.eventId,
+              recordIdLabel: event.loadCodeId ? "Load code UUID" : "Source event UUID",
               body: <><DetailFacts items={[
                 ["Container", containerName(event.containerId) ?? "Unknown"],
                 ["Current status", isActive(event) ? "Active / available" : "Completed / used"],
@@ -930,7 +1005,7 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
   );
 }
 
-function LocationsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
+function LocationsPage({ data, openDetail, setPage }: { data: OperationsData; openDetail: OpenDetail; setPage: (page: Page) => void }) {
   const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit");
   const [selectedLocationId, setSelectedLocationId] = useState(physicalLocations[0]?.locationId ?? "");
   const [locationQuery, setLocationQuery] = useState("");
@@ -947,7 +1022,9 @@ function LocationsPage({ data, openDetail }: { data: OperationsData; openDetail:
     const departure = events.find((event) => event.eventType === "batch_out");
     const destinationId = departure?.payload.destinationLocationId;
     const destination = typeof destinationId === "string" ? data.fixtures.locations.find((item) => item.locationId === destinationId) : undefined;
-    const originEvent = departure ? events.find((event) => event.eventId !== departure.eventId && event.locationId !== transitId) : undefined;
+    const originEvent = departure
+      ? events.find((event) => event.eventId !== departure.eventId && event.locationId !== transitId && Date.parse(event.effectiveAt) < Date.parse(departure.effectiveAt))
+      : undefined;
     const origin = originEvent ? data.fixtures.locations.find((item) => item.locationId === originEvent.locationId) : undefined;
     return { destination, origin, departure };
   };
@@ -981,7 +1058,7 @@ function LocationsPage({ data, openDetail }: { data: OperationsData; openDetail:
 
     <section className="location-workspace panel">
       <div className="location-workspace__head">
-        <div><span className="eyebrow">Selected operating location</span><h2><span className={`location-title-icon location-title-icon--${selected.type}`}><LocationTypeIcon location={selected} size={20} /></span>{selected.name}</h2><p>One place to review containers physically here, inbound, and outbound without mixing simultaneous routes together.</p></div>
+        <div><span className="eyebrow">Selected operating location</span><h2><span className={`location-title-icon location-title-icon--${selected.type}`}><LocationTypeIcon location={selected} size={20} /></span>{selected.name}</h2><p>One place to review containers physically here, inbound, and outbound without mixing simultaneous routes together.</p><button className="secondary location-details-button" onClick={() => openDetail(locationDetail(selected, data, setPage, openDetail))}><MapPin size={15} /> Location details</button></div>
         <div className="location-workspace__counts"><span><b>{current.length}</b> here</span><span><b>{arriving.length}</b> arriving</span><span><b>{leaving.length}</b> leaving</span></div>
       </div>
       <div className="workflow-lanes">
@@ -1005,6 +1082,31 @@ function LocationWorkflowLane({ title, subtitle, tone, items, data, onOpen }: { 
     }) : <div className="workflow-lane__empty">No containers in this workflow lane.</div>}</div>
     {items.length > 8 && <button className="workflow-lane__more" onClick={() => setExpanded((value) => !value)}>{expanded ? "Show fewer" : `Show all ${items.length}`}</button>}
   </section>;
+}
+
+function locationDetail(location: Location, data: OperationsData, setPage?: (page: Page) => void, openDetail?: OpenDetail): DetailView {
+  const projections = Object.values(data.projections).filter(Boolean) as Projection[];
+  const containersHere = projections.filter((projection) => projection.locationId === location.locationId);
+  const assignedDevices = data.fixtures.devices.filter((device) => device.assignedLocationId === location.locationId);
+  const recentEvents = data.events.filter((event) => event.locationId === location.locationId).slice(0, 10);
+  const typeLabel = location.type === "donation_express" ? "Donation Xpress" : location.type === "warehouse" ? "Warehouse" : location.type === "in_transit" ? "In transit" : "Store";
+  return {
+    eyebrow: "Operating location",
+    title: location.name,
+    icon: <LocationTypeIcon location={location} size={18} />,
+    status: { label: `${containersHere.length} container${containersHere.length === 1 ? "" : "s"} here`, tone: containersHere.some((projection) => projection.health === "needs_review") ? "warn" : "good" },
+    summary: `${typeLabel} record with assigned scanners and the latest observations associated with this location.`,
+    recordId: location.locationId,
+    recordIdLabel: "Location UUID",
+    actions: setPage ? <><button className="secondary" onClick={() => setPage("devices")}><Smartphone size={15} /> Manage scanners</button><button className="secondary" onClick={() => setPage("containers")}><ContainerIcon size={15} /> View containers</button></> : undefined,
+    body: <>
+      <DetailFacts items={[["Location type", typeLabel], ["Active scanners", String(assignedDevices.length)], ["Containers here", String(containersHere.length)], ["Needs review", String(containersHere.filter((projection) => projection.health === "needs_review").length)], ["Latest event", recentEvents[0] ? relativeTime(recentEvents[0].receivedAt) : "No observations"]]} />
+      <h3 className="detail-section-title">Assigned scanners</h3>
+      {assignedDevices.length ? <div className="detail-related-list">{assignedDevices.map((device) => <div key={device.deviceId}><span className="detail-related-list__icon"><Smartphone size={15} /></span><div><strong>{device.label}</strong><small>Scanner {scannerNumber(device.deviceId)} · {device.isActive ? "Scanning enabled" : "Disabled"}</small></div><Pill tone={device.isActive ? "good" : "warn"}>{device.isActive ? "Online" : "Disabled"}</Pill></div>)}</div> : <EmptyState>No scanners are currently assigned to this location.</EmptyState>}
+      <h3 className="detail-section-title">Latest location observations</h3>
+      <EventEvidence events={recentEvents} data={data} />
+    </>
+  };
 }
 
 function LegacyExceptionsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
@@ -1355,6 +1457,11 @@ function ActivityPage({ data, query, openDetail }: { data: OperationsData; query
   return <section className="panel"><div className="toolbar"><div className="filter-tabs">{(["all", "load_assigned", "batch_out", "batch_in", "emptied"] as const).map((value) => <button key={value} className={eventFilter === value ? "active" : ""} onClick={() => setEventFilter(value)}>{value === "all" ? "All events" : eventLabel(value)}</button>)}</div><span className="date-chip">{events.length} shown</span></div><div className="timeline">{events.slice(0, 100).map((event, index) => (
     <article className="clickable-timeline" key={event.eventId} onClick={() => openDetail({
       eyebrow: "Immutable ledger event",
+      icon: <FileClock size={18} />,
+      status: event.accuracyFlags.length ? { label: "Review evidence", tone: "warn" } : { label: "Timing verified", tone: "good" },
+      summary: "The original scanner observation is preserved exactly as received by StackTrack.",
+      recordId: event.eventId,
+      recordIdLabel: "Event UUID",
       title: `${c(event.containerId)?.label} · ${eventLabel(event.eventType)}`,
       body: <><DetailFacts items={[
         ["Observed at", new Date(event.eventAt).toLocaleString()],
@@ -1409,7 +1516,8 @@ function deviceDetail(device: Device, data: OperationsData): DetailView {
   const locationName = (id: string | null) => data.fixtures.locations.find((location) => location.locationId === id)?.name ?? "Unassigned";
   const events = data.events.filter((item) => item.deviceId === device.deviceId);
   const history = data.fixtures.deviceAssignments.filter((item) => item.deviceId === device.deviceId);
-  return { eyebrow: "Shared scanner", title: device.label, body: <><DetailFacts items={[["Scanner ID", scannerNumber(device.deviceId)], ["Technical installation ID", device.installationId], ["Assigned location", locationName(device.assignedLocationId)], ["Scanning enabled", device.isActive ? "Yes" : "No"], ["Installed StackTrack version", device.reportedAppVersion ?? "Not reported by this device yet"], ["Last app report", relativeTime(device.lastReportedAt)]]}/><h3 className="detail-section-title">Assignment history</h3>{history.length ? <div className="assignment-history">{history.map((entry: DeviceAssignment) => <article key={entry.assignmentHistoryId}><time>{new Date(entry.occurredAt).toLocaleString()}</time><strong>{locationName(entry.previousLocationId)} <ArrowRight size={14} /> {locationName(entry.assignedLocationId)}</strong><span>{entry.reason}</span><small>Preserved in the device audit history</small></article>)}</div> : <EmptyState>No location reassignment has been recorded yet.</EmptyState>}<h3 className="detail-section-title">Latest scanner activity</h3><EventEvidence events={events.slice(0, 12)} data={data}/></> };
+  const stale = !device.lastReportedAt || Date.now() - Date.parse(device.lastReportedAt) > 24 * 60 * 60 * 1000;
+  return { eyebrow: "Shared scanner", title: device.label, icon: <Smartphone size={18} />, status: device.isActive ? { label: "Scanning enabled", tone: "good" } : { label: "Scanning disabled", tone: "warn" }, summary: "A shared field scanner with a server-assigned identity, location, and append-only control history.", recordId: device.deviceId, recordIdLabel: "Device UUID", body: <><DetailFacts items={[["Scanner ID", scannerNumber(device.deviceId)], ["Technical installation ID", device.installationId], ["Assigned location", locationName(device.assignedLocationId)], ["Scanning enabled", device.isActive ? "Yes" : "No"], ["Installed StackTrack version", device.reportedAppVersion ?? "Not reported by this device yet"], ["Last app report", relativeTime(device.lastReportedAt)]]}/>{stale && <div className="detail-callout detail-callout--warn"><AlertTriangle size={19}/><span><strong>Telemetry is stale.</strong> This scanner has not reported in over 24 hours. Confirm the device is powered on, connected, and still assigned to the right location.</span></div>}<h3 className="detail-section-title">Assignment history</h3>{history.length ? <div className="assignment-history">{history.map((entry: DeviceAssignment) => <article key={entry.assignmentHistoryId}><time>{new Date(entry.occurredAt).toLocaleString()}</time><strong>{locationName(entry.previousLocationId)} <ArrowRight size={14} /> {locationName(entry.assignedLocationId)}</strong><span>{entry.reason}</span><small>Preserved in the device audit history</small></article>)}</div> : <EmptyState>No location reassignment has been recorded yet.</EmptyState>}<h3 className="detail-section-title">Latest scanner activity</h3><EventEvidence events={events.slice(0, 12)} data={data}/></> };
   /* Legacy required-version policy controls intentionally removed from the pilot UI.
   const requiredAppVersion = device.requiredAppVersion ?? "";
   const updateNeeded = versionIsOlder(device.reportedAppVersion, requiredAppVersion);
@@ -1546,7 +1654,48 @@ function auditDetailSummary(details: Record<string, unknown>) {
   return [changed, reason ? `Reason: ${reason}` : null, source ? `Source: ${source}` : null].filter(Boolean).join(" · ");
 }
 
-function AuditTrailPage({ data, session }: { data: OperationsData; session: AdminSession }) {
+function auditEntryDetail(entry: AuditEntry, data: OperationsData): DetailView {
+  const targetContainer = entry.targetType === "container"
+    ? data.fixtures.containers.find((container) => container.containerId === entry.targetId)
+    : undefined;
+  const targetDevice = entry.targetType === "device"
+    ? data.fixtures.devices.find((device) => device.deviceId === entry.targetId)
+    : undefined;
+  const evidenceEvents = targetContainer
+    ? data.events.filter((event) => event.containerId === targetContainer.containerId).slice(0, 12)
+    : targetDevice
+      ? data.events.filter((event) => event.deviceId === targetDevice.deviceId).slice(0, 12)
+      : [];
+  const tone: PillTone = entry.action.startsWith("review.") || entry.action.startsWith("correction.")
+    ? "warn"
+    : entry.actorType === "device"
+      ? "good"
+      : "blue";
+  return {
+    eyebrow: "Governance event",
+    title: auditActionLabel(entry.action),
+    icon: entry.actorType === "user" ? <UserRound size={18} /> : entry.actorType === "device" ? <Smartphone size={18} /> : <ShieldCheck size={18} />,
+    status: { label: entry.actorType === "device" ? "Scanner reported" : "Recorded" , tone },
+    summary: auditDetailSummary(entry.details) || "An append-only administrative or system action recorded by StackTrack.",
+    recordId: entry.auditId,
+    recordIdLabel: "Audit event UUID",
+    body: <>
+      <DetailFacts items={[
+        ["Action", entry.action],
+        ["Occurred", new Date(entry.occurredAt).toLocaleString()],
+        ["Actor", `${entry.actorDisplayName}${entry.actorUsername ? ` · @${entry.actorUsername}` : ""}`],
+        ["Target", `${auditTargetLabel(entry)} · ${entry.targetType.replaceAll("_", " ")}`],
+        ["Location context", entry.locationName ?? "Not associated"]
+      ]} />
+      {entry.details.reason && typeof entry.details.reason === "string" && <div className="detail-callout"><ShieldCheck size={19} /><span><strong>Recorded reason:</strong> {entry.details.reason}</span></div>}
+      <h3 className="detail-section-title">Event metadata</h3>
+      <pre className="detail-json">{JSON.stringify(entry.details, null, 2)}</pre>
+      {evidenceEvents.length > 0 && <><h3 className="detail-section-title">Related operational evidence</h3><EventEvidence events={evidenceEvents} data={data} /></>}
+    </>
+  };
+}
+
+function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; session: AdminSession; openDetail: OpenDetail }) {
   const [draft, setDraft] = useState<AuditDraft>(emptyAuditFilters);
   const [applied, setApplied] = useState<AuditDraft>(emptyAuditFilters);
   const [pageIndex, setPageIndex] = useState(0);
@@ -1606,11 +1755,11 @@ function AuditTrailPage({ data, session }: { data: OperationsData; session: Admi
     {error && <div className="api-error"><AlertTriangle size={20} /><span>{error}</span><button onClick={() => void load()}>Retry</button></div>}
     <div className="audit-page__results"><div className="audit-page__results-heading"><div><span className="eyebrow">Append-only record</span><h3>{loading ? "Loading audit events…" : result.total ? `Events ${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)}` : "No matching events"}</h3></div><span>Page {currentPage} of {pageCount}</span></div>
       {!loading && !result.items.length && <EmptyState>No audit events match these filters. Try clearing one filter or widening the date range.</EmptyState>}
-      <div className="audit-results">{result.items.map((entry) => <article className="audit-entry" key={entry.auditId}>
+      <div className="audit-results">{result.items.map((entry) => <article className="audit-entry audit-entry--interactive" key={entry.auditId} onClick={() => openDetail(auditEntryDetail(entry, data))}>
         <div className="audit-entry__header"><div className="audit-entry__headline"><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{auditActionLabel(entry.action)}</strong><span className="audit-entry__action">{entry.action}</span></div></div><div className="audit-entry__time"><strong>{relativeTime(entry.occurredAt)}</strong><time>{new Date(entry.occurredAt).toLocaleString()}</time></div></div>
         <div className="audit-entry__grid"><div><small>Actor</small><strong>{entry.actorDisplayName}</strong><span>{entry.actorUsername ? `@${entry.actorUsername}` : `${entry.actorType} event`}</span></div><div><small>Target</small><strong>{auditTargetLabel(entry)}</strong><span>{entry.targetType.replaceAll("_", " ")}{entry.targetId && entry.targetLabel ? ` · ${entry.targetId}` : ""}</span></div><div><small>Location context</small><strong>{entry.locationName ?? "Not associated"}</strong><span>{entry.locationId ?? "No location reference"}</span></div></div>
         {auditDetailSummary(entry.details) && <p className="audit-entry__summary">{auditDetailSummary(entry.details)}</p>}
-        <details className="audit-entry__details"><summary>View event metadata</summary><pre>{JSON.stringify(entry.details, null, 2)}</pre></details>
+        <details className="audit-entry__details" onClick={(event) => event.stopPropagation()}><summary>View event metadata</summary><pre>{JSON.stringify(entry.details, null, 2)}</pre></details>
       </article>)}</div>
       <div className="audit-page__pagination"><button className="secondary" disabled={pageIndex === 0 || loading} onClick={() => setPageIndex((current) => Math.max(0, current - 1))}>Previous</button><span>{result.total ? `${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)} of ${result.total}` : "0 events"}</span><button className="secondary" disabled={loading || (pageIndex + 1) * result.limit >= result.total} onClick={() => setPageIndex((current) => current + 1)}>Next</button></div>
     </div>
@@ -1768,6 +1917,11 @@ function ExceptionsPage({ data, openDetail, session, refresh }: { data: Operatio
     {data.reviewCases.length === 0 ? <EmptyState>No review cases have been created from the current scan history.</EmptyState> : data.reviewCases.map((item) => <ReviewCaseCard key={item.reviewCaseId} reviewCase={item} data={data} session={session} onAction={async (action, reason) => { await reviewCaseAction(session, item.reviewCaseId, action, reason); await refresh(); }} onEvidence={() => openDetail({
       eyebrow: "Preserved evidence",
       title: `${item.containerLabel} review evidence`,
+      icon: <AlertTriangle size={18} />,
+      status: { label: reviewStatusLabel(item.status), tone: ["resolved", "approved", "rejected"].includes(item.status) ? "muted" : "warn" },
+      summary: "Review evidence keeps conflicting observations visible while a governed administrator decision is recorded.",
+      recordId: item.reviewCaseId,
+      recordIdLabel: "Review case UUID",
       body: <><DetailFacts items={[
         ["Case ID", item.reviewCaseId],
         ["Reason code", item.reasonCode],

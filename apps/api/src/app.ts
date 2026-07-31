@@ -172,7 +172,9 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       return reply.send(session);
     });
 
-    app.get("/api/v1/local/admin/users", async (request, reply) => {
+    app.get("/api/v1/local/admin/users", {
+      config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole" });
@@ -231,7 +233,9 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       return reply.send(await dependencies.adminAccess!.searchAuditEntries(filters));
     });
 
-    app.post<{ Body: NewAdminUser }>("/api/v1/local/admin/users", async (request, reply) => {
+    app.post<{ Body: NewAdminUser }>("/api/v1/local/admin/users", {
+      config: { rateLimit: { max: 20, timeWindow: "15 minutes" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can add administrators." });
@@ -246,7 +250,9 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     });
 
-    app.post("/api/v1/local/admin/session/revoke", async (request, reply) => {
+    app.post("/api/v1/local/admin/session/revoke", {
+      config: { rateLimit: { max: 30, timeWindow: "15 minutes" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
       const token = readBearerToken(request);
       if (!principal || !token) return;
@@ -254,7 +260,9 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       return reply.code(204).send();
     });
 
-    app.patch<{ Body: { currentPassword?: string; newPassword?: string } }>("/api/v1/local/admin/me/password", async (request, reply) => {
+    app.patch<{ Body: { currentPassword?: string; newPassword?: string } }>("/api/v1/local/admin/me/password", {
+      config: { rateLimit: { max: 10, timeWindow: "15 minutes" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
       const token = readBearerToken(request);
       const body = request.body;
@@ -270,7 +278,9 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     });
 
-    app.patch<{ Params: { userId: string }; Body: AdminUserUpdate }>("/api/v1/local/admin/users/:userId", async (request, reply) => {
+    app.patch<{ Params: { userId: string }; Body: AdminUserUpdate }>("/api/v1/local/admin/users/:userId", {
+      config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can manage administrator accounts." });
@@ -306,14 +316,18 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     );
 
-    app.get("/api/v1/local/review-cases", async (request, reply) => {
+    app.get("/api/v1/local/review-cases", {
+      config: { rateLimit: { max: 120, timeWindow: "1 minute" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
       return reply.send({ items: await dependencies.reviewAdministration.listCases(principal.tenantId) });
     });
 
-    app.post<{ Params: { reviewCaseId: string }; Body: { action?: ReviewAction; reason?: string } }>("/api/v1/local/review-cases/:reviewCaseId/actions", async (request, reply) => {
+    app.post<{ Params: { reviewCaseId: string }; Body: { action?: ReviewAction; reason?: string } }>("/api/v1/local/review-cases/:reviewCaseId/actions", {
+      config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
@@ -326,7 +340,9 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     });
 
-    app.get("/api/v1/local/correction-requests", async (request, reply) => {
+    app.get("/api/v1/local/correction-requests", {
+      config: { rateLimit: { max: 120, timeWindow: "1 minute" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (!dependencies.correctionAdministration) {
@@ -339,6 +355,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
 
     app.post<{ Body: NewCorrectionRequest }>(
       "/api/v1/local/correction-requests",
+      { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
       async (request, reply) => {
         const principal = await requireAdmin(request, reply);
         if (!principal) return;
@@ -379,6 +396,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       Body: { action?: CorrectionAction; reason?: string };
     }>(
       "/api/v1/local/correction-requests/:correctionRequestId/actions",
+      { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
       async (request, reply) => {
         const principal = await requireAdmin(request, reply);
         if (!principal) return;
@@ -427,7 +445,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
     return reply.send({ serverAt: now().toISOString() });
   });
 
-  app.post("/api/v1/events", async (request, reply) => {
+  app.post("/api/v1/events", { config: { rateLimit: { max: 600, timeWindow: "1 minute" } } }, async (request, reply) => {
     const context = readContext(request);
     if (!context) {
       return reply.code(401).send({
@@ -568,7 +586,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       return reply.send({ count: events.length, items: events });
     });
 
-    app.post("/api/v1/local/reset", async (request, reply) => {
+    app.post("/api/v1/local/reset", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal || principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole" });
       if (principal.tenantId !== localFixtures.tenant.tenantId) return reply.code(401).send({ error: "Unauthorized" });
@@ -581,6 +599,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
 
     app.patch<{ Params: { deviceId: string }; Body: DeviceControlUpdate }>(
       "/api/v1/local/devices/:deviceId",
+      { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
       async (request, reply) => {
         const principal = await requireAdmin(request, reply);
         if (!principal) return;
@@ -626,6 +645,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
 
     app.patch<{ Params: { deviceId: string }; Body: DeviceTelemetryUpdate }>(
       "/api/v1/local/devices/:deviceId/telemetry",
+      { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
       async (request, reply) => {
         const context = readContext(request);
         if (!context) return reply.code(401).send({ error: "Unauthorized" });

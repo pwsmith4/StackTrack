@@ -43,6 +43,21 @@ CREATE INDEX IF NOT EXISTS admin_users_active_idx
   ON admin_users (tenant_id, role, username)
   WHERE is_active;
 
+-- Audit search is a first-class operator workflow. These indexes keep the
+-- common tenant/time, action, target, and actor filters bounded as the pilot
+-- grows without weakening the append-only trigger on audit_log.
+CREATE INDEX IF NOT EXISTS audit_log_tenant_time_idx
+  ON audit_log (tenant_id, occurred_at DESC, audit_id DESC);
+
+CREATE INDEX IF NOT EXISTS audit_log_tenant_action_idx
+  ON audit_log (tenant_id, action, occurred_at DESC, audit_id DESC);
+
+CREATE INDEX IF NOT EXISTS audit_log_tenant_target_idx
+  ON audit_log (tenant_id, target_type, target_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS audit_log_tenant_actor_idx
+  ON audit_log (tenant_id, actor_type, actor_id, occurred_at DESC);
+
 ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admin_users FORCE ROW LEVEL SECURITY;
 ALTER TABLE admin_sessions ENABLE ROW LEVEL SECURITY;

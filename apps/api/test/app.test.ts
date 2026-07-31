@@ -168,6 +168,22 @@ describe("StackTrack API foundation", () => {
     expect(mobileReferenceData.json().containers).toHaveLength(11);
   });
 
+  it("rate limits repeated administrator sign-in attempts", async () => {
+    const signIn = vi.fn().mockResolvedValue(null);
+    app = await createApp({ localMode: true, adminAccess: { signIn } as unknown as PostgresAdminAccess });
+    const responses = [];
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      responses.push(await app.inject({
+        method: "POST",
+        url: "/api/v1/local/admin/session",
+        payload: { username: "root", password: "wrong-password" }
+      }));
+    }
+    expect(responses.slice(0, 5).every((response) => response.statusCode === 401)).toBe(true);
+    expect(responses[5]?.statusCode).toBe(429);
+    expect(signIn).toHaveBeenCalledTimes(5);
+  });
+
   it("requires a temporary administrator password to be changed before operational data is returned", async () => {
     const changePassword = vi.fn().mockResolvedValue(undefined);
     const access = {
