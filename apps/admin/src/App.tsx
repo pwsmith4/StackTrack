@@ -24,6 +24,7 @@ import {
   PackageCheck,
   RefreshCw,
   Search,
+  ScrollText,
   Settings,
   ShieldCheck,
   Smartphone,
@@ -47,12 +48,14 @@ import {
   resetAdminPassword,
   reviewCaseAction,
   revokeAdminSession,
+  searchAuditEntries,
   signIn,
   updateAdminUser,
   updateDevice,
   type AdminPrincipal,
   type AdminSession,
   type AuditEntry,
+  type AuditPage,
   type Container,
   type CorrectionAction,
   type CorrectionRequest,
@@ -76,6 +79,7 @@ type Page =
   | "exceptions"
   | "corrections"
   | "activity"
+  | "audit"
   | "devices"
   | "reports"
   | "settings";
@@ -134,6 +138,11 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
     title: "Activity",
     description: "Every observation, in the order StackTrack received it."
   },
+  audit: {
+    eyebrow: "Governance evidence",
+    title: "Audit trail",
+    description: "Search every administrator, scanner, review, correction, and access action with its full context."
+  },
   devices: {
     eyebrow: "Field hardware",
     title: "Devices",
@@ -159,6 +168,7 @@ const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
   { page: "exceptions", label: "Needs review", icon: AlertTriangle },
   { page: "corrections", label: "Corrections", icon: FilePenLine },
   { page: "activity", label: "Activity", icon: FileClock },
+  { page: "audit", label: "Audit trail", icon: ScrollText },
   { page: "devices", label: "Devices", icon: Smartphone },
   { page: "reports", label: "Reports & data", icon: BarChart3 }
 ];
@@ -495,7 +505,7 @@ export function App() {
                   ref={searchRef}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder={page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : "Search label or code"}
+                  placeholder={page === "audit" ? "Use the audit filters below" : page === "devices" ? "Search scanner ID or location" : page === "corrections" ? "Search container or requester" : "Search label or code"}
                   aria-label="Search"
                 />
                 <kbd>⌘ K</kbd>
@@ -578,6 +588,7 @@ function PageContent({
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
+  if (page === "audit") return <AuditTrailPage data={data} session={session!} />;
   if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
   return <SettingsPage data={data} openDetail={openDetail} session={session} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
@@ -1502,6 +1513,108 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
     <div className="report-grid">{reports.map((report) => <article className="report-card" key={report.title}><span><report.icon /></span><Pill tone={report.tag === "Ready" ? "good" : "muted"}>{report.tag}</Pill><h2>{report.title}</h2><p>{report.text}</p><button onClick={() => openReport(report)}>{report.tag === "Ready" ? "Download CSV" : "View plan"} <ArrowRight size={16} /></button></article>)}</div>
     <section className="panel data-health"><PanelTitle title="Data health" subtitle="Quality signals across the testing dataset" /><div className="health-bar"><span style={{ width: `${Math.max(5, Math.round((data.events.filter((item) => item.accuracyFlags.length === 0).length / Math.max(1, data.events.length)) * 100))}%` }} /></div><div className="health-stats"><span><b>{data.events.length}</b> ledger events</span><span><b>{data.events.filter((item) => item.accuracyFlags.length === 0).length}</b> timing verified</span><span><b>{Object.values(data.projections).filter((item) => item?.health === "needs_review").length}</b> open exceptions</span><span><b>{data.correctionRequests.filter((item) => item.status === "pending").length}</b> pending corrections</span></div></section>
   </>;
+}
+
+type AuditDraft = {
+  search: string;
+  locationId: string;
+  deviceId: string;
+  actionPrefix: string;
+  targetType: string;
+  from: string;
+  to: string;
+};
+
+const emptyAuditFilters: AuditDraft = { search: "", locationId: "", deviceId: "", actionPrefix: "", targetType: "", from: "", to: "" };
+
+function auditActionLabel(action: string) {
+  return action
+    .replace(/^admin\.|^device\.|^review\.|^correction\./, "")
+    .replaceAll("_", " ")
+    .replaceAll(".", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function auditTargetLabel(entry: AuditEntry) {
+  return entry.targetLabel || entry.targetId || entry.targetType.replaceAll("_", " ");
+}
+
+function auditDetailSummary(details: Record<string, unknown>) {
+  const reason = typeof details.reason === "string" ? details.reason : typeof details.assignmentReason === "string" ? details.assignmentReason : null;
+  const source = typeof details.source === "string" ? details.source.replaceAll("_", " ") : null;
+  const changed = details.before && details.after ? "State changed" : null;
+  return [changed, reason ? `Reason: ${reason}` : null, source ? `Source: ${source}` : null].filter(Boolean).join(" · ");
+}
+
+function AuditTrailPage({ data, session }: { data: OperationsData; session: AdminSession }) {
+  const [draft, setDraft] = useState<AuditDraft>(emptyAuditFilters);
+  const [applied, setApplied] = useState<AuditDraft>(emptyAuditFilters);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [result, setResult] = useState<AuditPage>({ items: [], total: 0, limit: 50, offset: 0 });
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pageSize = 50;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const next = await searchAuditEntries(session, { ...applied, limit: pageSize, offset: pageIndex * pageSize });
+      setResult(next); setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The audit trail could not be loaded.");
+    } finally { setLoading(false); }
+  }, [applied, pageIndex, session]);
+  useEffect(() => { void load(); }, [load]);
+
+  const updateFilter = (field: keyof AuditDraft, value: string) => setDraft((current) => ({ ...current, [field]: value }));
+  const applyFilters = (event: React.FormEvent) => {
+    event.preventDefault(); setPageIndex(0); setApplied({ ...draft });
+  };
+  const clearFilters = () => { setDraft(emptyAuditFilters); setPageIndex(0); setApplied(emptyAuditFilters); };
+  const activeCount = Object.values(applied).filter(Boolean).length;
+  const pageCount = Math.max(1, Math.ceil(result.total / Math.max(1, result.limit)));
+  const currentPage = Math.min(pageCount, pageIndex + 1);
+  const exportResults = async () => {
+    setExporting(true);
+    try {
+      const exported = await searchAuditEntries(session, { ...applied, limit: 250, offset: 0 });
+      downloadCsv("stacktrack-audit-trail.csv", [
+        ["Occurred at", "Actor", "Username", "Actor type", "Action", "Target type", "Target", "Location", "Details"],
+        ...exported.items.map((entry) => [
+          new Date(entry.occurredAt).toISOString(), entry.actorDisplayName, entry.actorUsername ?? "", entry.actorType,
+          entry.action, entry.targetType, auditTargetLabel(entry), entry.locationName ?? "", JSON.stringify(entry.details)
+        ])
+      ]);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "The audit export could not be created."); }
+    finally { setExporting(false); }
+  };
+  return <section className="audit-page">
+    <div className="audit-page__intro"><div><h2>Searchable evidence history</h2><p>Every event is append-only. Filters narrow the server-side audit log without hiding the original observation.</p></div><div className="audit-page__actions"><button className="secondary" onClick={() => void exportResults()} disabled={exporting || !result.total}><Download size={16} />{exporting ? "Preparing…" : "Export up to 250"}</button><span className="audit-page__count">{result.total.toLocaleString()} matching events</span></div></div>
+    <form className="audit-filter-panel" onSubmit={applyFilters}>
+      <div className="audit-filter-panel__header"><div><strong>Filter the trail</strong><span>{activeCount ? `${activeCount} active filter${activeCount === 1 ? "" : "s"}` : "All audit events"}</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!activeCount}>Clear</button><button className="primary" type="submit"><Search size={16} /> Apply filters</button></div></div>
+      <div className="audit-filter-grid">
+        <label className="audit-filter--wide">Search text<input value={draft.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Actor, scanner, container, reason, or event ID" /></label>
+        <label>Location<select value={draft.locationId} onChange={(event) => updateFilter("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label>
+        <label>Scanner<select value={draft.deviceId} onChange={(event) => updateFilter("deviceId", event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option key={device.deviceId} value={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label>
+        <label>Action group<select value={draft.actionPrefix} onChange={(event) => updateFilter("actionPrefix", event.target.value)}><option value="">All actions</option><option value="admin">Administrator access</option><option value="device">Scanner administration</option><option value="review">Review decisions</option><option value="correction">Corrections</option></select></label>
+        <label>Target type<select value={draft.targetType} onChange={(event) => updateFilter("targetType", event.target.value)}><option value="">All targets</option><option value="device">Scanner</option><option value="container">Container</option><option value="review_case">Review case</option><option value="correction_request">Correction request</option><option value="admin_user">Administrator</option></select></label>
+        <label>From date<input type="date" value={draft.from} onChange={(event) => updateFilter("from", event.target.value)} /></label>
+        <label>To date<input type="date" value={draft.to} onChange={(event) => updateFilter("to", event.target.value)} /></label>
+      </div>
+    </form>
+    {error && <div className="api-error"><AlertTriangle size={20} /><span>{error}</span><button onClick={() => void load()}>Retry</button></div>}
+    <div className="audit-page__results"><div className="audit-page__results-heading"><div><span className="eyebrow">Append-only record</span><h3>{loading ? "Loading audit events…" : result.total ? `Events ${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)}` : "No matching events"}</h3></div><span>Page {currentPage} of {pageCount}</span></div>
+      {!loading && !result.items.length && <EmptyState>No audit events match these filters. Try clearing one filter or widening the date range.</EmptyState>}
+      <div className="audit-results">{result.items.map((entry) => <article className="audit-entry" key={entry.auditId}>
+        <div className="audit-entry__header"><div className="audit-entry__headline"><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{auditActionLabel(entry.action)}</strong><span className="audit-entry__action">{entry.action}</span></div></div><div className="audit-entry__time"><strong>{relativeTime(entry.occurredAt)}</strong><time>{new Date(entry.occurredAt).toLocaleString()}</time></div></div>
+        <div className="audit-entry__grid"><div><small>Actor</small><strong>{entry.actorDisplayName}</strong><span>{entry.actorUsername ? `@${entry.actorUsername}` : `${entry.actorType} event`}</span></div><div><small>Target</small><strong>{auditTargetLabel(entry)}</strong><span>{entry.targetType.replaceAll("_", " ")}{entry.targetId && entry.targetLabel ? ` · ${entry.targetId}` : ""}</span></div><div><small>Location context</small><strong>{entry.locationName ?? "Not associated"}</strong><span>{entry.locationId ?? "No location reference"}</span></div></div>
+        {auditDetailSummary(entry.details) && <p className="audit-entry__summary">{auditDetailSummary(entry.details)}</p>}
+        <details className="audit-entry__details"><summary>View event metadata</summary><pre>{JSON.stringify(entry.details, null, 2)}</pre></details>
+      </article>)}</div>
+      <div className="audit-page__pagination"><button className="secondary" disabled={pageIndex === 0 || loading} onClick={() => setPageIndex((current) => Math.max(0, current - 1))}>Previous</button><span>{result.total ? `${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)} of ${result.total}` : "0 events"}</span><button className="secondary" disabled={loading || (pageIndex + 1) * result.limit >= result.total} onClick={() => setPageIndex((current) => current + 1)}>Next</button></div>
+    </div>
+  </section>;
 }
 
 function SettingsPage({ data, openDetail, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {

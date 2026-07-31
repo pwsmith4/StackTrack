@@ -10,7 +10,7 @@ import {
 } from "@stacktrack/domain";
 import { localFixtures, type LocalFixtures } from "./local-fixtures.js";
 import type { DeviceAdministration, DeviceControlUpdate, DeviceTelemetryUpdate } from "./device-administration.js";
-import type { AdminPrincipal, AdminUserUpdate, NewAdminUser, PostgresAdminAccess } from "./admin-access.js";
+import type { AdminPrincipal, AdminUserUpdate, AuditFilters, NewAdminUser, PostgresAdminAccess } from "./admin-access.js";
 import type { PostgresReviewAdministration, ReviewAction } from "./review-administration.js";
 import type {
   CorrectionAction,
@@ -33,6 +33,30 @@ export interface AppDependencies {
 
 interface ResettableLedger extends EventLedger {
   reset(): void | Promise<void>;
+}
+
+type AuditQuery = {
+  search?: string;
+  locationId?: string;
+  deviceId?: string;
+  actorUserId?: string;
+  actionPrefix?: string;
+  targetType?: string;
+  from?: string;
+  to?: string;
+  limit?: string;
+  offset?: string;
+};
+
+function parseAuditDate(value: string | undefined, endOfDay = false): string | undefined {
+  if (!value) return undefined;
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? `${value}T${endOfDay ? "00:00:00.000" : "00:00:00.000"}Z`
+    : value;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return undefined;
+  if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value)) date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString();
 }
 
 function isResettable(ledger: EventLedger): ledger is ResettableLedger {
@@ -155,10 +179,56 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       return reply.send({ items: await dependencies.adminAccess!.listUsers() });
     });
 
-    app.get("/api/v1/local/admin/audit-log", async (request, reply) => {
+    app.get<{ Querystring: AuditQuery }>("/api/v1/local/admin/audit-log", {
+      config: { rateLimit: { max: 120, timeWindow: "1 minute" } }
+    }, async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
-      return reply.send({ items: await dependencies.adminAccess!.listAuditEntries() });
+      const query = request.query;
+      const uuidFields = ["locationId", "deviceId", "actorUserId"] as const;
+      for (const field of uuidFields) {
+        const value = query[field];
+        if (value !== undefined && !requestContextSchema.shape.deviceId.safeParse(value).success) {
+          return reply.code(400).send({ error: "InvalidAuditFilter", message: `${field} must be a UUID.` });
+        }
+      }
+      if (query.search !== undefined && query.search.length > 120) {
+        return reply.code(400).send({ error: "InvalidAuditFilter", message: "Search text is limited to 120 characters." });
+      }
+      if (query.actionPrefix !== undefined && !/^[a-z0-9_.-]{1,64}$/i.test(query.actionPrefix)) {
+        return reply.code(400).send({ error: "InvalidAuditFilter", message: "Action group is invalid." });
+      }
+      if (query.targetType !== undefined && !/^[a-z0-9_.-]{1,64}$/i.test(query.targetType)) {
+        return reply.code(400).send({ error: "InvalidAuditFilter", message: "Target type is invalid." });
+      }
+      const from = parseAuditDate(query.from);
+      const to = parseAuditDate(query.to, true);
+      if ((query.from && !from) || (query.to && !to)) {
+        return reply.code(400).send({ error: "InvalidAuditFilter", message: "Dates must be valid ISO dates." });
+      }
+      const parseInteger = (value: string | undefined, fallback: number): number | undefined => {
+        if (value === undefined || value === "") return fallback;
+        if (!/^\d+$/.test(value)) return undefined;
+        return Number(value);
+      };
+      const limit = parseInteger(query.limit, 100);
+      const offset = parseInteger(query.offset, 0);
+      if (limit === undefined || offset === undefined || limit < 1 || limit > 250 || offset < 0) {
+        return reply.code(400).send({ error: "InvalidAuditFilter", message: "Limit must be 1-250 and offset must be non-negative." });
+      }
+      const filters: AuditFilters = {
+        limit,
+        offset,
+        ...(query.search?.trim() ? { search: query.search.trim() } : {}),
+        ...(query.locationId ? { locationId: query.locationId } : {}),
+        ...(query.deviceId ? { deviceId: query.deviceId } : {}),
+        ...(query.actorUserId ? { actorUserId: query.actorUserId } : {}),
+        ...(query.actionPrefix?.trim() ? { actionPrefix: query.actionPrefix.trim() } : {}),
+        ...(query.targetType?.trim() ? { targetType: query.targetType.trim() } : {}),
+        ...(from ? { from } : {}),
+        ...(to ? { to } : {})
+      };
+      return reply.send(await dependencies.adminAccess!.searchAuditEntries(filters));
     });
 
     app.post<{ Body: NewAdminUser }>("/api/v1/local/admin/users", async (request, reply) => {
