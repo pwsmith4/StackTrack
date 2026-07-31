@@ -1936,7 +1936,7 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
       const previous = index > 0 ? events[index - 1] : undefined;
       const sameScanner = Boolean(previous?.deviceId && event.deviceId && previous.deviceId === event.deviceId);
       const sameContainer = Boolean(previous?.containerId && event.containerId && previous.containerId === event.containerId);
-      const relationship = sameScanner && sameContainer ? "Same scanner and container as previous event" : sameScanner ? "Same scanner as previous event" : sameContainer ? "Same container as previous event" : null;
+      const relationship = sameScanner && sameContainer ? "Same scanner + container" : sameScanner ? "Same scanner" : sameContainer ? "Same container" : null;
       return <article className={`clickable-timeline ${relationship ? "clickable-timeline--linked" : ""}`} key={event.eventId} onClick={() => openDetail({
         eyebrow: "Scanner observation",
         icon: <FileClock size={18} />,
