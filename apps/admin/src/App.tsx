@@ -636,7 +636,7 @@ function PageContent({
   if (page === "audit") return <AuditTrailPage data={data} session={session!} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
-  return <SettingsPage data={data} openDetail={openDetail} session={session} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
+  return <SettingsPage data={data} setPage={setPage} session={session} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
 }
 
 function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Page) => void }) {
@@ -1839,21 +1839,39 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   </section>;
 }
 
-function SettingsPage({ data, openDetail, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
+function SettingsPage({ data, setPage, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; setPage: (page: Page) => void; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
   const settings = [
-    { icon: UserRound, title: "Roles & approvals", text: "Operations Administrators can request corrections; Organization Owners approve them with dual control for material changes.", details: [["Operations Administrator", "Request official-state corrections"], ["Organization Owner", "Approve or reject corrections"], ["Material change", "A different owner must approve"]] as [string, string][] },
-    { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners receive their assigned operating location and availability from the administration service.", details: [["Identity", "One installation UUID per physical device"], ["Assignment", "Exactly one operating location"], ["Control", "Fixed scanner identity; remote controls active"]] as [string, string][] },
-    { icon: Wifi, title: "Offline behavior", text: "Scans queue locally, preserve device order, and synchronize when connectivity returns.", details: [["Local queue", "AsyncStorage on the scanner"], ["Ordering", "Device installation + monotonic sequence"], ["Conflict handling", "Accept evidence and flag review"]] as [string, string][] },
-    { icon: Cloud, title: "Integrations", text: "Production-system, Entra ID, and analytics connections are managed separately from scanner operations.", details: [["Production system API", "Connection pending"], ["Microsoft Entra ID", "Administrator sign-in"], ["Analytics", "Fabric / Data Lake decision pending"]] as [string, string][] }
+    { icon: UserRound, title: "Roles & approvals", text: "Operations Administrators can request corrections; Organization Owners approve them with dual control for material changes." },
+    { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners receive their assigned operating location and availability from the administration service." },
+    { icon: Wifi, title: "Offline behavior", text: "Scans queue locally, preserve device order, and synchronize when connectivity returns." },
+    { icon: Cloud, title: "Integrations", text: "Production-system, Entra ID, and analytics connections are managed separately from scanner operations." }
   ];
-  return <><section className="settings-list"><article className="access-settings"><span><ShieldCheck /></span><div><h2>Administrator access</h2><p>{session ? `${session.principal.displayName} is signed in as ${roleLabel(session.principal.role)}. Organization Owners can add daily administrators from this console.` : "Operational changes are protected by a server-side pilot account. Sign in to manage scanners and administrator accounts."}</p></div><button className="secondary" onClick={onRequestSignIn}>{session ? "Manage access" : "Sign in"}</button></article>{settings.map((setting) => <article key={setting.title}><span><setting.icon /></span><div><h2>{setting.title}</h2><p>{setting.text}</p></div><button aria-label={`Open ${setting.title}`} onClick={() => openDetail({
-    eyebrow: "Configuration",
-    icon: <setting.icon size={18} />,
-    status: { label: "Configured policy", tone: "blue" },
-    summary: setting.text,
-    title: setting.title,
-    body: <><h3 className="detail-section-title">Current policy</h3><DetailFacts items={setting.details}/></>
-  })}><ChevronRight /></button></article>)}</section>{session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session && <GovernanceTimeline entries={data.auditEntries} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
+  const actions = [
+    { icon: Smartphone, title: "Manage scanner fleet", text: "Rename scanners, move assignments, review versions, and enable or disable access.", page: "devices" as Page },
+    { icon: AlertTriangle, title: "Review exceptions", text: "Work through containers with missing, conflicting, or late observations.", page: "exceptions" as Page },
+    { icon: FilePenLine, title: "Review corrections", text: "Approve, reject, and document requests to change the official state.", page: "corrections" as Page },
+    { icon: Activity, title: "Follow scanner activity", text: "Trace the physical observations that moved containers through the network.", page: "activity" as Page },
+    { icon: ScrollText, title: "Investigate audit trail", text: "Search administrator actions, device controls, approvals, and sign-ins.", page: "audit" as Page },
+    { icon: BarChart3, title: "Open reports & data", text: "Export operational evidence and monitor data quality across the network.", page: "reports" as Page }
+  ];
+  const openAdminDirectory = () => {
+    if (!session) { onRequestSignIn(); return; }
+    if (session.principal.role !== "organization_owner") return;
+    document.querySelector(".admin-directory")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  return <>
+    <section className="settings-actions panel">
+      <PanelTitle title="Administrator workspace" subtitle="Direct controls for the work administrators perform every day." />
+      <div className="settings-action-grid">
+        <button className="settings-action-card settings-action-card--access" onClick={openAdminDirectory} disabled={Boolean(session && session.principal.role !== "organization_owner")}><span className="settings-action-card__icon"><UserRound size={19} /></span><span><strong>Manage administrators</strong><small>{session?.principal.role === "organization_owner" ? "Add users, change roles, disable access, or reset passwords." : session ? "Only Organization Owners can manage administrator accounts." : "Sign in to manage administrator accounts."}</small></span><span className="settings-action-card__go">{session?.principal.role === "organization_owner" ? "Manage" : session ? "Owner only" : "Sign in"}<ChevronRight size={15} /></span></button>
+        {actions.map((action) => <button className="settings-action-card" key={action.title} onClick={() => setPage(action.page)}><span className="settings-action-card__icon"><action.icon size={19} /></span><span><strong>{action.title}</strong><small>{action.text}</small></span><span className="settings-action-card__go">Open<ChevronRight size={15} /></span></button>)}
+      </div>
+    </section>
+    <section className="settings-reference panel">
+      <PanelTitle title="Operating policies" subtitle="Reference only — these policies are enforced by the service and are not interactive settings." />
+      <div className="settings-reference__grid">{settings.map((setting) => <article className="settings-reference__item" key={setting.title}><span className="settings-reference__icon"><setting.icon size={18} /></span><div><h3>{setting.title}</h3><p>{setting.text}</p></div><Pill tone="muted">Reference</Pill></article>)}</div>
+    </section>
+    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session && <GovernanceTimeline entries={data.auditEntries} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
 }
 
 function GovernanceTimeline({ entries }: { entries: AuditEntry[] }) {
