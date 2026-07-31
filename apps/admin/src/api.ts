@@ -39,6 +39,7 @@ export type AdminRole = "organization_owner" | "operations_administrator" | "rea
 export type ManagedAdminRole = Exclude<AdminRole, "support">;
 export interface AdminPrincipal { tenantId: string; userId: string; username: string; displayName: string; role: AdminRole; supportExpiresAt: string | null; isActive: boolean; mustChangePassword: boolean; }
 export interface AdminSession { token: string; principal: AdminPrincipal; expiresAt: string; }
+export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; action: string; targetType: string; targetId: string | null; details: Record<string, unknown>; }
 export type ReviewAction = "assigned" | "approved" | "rejected" | "resolved" | "reopened";
 export interface ReviewCase { reviewCaseId: string; containerId: string; containerLabel: string; reasonCode: string; evidenceEventIds: string[]; openedAt: string; status: "opened" | ReviewAction; lastActionAt: string | null; lastActionReason: string | null; actionCount: number; }
 
@@ -165,6 +166,12 @@ export async function listAdminUsers(session: AdminSession): Promise<AdminPrinci
   return ((await response.json()) as { items: AdminPrincipal[] }).items;
 }
 
+export async function listAuditEntries(session: AdminSession): Promise<AuditEntry[]> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/audit-log`, { headers: { ...adminHeaders(session), "cache-control": "no-cache" } });
+  if (!response.ok) throw new ApiRequestError(response.status, "Could not load the governance timeline.");
+  return ((await response.json()) as { items: AuditEntry[] }).items;
+}
+
 export async function createAdminUser(session: AdminSession, input: { username: string; displayName: string; role: ManagedAdminRole; temporaryPassword: string }): Promise<AdminPrincipal> {
   const response = await fetch(`${API_URL}/api/v1/local/admin/users`, { method: "POST", headers: { ...adminHeaders(session), "content-type": "application/json" }, body: JSON.stringify(input) });
   if (!response.ok) {
@@ -186,10 +193,11 @@ export async function reviewCaseAction(session: AdminSession, reviewCaseId: stri
 
 export async function loadOperationsData(session: AdminSession) {
   const fixtures = await getJson<Fixtures>("/api/v1/local/reference-data", session);
-  const [eventsResult, statesResult, reviewCasesResult] = await Promise.all([
+  const [eventsResult, statesResult, reviewCasesResult, auditResult] = await Promise.all([
     getJson<{ items: StoredEvent[] }>("/api/v1/local/events", session),
     getJson<{ items: Projection[] }>("/api/v1/containers/states", session),
-    getJson<{ items: ReviewCase[] }>("/api/v1/local/review-cases", session)
+    getJson<{ items: ReviewCase[] }>("/api/v1/local/review-cases", session),
+    listAuditEntries(session)
   ]);
   const projectionById = new Map(
     statesResult.items.map((projection) => [projection.containerId, projection])
@@ -198,6 +206,7 @@ export async function loadOperationsData(session: AdminSession) {
     fixtures,
     events: eventsResult.items,
     reviewCases: reviewCasesResult.items,
+    auditEntries: auditResult,
     projections: Object.fromEntries(
       fixtures.containers.map((container) => [
         container.containerId,

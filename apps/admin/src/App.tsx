@@ -48,6 +48,7 @@ import {
   updateDevice,
   type AdminPrincipal,
   type AdminSession,
+  type AuditEntry,
   type Container,
   type Device,
   type DeviceAssignment,
@@ -75,6 +76,7 @@ interface OperationsData {
   fixtures: Fixtures;
   events: StoredEvent[];
   reviewCases: ReviewCase[];
+  auditEntries: AuditEntry[];
   projections: Record<string, Projection | null>;
 }
 
@@ -512,7 +514,7 @@ function PageContent({
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
-  return <SettingsPage openDetail={openDetail} session={session} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
+  return <SettingsPage data={data} openDetail={openDetail} session={session} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
 }
 
 function Dashboard({ data, setPage }: { data: OperationsData; setPage: (page: Page) => void }) {
@@ -1096,7 +1098,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   </>;
 }
 
-function SettingsPage({ openDetail, session, onRequestSignIn, onPasswordChanged, onSignOut }: { openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
+function SettingsPage({ data, openDetail, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; openDetail: OpenDetail; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
   const settings = [
     { icon: UserRound, title: "Roles & approvals", text: "Store managers handle routine corrections; corporate data stewards approve material state changes.", details: [["Store manager", "Request routine corrections"], ["Corporate steward", "Approve material state changes"], ["Status", "Policy draft — needs Goodwill approval"]] as [string, string][] },
     { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners remain locked to an assigned operating location.", details: [["Identity", "One installation UUID per physical device"], ["Assignment", "Exactly one operating location"], ["Status", "Local shared-device simulation active"]] as [string, string][] },
@@ -1107,7 +1109,12 @@ function SettingsPage({ openDetail, session, onRequestSignIn, onPasswordChanged,
     eyebrow: "Configuration",
     title: setting.title,
     body: <><p className="detail-lead">{setting.text}</p><DetailFacts items={setting.details}/></>
-  })}><ChevronRight /></button></article>)}</section>{session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
+  })}><ChevronRight /></button></article>)}</section>{session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session && <GovernanceTimeline entries={data.auditEntries} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} />}</>;
+}
+
+function GovernanceTimeline({ entries }: { entries: AuditEntry[] }) {
+  const actionLabel = (action: string) => action.replace(/^admin\.|^device\.|^review\./, "").replaceAll("_", " ").replaceAll(".", " ");
+  return <section className="governance-timeline"><PanelTitle title="Governance timeline" subtitle="Recent system, scanner, access, and review actions. This is an operational view of the append-only audit log." />{entries.length ? <div className="governance-timeline__list">{entries.slice(0, 20).map((entry) => <article key={entry.auditId}><span className={`governance-timeline__actor governance-timeline__actor--${entry.actorType}`}>{entry.actorType === "user" ? <UserRound size={16} /> : entry.actorType === "device" ? <Smartphone size={16} /> : <ShieldCheck size={16} />}</span><div><strong>{actionLabel(entry.action)}</strong><p>{entry.actorDisplayName} · {entry.targetType.replaceAll("_", " ")}</p>{typeof entry.details.assignmentReason === "string" && <small>Move note: {entry.details.assignmentReason}</small>}{typeof entry.details.reason === "string" && <small>Reason: {entry.details.reason}</small>}</div><time>{relativeTime(entry.occurredAt)}</time></article>)}</div> : <EmptyState>No governed actions have been recorded in this test tenant yet.</EmptyState>}</section>;
 }
 
 function AccountSecurity({ session, onPasswordChanged, onSignOut }: { session: AdminSession; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {

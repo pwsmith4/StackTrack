@@ -110,6 +110,12 @@ export function createApp(dependencies: AppDependencies = {}): FastifyInstance {
       return reply.send({ items: await dependencies.adminAccess!.listUsers() });
     });
 
+    app.get("/api/v1/local/admin/audit-log", async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      return reply.send({ items: await dependencies.adminAccess!.listAuditEntries() });
+    });
+
     app.post<{ Body: NewAdminUser }>("/api/v1/local/admin/users", async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;

@@ -39,6 +39,17 @@ export interface AdminUserUpdate {
   readonly isActive?: boolean;
 }
 
+export interface AuditEntry {
+  readonly auditId: string;
+  readonly occurredAt: string;
+  readonly actorType: "user" | "device" | "system";
+  readonly actorDisplayName: string;
+  readonly action: string;
+  readonly targetType: string;
+  readonly targetId: string | null;
+  readonly details: Record<string, unknown>;
+}
+
 type AdminRow = Record<string, unknown>;
 
 function rowPrincipal(row: AdminRow): AdminPrincipal {
@@ -188,6 +199,29 @@ export class PostgresAdminAccess {
     return this.transaction(async (client) => {
       const result = await client.query(`SELECT tenant_id,user_id,username,display_name,role,support_expires_at,is_active,must_change_password FROM admin_users WHERE tenant_id=$1 ORDER BY role, username`, [this.tenantId]);
       return result.rows.map(rowPrincipal);
+    });
+  }
+
+  public async listAuditEntries(limit = 100): Promise<AuditEntry[]> {
+    const safeLimit = Math.max(1, Math.min(limit, 250));
+    return this.transaction(async (client) => {
+      const result = await client.query(
+        `SELECT a.audit_id, a.occurred_at, a.actor_type, a.action, a.target_type, a.target_id, a.details,
+                u.display_name AS actor_display_name
+           FROM audit_log a
+           LEFT JOIN admin_users u ON u.tenant_id=a.tenant_id AND u.user_id=a.actor_id
+          WHERE a.tenant_id=$1
+          ORDER BY a.occurred_at DESC, a.audit_id DESC
+          LIMIT $2`,
+        [this.tenantId, safeLimit]
+      );
+      return result.rows.map((row) => ({
+        auditId: String(row.audit_id), occurredAt: new Date(row.occurred_at as Date | string).toISOString(),
+        actorType: row.actor_type as AuditEntry["actorType"],
+        actorDisplayName: row.actor_display_name ? String(row.actor_display_name) : row.actor_type === "system" ? "StackTrack system" : row.actor_type === "device" ? "Scanner device" : "Unknown administrator",
+        action: String(row.action), targetType: String(row.target_type), targetId: row.target_id ? String(row.target_id) : null,
+        details: (row.details ?? {}) as Record<string, unknown>
+      }));
     });
   }
 
