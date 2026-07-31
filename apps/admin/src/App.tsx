@@ -217,6 +217,47 @@ function Pill({ tone, children }: { tone: PillTone; children: ReactNode }) {
   return <span className={`pill pill--${tone}`}>{children}</span>;
 }
 
+const pageSizeOptions = [12, 25, 50, 100];
+
+function PaginationControls({
+  pageIndex,
+  pageCount,
+  pageSize,
+  total,
+  loading = false,
+  onPageChange,
+  onPageSizeChange,
+  ariaLabel = "Pagination",
+  className = ""
+}: {
+  pageIndex: number;
+  pageCount: number;
+  pageSize: number;
+  total: number;
+  loading?: boolean;
+  onPageChange: (pageIndex: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  const currentPage = Math.min(Math.max(1, pageCount), pageIndex + 1);
+  const firstItem = total ? pageIndex * pageSize + 1 : 0;
+  const lastItem = total ? Math.min(total, (pageIndex + 1) * pageSize) : 0;
+  const canGoPrevious = pageIndex > 0 && !loading;
+  const canGoNext = pageIndex + 1 < pageCount && !loading;
+  return <div className={`pagination ${className}`.trim()} aria-label={ariaLabel}>
+    <div className="pagination__summary">
+      <span>Showing <b>{firstItem}–{lastItem}</b> of <b>{total}</b></span>
+      <label className="pagination__page-size"><span>Items per page</span><select aria-label="Items per page" value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))}>{pageSizeOptions.map((size) => <option value={size} key={size}>{size}</option>)}</select></label>
+    </div>
+    <div className="pagination__controls">
+      <button type="button" disabled={!canGoPrevious} title={canGoPrevious ? "Go to the previous page" : loading ? "Previous page is unavailable while loading" : "You are already on the first page"} aria-label={canGoPrevious ? "Previous page" : loading ? "Previous page unavailable while loading" : "Previous page unavailable: first page"} onClick={() => onPageChange(pageIndex - 1)}>Previous</button>
+      <b aria-live="polite">Page {currentPage} of {pageCount}</b>
+      <button type="button" disabled={!canGoNext} title={canGoNext ? "Go to the next page" : loading ? "Next page is unavailable while loading" : "You are already on the last page"} aria-label={canGoNext ? "Next page" : loading ? "Next page unavailable while loading" : "Next page unavailable: last page"} onClick={() => onPageChange(pageIndex + 1)}>Next</button>
+    </div>
+  </div>;
+}
+
 function relativeTime(value?: string | null) {
   if (!value) return "No observations";
   const minutes = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 60_000));
@@ -1007,7 +1048,7 @@ function ContainerRouteSummary({ containerId, data }: { containerId: string; dat
 function ContainersPage({ data, query, openDetail, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; setPage: (page: Page) => void }) {
   const [filter, setFilter] = useState<"all" | "loaded" | "empty" | "unknown">("all");
   const [pageIndex, setPageIndex] = useState(0);
-  const pageSize = 25;
+  const [pageSize, setPageSize] = useState(25);
   useEffect(() => setPageIndex(0), [query]);
   const locationName = (id: string | null) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Not yet observed";
   const rows = data.fixtures.containers
@@ -1090,7 +1131,7 @@ function ContainersPage({ data, query, openDetail, setPage }: { data: Operations
           })}</tbody>
         </table>
       </div>
-      <div className="pagination"><span>Showing {rows.length ? pageIndex * pageSize + 1 : 0}–{Math.min(rows.length, (pageIndex + 1) * pageSize)} of {rows.length}</span><div><button disabled={pageIndex === 0} onClick={() => setPageIndex((current) => current - 1)}>Previous</button><b>Page {pageIndex + 1} of {pageCount}</b><button disabled={pageIndex + 1 >= pageCount} onClick={() => setPageIndex((current) => current + 1)}>Next</button></div></div>
+      <PaginationControls pageIndex={pageIndex} pageCount={pageCount} pageSize={pageSize} total={rows.length} ariaLabel="Container pagination" onPageChange={setPageIndex} onPageSizeChange={(nextSize) => { setPageSize(nextSize); setPageIndex(0); }} />
     </section>
   );
 }
@@ -1113,7 +1154,7 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
   const [draft, setDraft] = useState<LoadFilters>(emptyLoadFilters);
   const [applied, setApplied] = useState<LoadFilters>(emptyLoadFilters);
   const [pageIndex, setPageIndex] = useState(0);
-  const pageSize = 12;
+  const [pageSize, setPageSize] = useState(12);
   useEffect(() => setPageIndex(0), [query, filter, applied]);
   const containerName = (id: string) => data.fixtures.containers.find((item) => item.containerId === id)?.label ?? "Unknown container";
   const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown location";
@@ -1206,7 +1247,7 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
             })}>View history <ChevronRight size={15} /></button></div>
           </article>
         ))}</div>
-        <div className="pagination"><span>Showing {loads.length ? pageIndex * pageSize + 1 : 0}–{Math.min(loads.length, (pageIndex + 1) * pageSize)} of {loads.length}</span><div><button disabled={pageIndex === 0} onClick={() => setPageIndex((current) => current - 1)}>Previous</button><b>Page {pageIndex + 1} of {pageCount}</b><button disabled={pageIndex + 1 >= pageCount} onClick={() => setPageIndex((current) => current + 1)}>Next</button></div></div>
+        <PaginationControls pageIndex={pageIndex} pageCount={pageCount} pageSize={pageSize} total={loads.length} ariaLabel="Load code pagination" onPageChange={setPageIndex} onPageSizeChange={(nextSize) => { setPageSize(nextSize); setPageIndex(0); }} />
       </section>
     </>
   );
@@ -2418,10 +2459,10 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   const [applied, setApplied] = useState<AuditDraft>(emptyAuditFilters);
   const [pageIndex, setPageIndex] = useState(0);
   const [result, setResult] = useState<AuditPage>({ items: [], total: 0, limit: 50, offset: 0 });
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pageSize = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2431,7 +2472,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The audit trail could not be loaded.");
     } finally { setLoading(false); }
-  }, [applied, pageIndex, session]);
+  }, [applied, pageIndex, pageSize, session]);
   useEffect(() => { void load(); }, [load]);
 
   const updateFilter = (field: Exclude<keyof AuditDraft, "actionPrefixes" | "targetTypes">, value: string) => setDraft((current) => ({ ...current, [field]: value }));
@@ -2442,7 +2483,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   };
   const clearFilters = () => { setDraft(emptyAuditFilters); setPageIndex(0); setApplied(emptyAuditFilters); };
   const activeCount = Object.values(applied).filter((value) => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
-  const pageCount = Math.max(1, Math.ceil(result.total / Math.max(1, result.limit)));
+  const pageCount = Math.max(1, Math.ceil(result.total / Math.max(1, pageSize)));
   const currentPage = Math.min(pageCount, pageIndex + 1);
   const exportResults = async () => {
     setExporting(true);
@@ -2482,7 +2523,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
         <div className="audit-entry__grid"><div><small>Actor</small><strong>{entry.actorDisplayName}</strong><span>{entry.actorUsername ? `@${entry.actorUsername}` : `${entry.actorType} event`}</span></div><div><small>Applies to</small><strong>{auditTargetLabel(entry)}</strong><span>Open details for evidence</span></div><div><small>Operating scope</small><strong>{auditLocationLabel(entry)}</strong><span>{auditLocationDescription(entry)}</span></div></div>
         {auditDetailSummary(entry.details) && <p className="audit-entry__summary">{auditDetailSummary(entry.details)}</p>}
       </article>; })}</div>
-      <div className="audit-page__pagination"><button className="secondary" disabled={pageIndex === 0 || loading} onClick={() => setPageIndex((current) => Math.max(0, current - 1))}>Previous</button><span>{result.total ? `${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)} of ${result.total}` : "0 events"}</span><button className="secondary" disabled={loading || (pageIndex + 1) * result.limit >= result.total} onClick={() => setPageIndex((current) => current + 1)}>Next</button></div>
+      <PaginationControls className="audit-page__pagination" pageIndex={pageIndex} pageCount={pageCount} pageSize={pageSize} total={result.total} loading={loading} ariaLabel="Audit trail pagination" onPageChange={setPageIndex} onPageSizeChange={(nextSize) => { setPageSize(nextSize); setPageIndex(0); }} />
     </div>
   </section>;
 }
