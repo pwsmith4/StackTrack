@@ -507,11 +507,11 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         if (
           !update ||
           (update.label === undefined && update.assignedLocationId === undefined && update.isActive === undefined && update.requiredAppVersion === undefined) ||
-          (update.label !== undefined && typeof update.label !== "string") ||
+          (update.label !== undefined && (typeof update.label !== "string" || update.label.trim().length > 120)) ||
           (update.assignedLocationId !== undefined && typeof update.assignedLocationId !== "string") ||
           (update.isActive !== undefined && typeof update.isActive !== "boolean") ||
-          (update.requiredAppVersion !== undefined && typeof update.requiredAppVersion !== "string") ||
-          (update.assignmentReason !== undefined && typeof update.assignmentReason !== "string")
+          (update.requiredAppVersion !== undefined && (typeof update.requiredAppVersion !== "string" || update.requiredAppVersion.trim().length > 32)) ||
+          (update.assignmentReason !== undefined && (typeof update.assignmentReason !== "string" || update.assignmentReason.trim().length > 1200))
         ) {
           return reply.code(400).send({ error: "InvalidDeviceUpdate" });
         }
@@ -551,9 +551,13 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         if (
           !update ||
           typeof update.installationId !== "string" ||
+          !requestContextSchema.shape.deviceId.safeParse(update.installationId).success ||
           typeof update.appVersion !== "string" ||
+          update.appVersion.trim().length < 1 ||
+          update.appVersion.trim().length > 32 ||
           !Number.isInteger(update.pendingOfflineScanCount) ||
-          update.pendingOfflineScanCount < 0
+          update.pendingOfflineScanCount < 0 ||
+          update.pendingOfflineScanCount > 100_000
         ) {
           return reply.code(400).send({ error: "InvalidDeviceTelemetry" });
         }
