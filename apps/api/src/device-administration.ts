@@ -81,9 +81,10 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
         device_label: string;
         assigned_location_id: string;
         is_active: boolean;
+        deactivated_at: Date | null;
         required_app_version: string;
       }>(
-        `SELECT device_label, assigned_location_id, is_active, required_app_version
+        `SELECT device_label, assigned_location_id, is_active, deactivated_at, required_app_version
            FROM devices
           WHERE tenant_id = $1 AND device_id = $2
           FOR UPDATE`,
@@ -95,7 +96,9 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
       if (label.length < 2) throw new Error("Scanner name must contain at least 2 characters.");
       const assignedLocationId = update.assignedLocationId ?? current.rows[0].assigned_location_id;
       const isActive = update.isActive ?? current.rows[0].is_active;
-      const requiredAppVersion = update.requiredAppVersion ?? current.rows[0].required_app_version;
+      const requiredAppVersion = update.requiredAppVersion === undefined
+        ? current.rows[0].required_app_version
+        : update.requiredAppVersion.trim();
       const changedLabel = label !== current.rows[0].device_label;
       const changedLocation = assignedLocationId !== current.rows[0].assigned_location_id;
       const changedAvailability = isActive !== current.rows[0].is_active;
@@ -104,17 +107,32 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
       // The pilot lets an administrator make a routine scanner move without a
       // written reason, while preserving a truthful audit record either way.
       const assignmentReason = update.assignmentReason?.trim() || "No reason provided";
+      if (assignmentReason.length > 1200) {
+        throw new Error("Scanner move reason cannot exceed 1200 characters.");
+      }
 
       if (!changedLabel && !changedLocation && !changedAvailability && !changedRequiredVersion) {
+        const installation = await client.query<{
+          pending_offline_scan_count: number;
+          reported_app_version: string | null;
+          last_reported_at: Date | null;
+        }>(
+          `SELECT pending_offline_scan_count, reported_app_version, last_reported_at
+             FROM device_installations
+            WHERE tenant_id = $1 AND device_id = $2 AND is_active
+            ORDER BY installed_at DESC
+            LIMIT 1`,
+          [tenantId, deviceId]
+        );
         return {
           deviceId,
           assignedLocationId,
           isActive,
-          deactivatedAt: null,
-          pendingOfflineScanCount: 0,
-          reportedAppVersion: null,
+          deactivatedAt: current.rows[0].deactivated_at?.toISOString() ?? null,
+          pendingOfflineScanCount: Number(installation.rows[0]?.pending_offline_scan_count ?? 0),
+          reportedAppVersion: installation.rows[0]?.reported_app_version ?? null,
           requiredAppVersion,
-          lastReportedAt: null
+          lastReportedAt: installation.rows[0]?.last_reported_at?.toISOString() ?? null
         };
       }
 
@@ -166,16 +184,18 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
           changedLabel && changedLocation
             ? "device.renamed_and_reassigned"
             : changedLocation && changedAvailability
-            ? "device.reassigned_and_availability_changed"
-            : changedLocation
-              ? "device.reassigned"
-              : changedLabel
-                ? "device.renamed"
-              : isActive
-                ? "device.enabled"
-                : changedRequiredVersion
-                  ? "device.required_version_changed"
-                  : "device.disabled",
+              ? "device.reassigned_and_availability_changed"
+              : changedLocation
+                ? "device.reassigned"
+                : changedLabel && changedAvailability
+                  ? "device.renamed_and_availability_changed"
+                  : changedLabel
+                    ? "device.renamed"
+                    : changedAvailability
+                      ? isActive ? "device.enabled" : "device.disabled"
+                      : changedRequiredVersion
+                        ? "device.required_version_changed"
+                        : "device.updated",
           deviceId,
           JSON.stringify({
             before: current.rows[0],
@@ -186,15 +206,28 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
         ]
       );
 
+      const installation = await client.query<{
+        pending_offline_scan_count: number;
+        reported_app_version: string | null;
+        last_reported_at: Date | null;
+      }>(
+        `SELECT pending_offline_scan_count, reported_app_version, last_reported_at
+           FROM device_installations
+          WHERE tenant_id = $1 AND device_id = $2 AND is_active
+          ORDER BY installed_at DESC
+          LIMIT 1`,
+        [tenantId, deviceId]
+      );
+
       return {
         deviceId: row.device_id,
         assignedLocationId: row.assigned_location_id,
         isActive: row.is_active,
         deactivatedAt: row.deactivated_at?.toISOString() ?? null,
-        pendingOfflineScanCount: 0,
-        reportedAppVersion: null,
+        pendingOfflineScanCount: Number(installation.rows[0]?.pending_offline_scan_count ?? 0),
+        reportedAppVersion: installation.rows[0]?.reported_app_version ?? null,
         requiredAppVersion: row.required_app_version,
-        lastReportedAt: null
+        lastReportedAt: installation.rows[0]?.last_reported_at?.toISOString() ?? null
       };
     });
   }
@@ -219,6 +252,7 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
           WHERE di.tenant_id = $1
             AND di.device_id = $2
             AND di.installation_id = $3
+            AND di.is_active
             AND d.tenant_id = di.tenant_id
             AND d.device_id = di.device_id
         RETURNING d.device_id, d.assigned_location_id, d.is_active, d.deactivated_at,

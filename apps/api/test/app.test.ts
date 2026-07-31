@@ -219,6 +219,34 @@ describe("StackTrack API foundation", () => {
     expect(reportTelemetry).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed telemetry before it reaches the device store", async () => {
+    const reportTelemetry = vi.fn();
+    const administration: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry,
+      isScannerEnabled: async () => true
+    };
+    app = await createApp({ localMode: true, deviceAdministration: administration });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/local/devices/${deviceId}/telemetry`,
+      headers: {
+        "x-stacktrack-tenant-id": tenantId,
+        "x-stacktrack-device-id": deviceId
+      },
+      payload: {
+        installationId: "not-a-uuid",
+        appVersion: "0.3.3",
+        pendingOfflineScanCount: 100001
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "InvalidDeviceTelemetry" });
+    expect(reportTelemetry).not.toHaveBeenCalled();
+  });
+
   it("does not let a support account control a scanner", async () => {
     const update = vi.fn();
     const administration: DeviceAdministration = {
