@@ -2122,6 +2122,26 @@ type AuditDraft = {
 
 const emptyAuditFilters: AuditDraft = { search: "", locationId: "", deviceId: "", actionPrefixes: [], targetTypes: [], from: "", to: "" };
 
+function auditLocalDateBoundary(value: string, exclusive = false) {
+  const parts = value.split("-").map(Number);
+  if (parts.length !== 3 || !parts.every(Number.isFinite)) return value;
+  const year = parts[0]!;
+  const month = parts[1]!;
+  const day = parts[2]!;
+  const date = new Date(year, month - 1, day + (exclusive ? 1 : 0), 0, 0, 0, 0);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+function auditRequestFilters(filters: AuditDraft) {
+  return {
+    ...filters,
+    ...(filters.from ? { from: auditLocalDateBoundary(filters.from) } : {}),
+    // The API treats this as an exclusive upper bound. With no To date we intentionally omit it,
+    // which means the server returns everything from the local start of the From date through now.
+    ...(filters.to ? { to: auditLocalDateBoundary(filters.to, true) } : {})
+  };
+}
+
 type AuditFilterOption = { value: string; label: string };
 
 function AuditMultiSelect({ label, options, selected, onToggle, onClear, emptyLabel }: { label: string; options: readonly AuditFilterOption[]; selected: readonly string[]; onToggle: (value: string) => void; onClear: () => void; emptyLabel: string }) {
@@ -2271,7 +2291,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const next = await searchAuditEntries(session, { ...applied, limit: pageSize, offset: pageIndex * pageSize });
+      const next = await searchAuditEntries(session, { ...auditRequestFilters(applied), limit: pageSize, offset: pageIndex * pageSize });
       setResult(next); setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The audit trail could not be loaded.");
@@ -2292,7 +2312,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   const exportResults = async () => {
     setExporting(true);
     try {
-      const exported = await searchAuditEntries(session, { ...applied, limit: 250, offset: 0 });
+      const exported = await searchAuditEntries(session, { ...auditRequestFilters(applied), limit: 250, offset: 0 });
       downloadCsv("stacktrack-audit-trail.csv", [
         ["Occurred at", "Actor", "Username", "Action", "Applies to", "Operating scope", "Summary", "Audit ID"],
         ...exported.items.map((entry) => [
@@ -2317,6 +2337,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateFilter("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateFilter("to", event.target.value)} /></label>
       </div>
+      {draft.from && !draft.to && <p className="audit-filter-panel__date-note">No To date means from the selected local date through now.</p>}
     </form>
     {error && <div className="api-error"><AlertTriangle size={20} /><span>{error}</span><button onClick={() => void load()}>Retry</button></div>}
     <div className="audit-page__results"><div className="audit-page__results-heading"><div><span className="eyebrow">Append-only record</span><h3>{loading ? "Loading audit events…" : result.total ? `Events ${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)}` : "No matching events"}</h3></div><span>Page {currentPage} of {pageCount}</span></div>
