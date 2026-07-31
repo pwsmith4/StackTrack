@@ -2578,16 +2578,16 @@ function LegacyDeviceCard({ device, data, operatingLocations, busy, canManage, o
 
 type ReportsFilterDraft = {
   search: string;
-  locationId: string;
-  deviceId: string;
-  actor: string;
-  eventType: "" | StoredEvent["eventType"];
-  health: "" | Projection["health"];
+  locationIds: string[];
+  deviceIds: string[];
+  actors: string[];
+  eventTypes: StoredEvent["eventType"][];
+  healthValues: Projection["health"][];
   from: string;
   to: string;
 };
 
-const emptyReportsFilters: ReportsFilterDraft = { search: "", locationId: "", deviceId: "", actor: "", eventType: "", health: "", from: "", to: "" };
+const emptyReportsFilters: ReportsFilterDraft = { search: "", locationIds: [], deviceIds: [], actors: [], eventTypes: [], healthValues: [], from: "", to: "" };
 
 function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
   const [draft, setDraft] = useState<ReportsFilterDraft>(emptyReportsFilters);
@@ -2604,18 +2604,20 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   };
   const searchTerm = applied.search.trim().toLowerCase();
   const eventMatches = (event: StoredEvent) => {
-    const searchable = [event.eventId, containerLabel(event.containerId), eventLabel(event.eventType), locationName(event.locationId), deviceName(event.deviceId), ...event.accuracyFlags].join(" ").toLowerCase();
-    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || event.locationId === applied.locationId) && (!applied.deviceId || event.deviceId === applied.deviceId) && (!applied.eventType || event.eventType === applied.eventType) && inDateRange(event.eventAt);
+    const relatedLocationIds = [event.locationId, payloadLocationId(event, "sourceLocationId"), payloadLocationId(event, "destinationLocationId")].filter((value): value is string => Boolean(value));
+    const searchable = [event.eventId, containerLabel(event.containerId), eventLabel(event.eventType), ...relatedLocationIds.map(locationName), deviceName(event.deviceId), ...event.accuracyFlags].join(" ").toLowerCase();
+    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationIds.length || applied.locationIds.some((locationId) => relatedLocationIds.includes(locationId))) && (!applied.deviceIds.length || applied.deviceIds.includes(event.deviceId)) && (!applied.eventTypes.length || applied.eventTypes.includes(event.eventType)) && inDateRange(event.eventAt);
   };
   const filteredEvents = data.events.filter(eventMatches).sort((left, right) => Date.parse(right.eventAt) - Date.parse(left.eventAt));
   const projectionMatches = (projection: Projection) => {
     const relatedEvents = data.events.filter((event) => event.containerId === projection.containerId);
-    const searchable = [containerLabel(projection.containerId), locationName(projection.locationId), ...relatedEvents.map((event) => `${event.eventId} ${deviceName(event.deviceId)} ${locationName(event.locationId)}`)].join(" ").toLowerCase();
-    const locationMatches = !applied.locationId || projection.locationId === applied.locationId || relatedEvents.some((event) => event.locationId === applied.locationId);
-    const deviceMatches = !applied.deviceId || relatedEvents.some((event) => event.deviceId === applied.deviceId);
+    const relatedLocationIds = [projection.locationId, ...relatedEvents.flatMap((event) => [event.locationId, payloadLocationId(event, "sourceLocationId"), payloadLocationId(event, "destinationLocationId")])].filter((value): value is string => Boolean(value));
+    const searchable = [containerLabel(projection.containerId), ...relatedLocationIds.map(locationName), ...relatedEvents.map((event) => `${event.eventId} ${deviceName(event.deviceId)}`)].join(" ").toLowerCase();
+    const locationMatches = !applied.locationIds.length || applied.locationIds.some((locationId) => relatedLocationIds.includes(locationId));
+    const deviceMatches = !applied.deviceIds.length || relatedEvents.some((event) => applied.deviceIds.includes(event.deviceId));
     const dateMatches = (!applied.from && !applied.to) || relatedEvents.some((event) => inDateRange(event.eventAt));
-    const typeMatches = !applied.eventType || relatedEvents.some((event) => event.eventType === applied.eventType && inDateRange(event.eventAt));
-    return (!searchTerm || searchable.includes(searchTerm)) && locationMatches && deviceMatches && dateMatches && typeMatches && (!applied.health || projection.health === applied.health);
+    const typeMatches = !applied.eventTypes.length || relatedEvents.some((event) => applied.eventTypes.includes(event.eventType) && inDateRange(event.eventAt));
+    return (!searchTerm || searchable.includes(searchTerm)) && locationMatches && deviceMatches && dateMatches && typeMatches && (!applied.healthValues.length || applied.healthValues.includes(projection.health));
   };
   const filteredProjections = Object.values(data.projections).filter((projection): projection is Projection => {
     if (!projection) return false;
@@ -2623,17 +2625,24 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   });
   const filteredCorrections = data.correctionRequests.filter((item) => {
     const searchable = [item.correctionRequestId, item.containerLabel, item.requestedByDisplayName, item.reason, item.latestActorDisplayName ?? ""].join(" ").toLowerCase();
-    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || item.proposedCorrection.locationId === applied.locationId) && (!applied.actor || item.requestedByDisplayName === applied.actor || item.latestActorDisplayName === applied.actor) && inDateRange(item.requestedAt);
+    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationIds.length || (item.proposedCorrection.locationId ? applied.locationIds.includes(item.proposedCorrection.locationId) : false)) && (!applied.actors.length || applied.actors.includes(item.requestedByDisplayName) || (item.latestActorDisplayName ? applied.actors.includes(item.latestActorDisplayName) : false)) && inDateRange(item.requestedAt);
   });
   const actorOptions = Array.from(new Set([...data.auditEntries.map((entry) => entry.actorDisplayName), ...data.correctionRequests.flatMap((item) => [item.requestedByDisplayName, item.latestActorDisplayName ?? ""]).filter(Boolean)])).sort((left, right) => left.localeCompare(right));
+  const reportLocationOptions = data.fixtures.locations
+    .map((location) => ({ value: location.locationId, label: `${location.name}${location.type === "in_transit" ? " · virtual transit" : ""}` }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const reportDeviceOptions = data.fixtures.devices
+    .map((device) => ({ value: device.deviceId, label: `${scannerNumber(device.deviceId)} · ${device.label}` }))
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true }));
   const filteredAuditEntries = data.auditEntries.filter((entry) => {
     const searchable = [entry.auditId, entry.action, entry.targetType, entry.targetLabel ?? "", entry.actorDisplayName, entry.locationName ?? "", humanizeDetailsText(entry.details, data)].join(" ").toLowerCase();
-    const deviceMatches = !applied.deviceId || entry.targetId === applied.deviceId || entry.details.deviceId === applied.deviceId;
-    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || entry.locationId === applied.locationId || entry.details.locationId === applied.locationId || entry.details.assignedLocationId === applied.locationId) && deviceMatches && (!applied.actor || entry.actorDisplayName === applied.actor) && inDateRange(entry.occurredAt);
+    const deviceMatches = !applied.deviceIds.length || applied.deviceIds.includes(entry.targetId ?? "") || (typeof entry.details.deviceId === "string" && applied.deviceIds.includes(entry.details.deviceId));
+    const locationMatches = !applied.locationIds.length || applied.locationIds.includes(entry.locationId ?? "") || (typeof entry.details.locationId === "string" && applied.locationIds.includes(entry.details.locationId)) || (typeof entry.details.assignedLocationId === "string" && applied.locationIds.includes(entry.details.assignedLocationId));
+    return (!searchTerm || searchable.includes(searchTerm)) && locationMatches && deviceMatches && (!applied.actors.length || applied.actors.includes(entry.actorDisplayName)) && inDateRange(entry.occurredAt);
   });
   const filteredDevices = data.fixtures.devices.filter((device) => {
     const searchable = [device.deviceId, scannerNumber(device.deviceId), device.label, locationName(device.assignedLocationId), device.reportedAppVersion ?? ""].join(" ").toLowerCase();
-    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationId || device.assignedLocationId === applied.locationId) && (!applied.deviceId || device.deviceId === applied.deviceId) && inDateRange(device.lastReportedAt);
+    return (!searchTerm || searchable.includes(searchTerm)) && (!applied.locationIds.length || (device.assignedLocationId ? applied.locationIds.includes(device.assignedLocationId) : false)) && (!applied.deviceIds.length || applied.deviceIds.includes(device.deviceId)) && inDateRange(device.lastReportedAt);
   });
   const locationRows = Array.from(new Map(filteredEvents.map((event) => [event.locationId, event.locationId]))).map(([, locationId]) => {
     const events = filteredEvents.filter((event) => event.locationId === locationId);
@@ -2663,14 +2672,14 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
     return route.segments.map((segment) => {
       const departure = data.events.find((event) => event.eventId === segment.departureEventId);
       const receipt = segment.receiptEventId ? data.events.find((event) => event.eventId === segment.receiptEventId) : undefined;
-      const locationMatches = !applied.locationId || segment.origin?.locationId === applied.locationId || segment.destination?.locationId === applied.locationId || departure?.locationId === applied.locationId || receipt?.locationId === applied.locationId;
-      const deviceMatches = !applied.deviceId || departure?.deviceId === applied.deviceId || receipt?.deviceId === applied.deviceId;
-      const typeMatches = !applied.eventType || applied.eventType === "batch_out" || (applied.eventType === "batch_in" && Boolean(receipt));
+       const locationMatches = !applied.locationIds.length || applied.locationIds.some((locationId) => segment.origin?.locationId === locationId || segment.destination?.locationId === locationId || departure?.locationId === locationId || receipt?.locationId === locationId);
+       const deviceMatches = !applied.deviceIds.length || applied.deviceIds.includes(departure?.deviceId ?? "") || applied.deviceIds.includes(receipt?.deviceId ?? "");
+       const typeMatches = !applied.eventTypes.length || applied.eventTypes.some((eventType) => eventType === "batch_out" || (eventType === "batch_in" && Boolean(receipt)));
       const dateMatches = inDateRange(departure?.eventAt) || Boolean(receipt && inDateRange(receipt.eventAt));
       const searchable = [container.label, segment.origin?.name ?? "", segment.destination?.name ?? "", departure?.eventId ?? "", receipt?.eventId ?? "", deviceName(departure?.deviceId), segment.status].join(" ").toLowerCase();
       return { container, projection, segment, departure, receipt, searchable, locationMatches, deviceMatches, typeMatches, dateMatches };
     });
-  }).filter((row) => (!searchTerm || row.searchable.includes(searchTerm)) && row.locationMatches && row.deviceMatches && row.typeMatches && ((!applied.from && !applied.to) || row.dateMatches) && (!applied.health || row.projection?.health === applied.health));
+   }).filter((row) => (!searchTerm || row.searchable.includes(searchTerm)) && row.locationMatches && row.deviceMatches && row.typeMatches && ((!applied.from && !applied.to) || row.dateMatches) && (!applied.healthValues.length || (row.projection ? applied.healthValues.includes(row.projection.health) : false)));
   const latencyRows = Array.from(new Map(filteredEvents.map((event) => [event.deviceId, event.deviceId]))).map(([, deviceId]) => {
     const events = filteredEvents.filter((event) => event.deviceId === deviceId);
     const latencies = events.map((event) => Math.max(0, (Date.parse(event.receivedAt) - Date.parse(event.eventAt)) / 1_000)).filter(Number.isFinite);
@@ -2682,16 +2691,25 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   };
   const lateUploadCount = filteredEvents.filter((event) => latencySeconds(event) !== "" && Number(latencySeconds(event)) > 900).length;
   const staleDevices = filteredDevices.filter((device) => !device.lastReportedAt || Date.now() - Date.parse(device.lastReportedAt) > 24 * 60 * 60 * 1000);
-  const registrationScopeAvailable = !applied.locationId && !applied.deviceId && !applied.eventType && !applied.health && !applied.from && !applied.to;
+   const registrationScopeAvailable = !applied.locationIds.length && !applied.deviceIds.length && !applied.eventTypes.length && !applied.healthValues.length && !applied.from && !applied.to;
   const unobservedContainers = registrationScopeAvailable ? data.fixtures.containers.filter((container) => !data.projections[container.containerId] && (!searchTerm || container.label.toLowerCase().includes(searchTerm))).length : null;
   const integrityPercent = filteredEvents.length ? Math.round(((filteredEvents.length - flaggedEvents.length) / filteredEvents.length) * 100) : 100;
   const deviceFreshnessPercent = filteredDevices.length ? Math.round(((filteredDevices.length - staleDevices.length) / filteredDevices.length) * 100) : 100;
-  const activeFilterCount = [applied.search, applied.locationId, applied.deviceId, applied.actor, applied.eventType, applied.health, applied.from, applied.to].filter(Boolean).length;
+   const activeFilterCount = [applied.search, applied.locationIds.length, applied.deviceIds.length, applied.actors.length, applied.eventTypes.length, applied.healthValues.length, applied.from, applied.to].filter(Boolean).length;
   const draftDateError = draft.from && draft.to && draft.from > draft.to ? "The start date must be on or before the end date." : null;
   const updateDraft = <K extends keyof ReportsFilterDraft>(key: K, value: ReportsFilterDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const applyFilters = () => { if (!draftDateError) setApplied(draft); };
   const clearFilters = () => { setDraft(emptyReportsFilters); setApplied(emptyReportsFilters); };
-  const reportScope = activeFilterCount ? `${activeFilterCount} filter${activeFilterCount === 1 ? "" : "s"} applied` : "All available operations data";
+  const reportScopeParts = [
+    applied.locationIds.length ? `${applied.locationIds.length} location${applied.locationIds.length === 1 ? "" : "s"}` : "",
+    applied.deviceIds.length ? `${applied.deviceIds.length} scanner${applied.deviceIds.length === 1 ? "" : "s"}` : "",
+    applied.actors.length ? `${applied.actors.length} user${applied.actors.length === 1 ? "" : "s"}` : "",
+    applied.eventTypes.length ? `${applied.eventTypes.length} action${applied.eventTypes.length === 1 ? "" : "s"}` : "",
+    applied.healthValues.length ? `${applied.healthValues.length} health state${applied.healthValues.length === 1 ? "" : "s"}` : "",
+    applied.from || applied.to ? "date range" : "",
+    applied.search ? "text search" : ""
+  ].filter(Boolean);
+  const reportScope = reportScopeParts.length ? reportScopeParts.join(" · ") : "All available operations data";
   const openHealthDetail = () => openDetail({
     eyebrow: "Data quality guide",
     title: "How to read data health",
@@ -2773,14 +2791,14 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   };
   return <div className="reports-workspace">
     <section className="panel report-filter-panel">
-      <div className="report-filter-panel__header"><div><span className="eyebrow">Reporting scope</span><h2>Choose exactly what to analyze</h2><p>Filters narrow the matching datasets and downloads; the source events are never changed. Actor filtering applies to governance and correction reports.</p></div><div><span className="report-filter-panel__scope">{reportScope}</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button></div></div>
+      <div className="report-filter-panel__header"><div><span className="eyebrow">Reporting scope</span><h2>Choose exactly what to analyze</h2><p>Filters narrow the matching datasets and downloads; the source events are never changed. User filters apply to governance and correction reports.</p></div><div><span className="report-filter-panel__scope">{reportScope}</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button></div></div>
       <div className="report-filter-grid">
         <label className="report-filter--wide">Search<input value={draft.search} onChange={(event) => updateDraft("search", event.target.value)} placeholder="Container, scanner, event, or location" /></label>
-         <label>Location<select value={draft.locationId} onChange={(event) => updateDraft("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}{location.type === "in_transit" ? " · virtual transit" : ""}</option>)}</select></label>
-        <label>Scanner<select value={draft.deviceId} onChange={(event) => updateDraft("deviceId", event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option value={device.deviceId} key={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label>
-        <label>Admin / requester<select value={draft.actor} onChange={(event) => updateDraft("actor", event.target.value)}><option value="">All users</option>{actorOptions.map((actor) => <option value={actor} key={actor}>{actor}</option>)}</select></label>
-        <label>Observation type<select value={draft.eventType} onChange={(event) => updateDraft("eventType", event.target.value as ReportsFilterDraft["eventType"])}><option value="">All observations</option><option value="load_assigned">Marked full</option><option value="batch_out">Departed / in transit</option><option value="batch_in">Arrived</option><option value="emptied">Marked empty</option></select></label>
-        <label>Data health<select value={draft.health} onChange={(event) => updateDraft("health", event.target.value as ReportsFilterDraft["health"])}><option value="">All projection health</option><option value="clean">Clean projection</option><option value="warning">Warning</option><option value="needs_review">Needs review</option></select></label>
+        <AuditMultiSelect label="Locations" options={reportLocationOptions} selected={draft.locationIds} onToggle={(value) => setDraft((current) => ({ ...current, locationIds: current.locationIds.includes(value) ? current.locationIds.filter((item) => item !== value) : [...current.locationIds, value] }))} onClear={() => updateDraft("locationIds", [])} emptyLabel="All locations" />
+        <AuditMultiSelect label="Scanners" options={reportDeviceOptions} selected={draft.deviceIds} onToggle={(value) => setDraft((current) => ({ ...current, deviceIds: current.deviceIds.includes(value) ? current.deviceIds.filter((item) => item !== value) : [...current.deviceIds, value] }))} onClear={() => updateDraft("deviceIds", [])} emptyLabel="All scanners" />
+        <AuditMultiSelect label="Users" options={actorOptions.map((actor) => ({ value: actor, label: actor }))} selected={draft.actors} onToggle={(value) => setDraft((current) => ({ ...current, actors: current.actors.includes(value) ? current.actors.filter((item) => item !== value) : [...current.actors, value] }))} onClear={() => updateDraft("actors", [])} emptyLabel="All users" />
+        <AuditMultiSelect label="Observation types" options={[{ value: "load_assigned", label: "Marked full" }, { value: "batch_out", label: "Departed / in transit" }, { value: "batch_in", label: "Arrived" }, { value: "emptied", label: "Marked empty" }]} selected={draft.eventTypes} onToggle={(value) => setDraft((current) => ({ ...current, eventTypes: current.eventTypes.includes(value as StoredEvent["eventType"]) ? current.eventTypes.filter((item) => item !== value) : [...current.eventTypes, value as StoredEvent["eventType"]] }))} onClear={() => updateDraft("eventTypes", [])} emptyLabel="All observations" />
+        <AuditMultiSelect label="Data health" options={[{ value: "clean", label: "Clean projection" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }]} selected={draft.healthValues} onToggle={(value) => setDraft((current) => ({ ...current, healthValues: current.healthValues.includes(value as Projection["health"]) ? current.healthValues.filter((item) => item !== value) : [...current.healthValues, value as Projection["health"]] }))} onClear={() => updateDraft("healthValues", [])} emptyLabel="All projection health" />
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateDraft("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateDraft("to", event.target.value)} /></label>
         <button className="primary report-filter-panel__apply" onClick={applyFilters} disabled={Boolean(draftDateError)}>Apply report scope</button>
