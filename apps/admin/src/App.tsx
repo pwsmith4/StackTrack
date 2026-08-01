@@ -284,7 +284,10 @@ const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
 const pagesForRole: Record<AdminPrincipal["role"], readonly Page[]> = {
   organization_owner: ["dashboard", "inventory", "service", "forecast", "containers", "loads", "locations", "exceptions", "corrections", "activity", "audit", "devices", "reports", "settings"],
   operations_administrator: ["dashboard", "inventory", "service", "forecast", "containers", "loads", "locations", "exceptions", "corrections", "activity", "audit", "devices", "reports", "settings"],
-  location_manager: ["dashboard", "inventory", "service", "containers", "locations", "exceptions", "corrections", "activity", "devices"],
+  // A location manager can run the local operation, but dispatch targets,
+  // warehouse forecasting, and organization-wide reports remain corporate
+  // responsibilities. The API enforces the same boundary server-side.
+  location_manager: ["dashboard", "inventory", "containers", "locations", "exceptions", "corrections", "activity", "devices"],
   read_only_reviewer: ["dashboard", "inventory", "containers", "locations", "exceptions", "activity"],
   support: ["dashboard", "containers", "locations", "activity", "devices"]
 };
@@ -431,7 +434,7 @@ function eventLabel(type: StoredEvent["eventType"]) {
   return {
     load_assigned: "Marked full",
     batch_out: "In transit",
-    batch_in: "Arrived",
+    batch_in: "Received",
     emptied: "Marked empty"
   }[type];
 }
@@ -450,8 +453,14 @@ function inTransitDepartureSummary(origin?: string | null) {
 
 function inTransitDepartureDetail(origin?: string | null) {
   return origin
-    ? `The container left ${origin}. The receiving location will be recorded when another scanner records its arrival.`
-    : "The container is in transit, but its departure location is not confirmed. The receiving location will be recorded when another scanner records its arrival.";
+    ? `The container left ${origin}. No receiving location is known yet; the next arrival scan will record where it was received.`
+    : "The container is in transit, but its departure location is not confirmed. No receiving location is known yet; the next arrival scan will record it.";
+}
+
+function inTransitEventSummary(subject: string, origin?: string | null) {
+  return origin
+    ? `${subject} is in transit — leaving ${origin}.`
+    : `${subject} is in transit; the departure location is not confirmed yet.`;
 }
 
 function containerTypeLabel(value?: string | null) {
@@ -473,12 +482,12 @@ function eventNarrative(event: StoredEvent, data: OperationsData) {
   if (event.eventType === "load_assigned") return `${subject} marked full at ${location}.`;
   if (event.eventType === "batch_in") {
     const source = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
-    return `${subject} arrived at ${location}${source ? ` from ${source}` : ""}.`;
+    return `${subject} received at ${location}${source ? ` from ${source}` : ""}.`;
   }
   if (event.eventType === "emptied") return `${subject} marked empty at ${location}.`;
   if (event.eventType === "batch_out") {
     const origin = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
-    return `${subject} is in transit — leaving ${origin ?? "its last confirmed location"}.`;
+    return inTransitEventSummary(subject, origin);
   }
   return `${subject} observed at ${location}.`;
 }
@@ -772,9 +781,9 @@ export function App() {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
-      if (attempts < 12) {
+      if (attempts < 30) {
         attempts += 1;
-        timer = window.setTimeout(focusTarget, 45);
+        timer = window.setTimeout(focusTarget, 75);
       }
     };
     const frame = window.requestAnimationFrame(focusTarget);
@@ -782,7 +791,7 @@ export function App() {
       window.cancelAnimationFrame(frame);
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [route.page, route.locationId, route.focus]);
+  }, [route.page, route.locationId, route.focus, data]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -890,6 +899,8 @@ export function App() {
   const visibleNav = session
     ? nav.filter((item) => canAccessPage(session.principal.role, item.page))
     : [];
+  const operationalNav = visibleNav.filter((item) => !["audit", "reports"].includes(item.page));
+  const governanceNav = visibleNav.filter((item) => ["audit", "reports"].includes(item.page));
 
   if (!session) {
     return <div className="authentication-shell"><SignInDialog fullPage onClose={() => undefined} onSuccess={establishSession} /></div>;
@@ -922,7 +933,7 @@ export function App() {
         </div>
         <nav>
           <span className="nav-label">OPERATIONS</span>
-          {visibleNav.map((item) => (
+          {operationalNav.map((item) => (
             <button
               key={item.page}
               className={page === item.page ? "active" : ""}
@@ -934,6 +945,19 @@ export function App() {
               {item.page === "corrections" && correctionCount > 0 && <b>{correctionCount}</b>}
             </button>
           ))}
+          {governanceNav.length > 0 && <>
+            <span className="nav-label nav-label--secondary">GOVERNANCE</span>
+            {governanceNav.map((item) => (
+              <button
+                key={item.page}
+                className={page === item.page ? "active" : ""}
+                onClick={() => setPage(item.page)}
+              >
+                <item.icon size={19} strokeWidth={1.9} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </>}
         </nav>
         <div className="sidebar__bottom">
           {canAccessPage(session.principal.role, "settings") && <button onClick={() => setPage("settings")} className={page === "settings" ? "active" : ""}>
@@ -1042,7 +1066,7 @@ function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((pa
 function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", location_manager: "Location Manager", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
 
 function SignInDialog({ fullPage = false, onClose: _onClose, onSuccess }: { fullPage?: boolean; onClose: () => void; onSuccess: (session: AdminSession) => void }) {
-  const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
+  const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [showPassword, setShowPassword] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { onSuccess(await signIn(username, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Sign-in failed."); } finally { setBusy(false); } };
   return <section className={`sign-in-dialog ${fullPage ? "sign-in-dialog--full-page" : "sign-in-dialog--overlay"}`} role="dialog" aria-modal="true" aria-label="Administrator sign in">
     <div className="sign-in-dialog__story">
@@ -1053,7 +1077,7 @@ function SignInDialog({ fullPage = false, onClose: _onClose, onSuccess }: { full
     <div className="sign-in-dialog__form-panel">
       <div className="sign-in-dialog__form-heading"><div className="sign-in-dialog__icon"><ShieldCheck size={23}/></div><span className="eyebrow">SECURE ADMIN ACCESS</span><h2>Sign in to manage operations.</h2><p>Use your approved administrator account. Operational data remains private until the StackTrack service verifies your access.</p></div>
       <div className="sign-in-dialog__trust"><span><CheckCircle2 size={14}/> Server-verified access</span><span><ShieldCheck size={14}/> Audit-ready changes</span></div>
-      <form onSubmit={(event) => void submit(event)}><label>Username<input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error" role="alert">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form>
+      <form onSubmit={(event) => void submit(event)}><label>Username<input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<span className="sign-in-dialog__password-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-pressed={showPassword}>{showPassword ? "Hide" : "Show"}</button></span></label>{error && <div className="sign-in-error" role="alert">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form>
       <div className="sign-in-dialog__privacy"><ShieldCheck size={14}/><span>Access expires automatically. Sign out when you leave a shared workstation.</span></div>
     </div>
   </section>;
@@ -1950,6 +1974,48 @@ function servicePriorityTone(priority: ServicePriority): PillTone {
   return priority === "critical" ? "warn" : priority === "high" ? "blue" : priority === "watch" ? "muted" : "good";
 }
 
+type ServiceQueuePageSize = 10 | 20 | 50 | "all";
+
+function ServicePlanQueue({ groups, totalGroups, pageSize, page, pageCount, onPageSizeChange, onPageChange, openLocation }: {
+  groups: Array<{ location: Location; rows: ServicePlanRow[] }>;
+  totalGroups: number;
+  pageSize: ServiceQueuePageSize;
+  page: number;
+  pageCount: number;
+  onPageSizeChange: (size: ServiceQueuePageSize) => void;
+  onPageChange: (page: number) => void;
+  openLocation: (locationId: string, filter?: LocationInventoryFilter) => void;
+}) {
+  const [expandedLocationIds, setExpandedLocationIds] = useState<Set<string>>(() => new Set());
+  const groupKey = groups.map((group) => group.location.locationId).join("|");
+  useEffect(() => setExpandedLocationIds(new Set()), [groupKey]);
+  const toggle = (locationId: string) => setExpandedLocationIds((current) => {
+    const next = new Set(current);
+    if (next.has(locationId)) next.delete(locationId); else next.add(locationId);
+    return next;
+  });
+  const allExpanded = groups.length > 0 && groups.every((group) => expandedLocationIds.has(group.location.locationId));
+  const formatSummary = (rows: ServicePlanRow[]) => {
+    const pickup = rows.reduce((sum, row) => sum + row.pickupQty, 0);
+    const delivery = rows.reduce((sum, row) => sum + row.deliveryQty, 0);
+    const unknown = rows.reduce((sum, row) => sum + row.unknown, 0);
+    return `${pickup ? `Pick up ${pickup}` : "No pickup"} · ${delivery ? `Deliver ${delivery}` : "No delivery"}${unknown ? ` · ${unknown} to verify` : ""}`;
+  };
+  return <div className="service-plan__queue-shell">
+     <div className="service-plan__queue-toolbar"><span>Showing {groups.length} of {totalGroups} locations</span><label><span>Locations per page</span><select value={pageSize} onChange={(event) => onPageSizeChange(event.target.value === "all" ? "all" : Number(event.target.value) as ServiceQueuePageSize)}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value="all">All</option></select></label><button type="button" className="secondary" disabled={!groups.length} onClick={() => setExpandedLocationIds(allExpanded ? new Set() : new Set(groups.map((group) => group.location.locationId)))}>{allExpanded ? "Collapse all" : "Expand all"}</button></div>
+    <div className="table-wrap service-plan__table-wrap"><table className="service-plan__table service-plan__grouped-table"><thead><tr><th>Priority</th><th>Location</th><th>Goods / crate</th><th>On hand</th><th>Configured trigger</th><th>Recommended move</th><th></th></tr></thead><tbody>{groups.length ? groups.map((group) => {
+      const expanded = expandedLocationIds.has(group.location.locationId);
+      const actionCount = group.rows.filter((row) => row.pickupQty > 0 || row.deliveryQty > 0).length;
+      const highest = group.rows.reduce<ServicePriority>((priority, row) => row.priorityScore > ({ critical: 4, high: 3, watch: 2, on_target: 1 }[priority]) ? row.priority : priority, "on_target");
+      return <Fragment key={group.location.locationId}>
+        <tr className="service-plan__location-group"><th colSpan={7}><button type="button" onClick={() => toggle(group.location.locationId)} aria-expanded={expanded}><span className="service-plan__location-group-main"><ChevronDown size={14} className={expanded ? "service-plan__group-chevron service-plan__group-chevron--open" : "service-plan__group-chevron"} /><span className="service-plan__location-group-icon"><LocationTypeIcon location={group.location} size={14} /></span><strong>{group.location.name}</strong><small>{group.rows.length} target row{group.rows.length === 1 ? "" : "s"} · {actionCount ? `${actionCount} need service` : "No immediate service"}</small></span><span className="service-plan__location-group-summary"><Pill tone={servicePriorityTone(highest)}>{servicePriorityLabel(highest)}</Pill><b>{formatSummary(group.rows)}</b><em>{expanded ? "Hide details" : "Show details"}</em></span></button><button type="button" className="secondary service-plan__group-open" onClick={() => openLocation(group.location.locationId)}>Open location</button></th></tr>
+        {expanded && group.rows.map((row) => <tr key={row.key}><td><Pill tone={servicePriorityTone(row.priority)}>{servicePriorityLabel(row.priority)}</Pill></td><th><strong>{row.location.name}</strong><small>{locationTypeLabel(row.location.type)}</small></th><td><strong>{row.goodsType}</strong><small>{containerTypeLabel(row.containerType)}</small></td><td><strong>{row.full} full · {row.empty} empty</strong><small>{row.unknown ? `${row.unknown} state unknown · ` : ""}{row.total} total on hand</small></td><td><strong>{row.target.minimumEmpty} empty min · {row.target.maximumFull} full max</strong><small>{row.target.minimumOnHand}–{row.target.maximumOnHand} total on hand</small></td><td><strong>{row.action}</strong><small>{row.reason}</small>{(row.pickupQty > 0 || row.deliveryQty > 0) && <div className="service-plan__move-chips">{row.pickupQty > 0 && <span className="service-plan__move-chip service-plan__move-chip--pickup">Pick up {row.pickupQty}</span>}{row.deliveryQty > 0 && <span className="service-plan__move-chip service-plan__move-chip--delivery">Deliver {row.deliveryQty}</span>}</div>}</td><td><button type="button" className="secondary service-plan__view-button" onClick={() => openLocation(row.location.locationId, { goodsType: row.goodsType, containerType: row.containerType, bucket: "current" })}>View containers</button></td></tr>)}
+      </Fragment>;
+    }) : <tr><td colSpan={7}><div className="service-plan__empty"><CheckCircle2 size={22} /><strong>No service work matches these filters.</strong><span>Every visible target is on target, or the current scanner snapshot has not produced a matching row yet.</span></div></td></tr>}</tbody></table></div>
+    {pageCount > 1 && <div className="service-plan__queue-pagination"><button type="button" className="secondary" disabled={page === 0} onClick={() => onPageChange(Math.max(0, page - 1))}>Previous locations</button><strong>Page {page + 1} of {pageCount}</strong><button type="button" className="secondary" disabled={page >= pageCount - 1} onClick={() => onPageChange(Math.min(pageCount - 1, page + 1))}>Next locations</button></div>}
+  </div>;
+}
+
 function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
   const records = buildInventorySnapshotRecords(data);
   const locations = data.fixtures.locations.filter((location) => location.isActive !== false && location.type !== "in_transit" && !isUnknownLocation(location));
@@ -1962,9 +2028,12 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
   const [serviceDate, setServiceDate] = useState(dateInputValue(new Date()));
   const [mode, setMode] = useState<ServicePlanMode>("queue");
   const [locationFilter, setLocationFilter] = useState("all");
+  const [locationSearch, setLocationSearch] = useState("");
   const [goodsFilter, setGoodsFilter] = useState("all");
   const [containerFilter, setContainerFilter] = useState<"all" | ServiceContainerType>("all");
   const [priorityFilter, setPriorityFilter] = useState<ServicePriorityFilter>("action");
+  const [queuePageSize, setQueuePageSize] = useState<ServiceQueuePageSize>(10);
+  const [queuePage, setQueuePage] = useState(0);
   const [targetOverrides, setTargetOverrides] = useState<Record<string, ServiceTargetOverride>>(() => readServiceTargetOverrides(readWarehouseForecastStorage<unknown>(serviceTargetsStorageKey, {})));
   const [targetLocation, setTargetLocation] = useState(locations[0]?.locationId ?? "");
   const [targetGoods, setTargetGoods] = useState(availableGoodsTypes[0] ?? "Unclassified");
@@ -2022,6 +2091,7 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
 
   const filteredRows = rows.filter((row) => {
     if (locationFilter !== "all" && row.location.locationId !== locationFilter) return false;
+    if (locationSearch.trim() && !`${row.location.name} ${locationTypeLabel(row.location.type)}`.toLocaleLowerCase().includes(locationSearch.trim().toLocaleLowerCase())) return false;
     if (goodsFilter !== "all" && row.goodsType !== goodsFilter) return false;
     if (containerFilter !== "all" && row.containerType !== containerFilter) return false;
     return true;
@@ -2033,6 +2103,20 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
     || (priorityFilter === "watch" && row.priority === "watch")
     || (priorityFilter === "on_target" && row.priority === "on_target");
   const visibleRows = mode === "queue" ? filteredRows.filter(priorityMatches) : filteredRows;
+  const queueGroups = Array.from(visibleRows.reduce((groups, row) => {
+    const existing = groups.get(row.location.locationId);
+    if (existing) existing.rows.push(row);
+    else groups.set(row.location.locationId, { location: row.location, rows: [row] });
+    return groups;
+  }, new Map<string, { location: Location; rows: ServicePlanRow[] }>()).values()).sort((left, right) => {
+    const leftScore = Math.max(...left.rows.map((row) => row.priorityScore));
+    const rightScore = Math.max(...right.rows.map((row) => row.priorityScore));
+    return rightScore - leftScore || left.location.name.localeCompare(right.location.name);
+  });
+  const queuePageCount = queuePageSize === "all" ? 1 : Math.max(1, Math.ceil(queueGroups.length / queuePageSize));
+  const safeQueuePage = Math.min(queuePage, queuePageCount - 1);
+  const visibleQueueGroups = queuePageSize === "all" ? queueGroups : queueGroups.slice(safeQueuePage * queuePageSize, (safeQueuePage + 1) * queuePageSize);
+  useEffect(() => setQueuePage(0), [locationFilter, locationSearch, goodsFilter, containerFilter, priorityFilter, mode]);
   const actionRows = rows.filter((row) => row.pickupQty > 0 || row.deliveryQty > 0);
   const pickupRows = actionRows.filter((row) => row.pickupQty > 0);
   const deliveryRows = actionRows.filter((row) => row.deliveryQty > 0);
@@ -2081,10 +2165,10 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
       <div className="service-plan__intro-head"><div><span className="eyebrow">Transportation dispatch</span><h2>Daily pickup and delivery priorities</h2><p>Turn each location’s crate targets into a ranked service queue. Full crates above the pickup limit are ready to collect; empty-crate shortages are delivery priorities.</p></div><div className="service-plan__date"><label><span>Service date</span><input type="date" value={serviceDate} onChange={(event) => setServiceDate(event.target.value)} /></label><button type="button" className="secondary" onClick={exportServicePlan} disabled={!visibleRows.length}><Download size={15} /> Export current plan</button></div></div>
       <div className="service-plan__truth"><Target size={17} /><span><strong>Planning layer, not a correction</strong><small>Counts come from the latest accepted scanner projections. The service date labels the report; scheduled route and arrival data will be needed before future dates can be simulated. Target changes are saved in this browser for the pilot and never rewrite scan history.</small></span><Pill tone="blue">Review before dispatch</Pill></div>
     </section>
-    <section className="panel service-plan__filters"><div className="service-plan__section-heading"><div><span className="eyebrow">Report scope</span><strong>Choose the locations and crate mix</strong></div><button type="button" className="secondary" onClick={() => { setLocationFilter("all"); setGoodsFilter("all"); setContainerFilter("all"); setPriorityFilter("action"); }}>Clear filters</button></div><div className="service-plan__filter-grid"><label><span>Location</span><select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="all">All locations</option>{locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label><span>Goods category</span><select value={goodsFilter} onChange={(event) => setGoodsFilter(event.target.value)}><option value="all">All categories</option>{availableGoodsTypes.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Crate type</span><select value={containerFilter} onChange={(event) => setContainerFilter(event.target.value as "all" | ServiceContainerType)}><option value="all">All crate types</option>{serviceContainerTypes.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><label><span>Queue status</span><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as ServicePriorityFilter)}><option value="action">Needs service</option><option value="all">All target rows</option><option value="critical">Critical only</option><option value="pickup">Pickup ready</option><option value="delivery">Delivery needed</option><option value="watch">Verify data</option><option value="on_target">On target</option></select></label></div></section>
+    <section className="panel service-plan__filters"><div className="service-plan__section-heading"><div><span className="eyebrow">Report scope</span><strong>Choose the locations and crate mix</strong></div><button type="button" className="secondary" onClick={() => { setLocationFilter("all"); setLocationSearch(""); setGoodsFilter("all"); setContainerFilter("all"); setPriorityFilter("action"); }}>Clear filters</button></div><div className="service-plan__filter-grid"><label className="service-plan__location-search"><span>Find a location</span><span className="service-plan__location-search-input"><Search size={13} /><input type="search" value={locationSearch} onChange={(event) => setLocationSearch(event.target.value)} placeholder="Search location" aria-label="Search service plan location" />{locationSearch && <button type="button" onClick={() => setLocationSearch("")} aria-label="Clear location search"><X size={13} /></button>}</span></label><label><span>Location</span><select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="all">All locations</option>{locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label><span>Goods category</span><select value={goodsFilter} onChange={(event) => setGoodsFilter(event.target.value)}><option value="all">All categories</option>{availableGoodsTypes.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Crate type</span><select value={containerFilter} onChange={(event) => setContainerFilter(event.target.value as "all" | ServiceContainerType)}><option value="all">All crate types</option>{serviceContainerTypes.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><label><span>Queue status</span><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as ServicePriorityFilter)}><option value="action">Needs service</option><option value="all">All target rows</option><option value="critical">Critical only</option><option value="pickup">Pickup ready</option><option value="delivery">Delivery needed</option><option value="watch">Verify data</option><option value="on_target">On target</option></select></label></div></section>
     <section className="service-plan__summary"><article><span><Truck size={16} />Pickup stops</span><strong>{pickupStops}</strong><small>{pickupTotal} full crate{pickupTotal === 1 ? "" : "s"} ready to collect</small></article><article><span><PackageCheck size={16} />Delivery stops</span><strong>{deliveryStops}</strong><small>{deliveryTotal} empty crate{deliveryTotal === 1 ? "" : "s"} needed</small></article><article><span><AlertTriangle size={16} />Critical shortages</span><strong>{criticalRows.length}</strong><small>Locations with no safe empty-crate buffer</small></article><article><span><CircleHelp size={16} />Data to verify</span><strong>{unknownRows.length}</strong><small>Target rows with an unknown crate state</small></article></section>
     <section className="panel service-plan__workspace"><div className="service-plan__workspace-head"><div><span className="eyebrow">Dispatch worklist</span><h2>{mode === "queue" ? "What transportation should review first" : "Location target setup"}</h2><p>{mode === "queue" ? `${visibleRows.length} matching target row${visibleRows.length === 1 ? "" : "s"} · sorted by shortage and pickup urgency.` : "Set the operating limits that create pickup and delivery recommendations. Start with the targets Goodwill already uses on paper."}</p></div><div className="service-plan__mode-tabs" role="tablist" aria-label="Service plan view"><button type="button" className={mode === "queue" ? "active" : ""} onClick={() => setMode("queue")}>Dispatch queue</button><button type="button" className={mode === "targets" ? "active" : ""} onClick={() => setMode("targets")}>Target setup</button></div></div>
-      {mode === "queue" ? <div className="table-wrap service-plan__table-wrap"><table className="service-plan__table"><thead><tr><th>Priority</th><th>Location</th><th>Goods / crate</th><th>On hand</th><th>Configured trigger</th><th>Recommended move</th><th></th></tr></thead><tbody>{visibleRows.length ? visibleRows.map((row) => <tr key={row.key}><td><Pill tone={servicePriorityTone(row.priority)}>{servicePriorityLabel(row.priority)}</Pill></td><th><strong>{row.location.name}</strong><small>{locationTypeLabel(row.location.type)}</small></th><td><strong>{row.goodsType}</strong><small>{containerTypeLabel(row.containerType)}</small></td><td><strong>{row.full} full · {row.empty} empty</strong><small>{row.unknown ? `${row.unknown} state unknown · ` : ""}{row.total} total on hand</small></td><td><strong>{row.target.minimumEmpty} empty min · {row.target.maximumFull} full max</strong><small>{row.target.minimumOnHand}–{row.target.maximumOnHand} total on hand</small></td><td><strong>{row.action}</strong><small>{row.reason}</small>{(row.pickupQty > 0 || row.deliveryQty > 0) && <div className="service-plan__move-chips">{row.pickupQty > 0 && <span className="service-plan__move-chip service-plan__move-chip--pickup">Pick up {row.pickupQty}</span>}{row.deliveryQty > 0 && <span className="service-plan__move-chip service-plan__move-chip--delivery">Deliver {row.deliveryQty}</span>}</div>}</td><td><button type="button" className="secondary service-plan__view-button" onClick={() => openLocation(row.location.locationId, { goodsType: row.goodsType, containerType: row.containerType, bucket: "current" })}>View containers</button></td></tr>) : <tr><td colSpan={7}><div className="service-plan__empty"><CheckCircle2 size={22} /><strong>No service work matches these filters.</strong><span>Every visible target is on target, or the current scanner snapshot has not produced a matching row yet.</span></div></td></tr>}</tbody></table></div> : <div className="service-plan__targets"><form className="service-plan__add-target" onSubmit={addTarget}><div><span className="eyebrow">Add a target row</span><strong>Plan another location / goods / crate combination</strong><small>Use this when a location needs a rule before it has produced a scan.</small></div><label><span>Location</span><select value={targetLocation} onChange={(event) => setTargetLocation(event.target.value)}>{locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label><span>Goods category</span><select value={targetGoods} onChange={(event) => setTargetGoods(event.target.value)}>{availableGoodsTypes.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Crate type</span><select value={targetContainer} onChange={(event) => setTargetContainer(event.target.value as ServiceContainerType)}>{serviceContainerTypes.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><button type="submit" className="primary"><Plus size={15} /> Add target</button></form><div className="table-wrap service-plan__target-table-wrap"><table className="service-plan__table service-plan__target-table"><thead><tr><th>Location</th><th>Goods</th><th>Crate</th><th>Minimum on hand</th><th>Maximum on hand</th><th>Minimum empty</th><th>Maximum full</th><th></th></tr></thead><tbody>{visibleRows.length ? visibleRows.map((row) => <tr key={row.key}><th><strong>{row.location.name}</strong><small>{locationTypeLabel(row.location.type)}</small></th><td>{row.goodsType}</td><td>{containerTypeLabel(row.containerType)}</td>{(["minimumOnHand", "maximumOnHand", "minimumEmpty", "maximumFull"] as const).map((field) => <td key={field}><input aria-label={`${field} for ${row.location.name} ${row.goodsType} ${containerTypeLabel(row.containerType)}`} type="number" min="0" max="999" value={row.target[field]} onChange={(event) => updateTarget(row, field, event.target.value)} /></td>)}<td><button type="button" className="service-plan__reset" onClick={() => resetTarget(row)} disabled={!targetOverrides[row.key]}>{targetOverrides[row.key] ? "Reset default" : "Default"}</button></td></tr>) : <tr><td colSpan={8}><div className="service-plan__empty"><Target size={22} /><strong>No target rows match these filters.</strong><span>Add a target above or broaden the location, goods, and crate filters.</span></div></td></tr>}</tbody></table></div></div>}
+      {mode === "queue" ? <ServicePlanQueue groups={visibleQueueGroups} totalGroups={queueGroups.length} pageSize={queuePageSize} page={safeQueuePage} pageCount={queuePageCount} onPageSizeChange={(size) => { setQueuePageSize(size); setQueuePage(0); }} onPageChange={setQueuePage} openLocation={openLocation} /> : <div className="service-plan__targets"><form className="service-plan__add-target" onSubmit={addTarget}><div><span className="eyebrow">Add a target row</span><strong>Plan another location / goods / crate combination</strong><small>Use this when a location needs a rule before it has produced a scan.</small></div><label><span>Location</span><select value={targetLocation} onChange={(event) => setTargetLocation(event.target.value)}>{locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label><span>Goods category</span><select value={targetGoods} onChange={(event) => setTargetGoods(event.target.value)}>{availableGoodsTypes.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Crate type</span><select value={targetContainer} onChange={(event) => setTargetContainer(event.target.value as ServiceContainerType)}>{serviceContainerTypes.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><button type="submit" className="primary"><Plus size={15} /> Add target</button></form><div className="table-wrap service-plan__target-table-wrap"><table className="service-plan__table service-plan__target-table"><thead><tr><th>Location</th><th>Goods</th><th>Crate</th><th>Minimum on hand</th><th>Maximum on hand</th><th>Minimum empty</th><th>Maximum full</th><th></th></tr></thead><tbody>{visibleRows.length ? visibleRows.map((row) => <tr key={row.key}><th><strong>{row.location.name}</strong><small>{locationTypeLabel(row.location.type)}</small></th><td>{row.goodsType}</td><td>{containerTypeLabel(row.containerType)}</td>{(["minimumOnHand", "maximumOnHand", "minimumEmpty", "maximumFull"] as const).map((field) => <td key={field}><input aria-label={`${field} for ${row.location.name} ${row.goodsType} ${containerTypeLabel(row.containerType)}`} type="number" min="0" max="999" value={row.target[field]} onChange={(event) => updateTarget(row, field, event.target.value)} /></td>)}<td><button type="button" className="service-plan__reset" onClick={() => resetTarget(row)} disabled={!targetOverrides[row.key]}>{targetOverrides[row.key] ? "Reset default" : "Default"}</button></td></tr>) : <tr><td colSpan={8}><div className="service-plan__empty"><Target size={22} /><strong>No target rows match these filters.</strong><span>Add a target above or broaden the location, goods, and crate filters.</span></div></td></tr>}</tbody></table></div></div>}
       <p className="service-plan__note">The initial defaults are placeholders to make the workflow visible. Goodwill should confirm actual minimums, pickup thresholds, truck capacity, route timing, and whether full crates can be swapped for empties on the same stop before this becomes an automated dispatch instruction.</p>
     </section>
   </div>;
@@ -2270,19 +2354,25 @@ interface InventoryMatrixRow {
 }
 
 const inventoryContainerTypes = ["bin", "cart", "gaylord"] as const;
+type InventoryLocationPageSize = 10 | 25 | 50 | "all";
 
 function DashboardInventoryMatrix({ data, setPage, openLocation, scoped = false }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; scoped?: boolean }) {
   const [mode, setMode] = useState<InventoryMatrixMode>("container");
   const [locationScope, setLocationScope] = useState<InventoryLocationScope>("network");
   const [selectedContainerTypes, setSelectedContainerTypes] = useState<string[]>([]);
+  const [locationSearch, setLocationSearch] = useState("");
+  const [locationPageSize, setLocationPageSize] = useState<InventoryLocationPageSize>(10);
+  const [locationPage, setLocationPage] = useState(0);
   const unknownLocation = data.fixtures.locations.find((location) => isUnknownLocation(location)) ?? null;
   const unknownKey = "__unknown_inventory_location__";
   const allRecords = buildInventorySnapshotRecords(data);
   const selectedTypeSet = new Set(selectedContainerTypes);
+  const normalizedLocationSearch = locationSearch.trim().toLocaleLowerCase();
   const records = allRecords.filter((record) => {
     const typeMatches = selectedTypeSet.size === 0 || selectedTypeSet.has(record.container.type);
     const scopeMatches = locationScope === "network" || record.locationKey === unknownKey || record.location?.type === locationScope;
-    return typeMatches && scopeMatches;
+    const locationMatches = !normalizedLocationSearch || `${record.locationName} ${record.locationType}`.toLocaleLowerCase().includes(normalizedLocationSearch);
+    return typeMatches && scopeMatches && locationMatches;
   });
   const recordsByLocation = new Map<string, InventorySnapshotRecord[]>();
   records.forEach((record) => recordsByLocation.set(record.locationKey, [...(recordsByLocation.get(record.locationKey) ?? []), record]));
@@ -2296,6 +2386,15 @@ function DashboardInventoryMatrix({ data, setPage, openLocation, scoped = false 
     .map((location) => ({ key: location.locationId, location, locationName: location.name, locationType: locationTypeLabel(location.type), records: recordsByLocation.get(location.locationId) ?? [] }));
   const unknownRecords = recordsByLocation.get(unknownKey) ?? [];
   if (unknownRecords.length > 0) locationRows.push({ key: unknownKey, location: unknownLocation, locationName: "Unknown / unassigned", locationType: "Needs assignment", records: unknownRecords, isUnknown: true });
+  const filteredLocationRows = locationRows.filter((row) => !normalizedLocationSearch || `${row.locationName} ${row.locationType}`.toLocaleLowerCase().includes(normalizedLocationSearch));
+  const locationPageCount = locationPageSize === "all" ? 1 : Math.max(1, Math.ceil(filteredLocationRows.length / locationPageSize));
+  const safeLocationPage = Math.min(locationPage, locationPageCount - 1);
+  const visibleLocationRows = locationPageSize === "all"
+    ? filteredLocationRows
+    : filteredLocationRows.slice(safeLocationPage * locationPageSize, (safeLocationPage + 1) * locationPageSize);
+  useEffect(() => {
+    setLocationPage(0);
+  }, [locationScope, locationSearch, mode, selectedContainerTypes.join("|")]);
   const goodsColumns = Array.from(new Set([
     ...data.fixtures.goodsTypes.map((goodsType) => goodsType.name),
     ...records.map((record) => record.goodsType).filter((goodsType) => goodsType !== "Unclassified")
@@ -2338,6 +2437,7 @@ function DashboardInventoryMatrix({ data, setPage, openLocation, scoped = false 
   const clearInventoryFilters = () => {
     setLocationScope("network");
     setSelectedContainerTypes([]);
+    setLocationSearch("");
   };
   const handleInventoryCellCapture = (event: React.MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
@@ -2345,7 +2445,7 @@ function DashboardInventoryMatrix({ data, setPage, openLocation, scoped = false 
     const rowElement = button?.closest("tbody tr");
     if (!button || !rowElement) return;
     const rowIndex = Array.from(rowElement.parentElement?.children ?? []).indexOf(rowElement);
-    const row = locationRows[rowIndex];
+    const row = visibleLocationRows[rowIndex];
     const cellIndex = (button.closest("td") as HTMLTableCellElement | null)?.cellIndex ?? -1;
     if (!row || cellIndex < 1 || cellIndex > columns.length) return;
     event.preventDefault();
@@ -2356,12 +2456,13 @@ function DashboardInventoryMatrix({ data, setPage, openLocation, scoped = false 
       ? { containerType: column.value as Container["type"], bucket: "current" }
       : { goodsType: column.value, bucket: "current" });
   };
-  return <section className="panel inventory-matrix-panel" onClickCapture={handleInventoryCellCapture}>
+  return <section className="panel inventory-matrix-panel" data-route-focus="inventory-matrix" onClickCapture={handleInventoryCellCapture}>
     <PanelTitle title={scoped ? "Assigned inventory" : "Company-wide inventory"} subtitle="Current container inventory by location and category. Each container is counted once using its latest accepted projection." action="View all containers" onClick={() => setPage("containers")} />
     <div className="inventory-matrix__toolbar"><div><span className="eyebrow">{scoped ? "Assigned inventory snapshot" : "Network inventory snapshot"}</span><p>{scoped ? "Review the containers at your assigned locations, then open a cell to work with that exact group." : "Use container type for physical capacity planning, or goods category to mirror the inventory report used by Goodwill operations."}</p></div><div className="inventory-matrix__actions"><div className="inventory-matrix__modes" role="group" aria-label="Inventory breakdown"><button type="button" className={mode === "container" ? "active" : ""} onClick={() => setMode("container")}><ContainerIcon size={14} /> Container type</button><button type="button" className={mode === "goods" ? "active" : ""} onClick={() => setMode("goods")}><Boxes size={14} /> Goods category</button></div><button type="button" className="secondary" onClick={exportInventory} disabled={!records.length}><Download size={15} /> Excel-ready CSV</button></div></div>
-    <div className="inventory-matrix__filters"><label><span>Location scope</span><select value={locationScope} onChange={(event) => setLocationScope(event.target.value as InventoryLocationScope)}><option value="network">All locations</option><option value="donation_express">Donation Xpress</option><option value="store_backroom">Stores</option><option value="warehouse">Warehouses</option></select></label><AuditMultiSelect label="Container types" options={inventoryContainerTypes.map((value) => ({ value, label: containerTypeLabel(value) }))} selected={selectedContainerTypes} onToggle={(value) => setSelectedContainerTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setSelectedContainerTypes([])} emptyLabel="All container types" /><div className="inventory-matrix__filter-summary"><strong>{scopeLabel}</strong><span>{typeLabel}</span><small>{records.length} container{records.length === 1 ? "" : "s"} included</small></div><button type="button" className="inventory-matrix__clear" onClick={clearInventoryFilters} disabled={locationScope === "network" && selectedContainerTypes.length === 0}>Clear filters</button></div>
+    <div className="inventory-matrix__filters"><label className="inventory-matrix__location-search"><span>Find a location</span><span className="inventory-matrix__location-search-input"><Search size={13} /><input type="search" value={locationSearch} onChange={(event) => setLocationSearch(event.target.value)} placeholder="Search location name" aria-label="Search inventory location" />{locationSearch && <button type="button" onClick={() => setLocationSearch("")} aria-label="Clear location search"><X size={13} /></button>}</span></label><label><span>Location scope</span><select value={locationScope} onChange={(event) => setLocationScope(event.target.value as InventoryLocationScope)}><option value="network">All locations</option><option value="donation_express">Donation Xpress</option><option value="store_backroom">Stores</option><option value="warehouse">Warehouses</option></select></label><AuditMultiSelect label="Container types" options={inventoryContainerTypes.map((value) => ({ value, label: containerTypeLabel(value) }))} selected={selectedContainerTypes} onToggle={(value) => setSelectedContainerTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setSelectedContainerTypes([])} emptyLabel="All container types" /><div className="inventory-matrix__filter-summary"><strong>{scopeLabel}</strong><span>{typeLabel}</span><small>{filteredLocationRows.length} locations · {records.length} containers included</small></div><button type="button" className="inventory-matrix__clear" onClick={() => { clearInventoryFilters(); setLocationSearch(""); }} disabled={locationScope === "network" && selectedContainerTypes.length === 0 && !locationSearch}>Clear filters</button></div>
       <div className="inventory-matrix__summary"><div><span><ContainerIcon size={15} />Tracked containers</span><strong>{records.length}</strong><small>{scopeLabel} · {typeLabel}</small></div><div><span><MapPin size={15} />At operating locations</span><strong>{physicalCount}</strong><small>Confirmed physical placement</small></div><div><span><Truck size={15} />In transit</span><strong>{transitRow?.records.length ?? 0}</strong><small>Left a confirmed location · arrival pending</small></div><div><span><CircleHelp size={15} />Unknown / unassigned</span><strong>{unknownRow?.records.length ?? 0}</strong><small>{unknownRow?.records.length ? "Needs location follow-up" : "No current location gaps"}</small></div></div>
-     <div className="table-wrap inventory-matrix__table-wrap"><table className="inventory-matrix"><thead><tr><th>Location</th>{columns.map((column) => <th key={column.value}>{column.label}</th>)}<th>Total</th></tr></thead><tbody>{locationRows.map((row) => <tr key={row.key}><th scope="row"><button type="button" className="inventory-matrix__location" onClick={() => openRow(row)}><span className={`inventory-matrix__location-icon ${row.isUnknown ? "inventory-matrix__location-icon--unknown" : row.location ? `inventory-matrix__location-icon--${row.location.type}` : "inventory-matrix__location-icon--unknown"}`}>{row.location && !row.isUnknown ? <LocationTypeIcon location={row.location} size={15} /> : <CircleHelp size={15} />}</span><span><strong>{row.locationName}</strong><small>{row.locationType}{row.location?.isActive === false ? " · Inactive" : ""}</small></span><ChevronRight size={13} /></button></th>{columns.map((column) => { const items = recordsForColumn(row, column.value); return <td key={column.value}>{items.length ? <button type="button" className="inventory-matrix__cell" onClick={() => openRow(row)} title={`${items.length} ${column.label.toLowerCase()} at ${row.locationName}. ${statusSummary(items)}.`}><strong>{items.length}</strong><small>{statusSummary(items)}</small><em>{cellDetail(items)}</em></button> : <span className="inventory-matrix__empty">—</span>}</td>; })}<td><button type="button" className="inventory-matrix__cell inventory-matrix__cell--total" onClick={() => openRow(row)} title={`${row.records.length} containers at ${row.locationName}.`}><strong>{row.records.length}</strong><small>{statusSummary(row.records) || "No current inventory"}</small></button></td></tr>)}</tbody><tfoot><tr><th>Network total</th>{columns.map((column) => <td key={column.value}><strong>{records.filter((record) => mode === "container" ? record.container.type === column.value : record.goodsType === column.value).length}</strong></td>)}<td><strong>{records.length}</strong></td></tr></tfoot></table></div>
+     <div className="table-wrap inventory-matrix__table-wrap"><table className="inventory-matrix"><thead><tr><th>Location</th>{columns.map((column) => <th key={column.value}>{column.label}</th>)}<th>Total</th></tr></thead><tbody>{visibleLocationRows.map((row) => <tr key={row.key}><th scope="row"><button type="button" className="inventory-matrix__location" onClick={() => openRow(row)}><span className={`inventory-matrix__location-icon ${row.isUnknown ? "inventory-matrix__location-icon--unknown" : row.location ? `inventory-matrix__location-icon--${row.location.type}` : "inventory-matrix__location-icon--unknown"}`}>{row.location && !row.isUnknown ? <LocationTypeIcon location={row.location} size={15} /> : <CircleHelp size={15} />}</span><span><strong>{row.locationName}</strong><small>{row.locationType}{row.location?.isActive === false ? " · Inactive" : ""}</small></span><ChevronRight size={13} /></button></th>{columns.map((column) => { const items = recordsForColumn(row, column.value); return <td key={column.value}>{items.length ? <button type="button" className="inventory-matrix__cell" onClick={() => openRow(row)} title={`${items.length} ${column.label.toLowerCase()} at ${row.locationName}. ${statusSummary(items)}.`}><strong>{items.length}</strong><small>{statusSummary(items)}</small><em>{cellDetail(items)}</em></button> : <span className="inventory-matrix__empty">—</span>}</td>; })}<td><button type="button" className="inventory-matrix__cell inventory-matrix__cell--total" onClick={() => openRow(row)} title={`${row.records.length} containers at ${row.locationName}.`}><strong>{row.records.length}</strong><small>{statusSummary(row.records) || "No current inventory"}</small></button></td></tr>)}</tbody><tfoot><tr><th>Filtered total</th>{columns.map((column) => <td key={column.value}><strong>{records.filter((record) => mode === "container" ? record.container.type === column.value : record.goodsType === column.value).length}</strong></td>)}<td><strong>{records.length}</strong></td></tr></tfoot></table></div>
+    <div className="inventory-matrix__pagination"><span>Showing {visibleLocationRows.length ? safeLocationPage * (locationPageSize === "all" ? 0 : locationPageSize) + 1 : 0}–{Math.min(filteredLocationRows.length, locationPageSize === "all" ? filteredLocationRows.length : (safeLocationPage + 1) * locationPageSize)} of {filteredLocationRows.length} locations</span><label><span>Rows</span><select value={locationPageSize} onChange={(event) => { const value = event.target.value === "all" ? "all" : Number(event.target.value) as InventoryLocationPageSize; setLocationPageSize(value); setLocationPage(0); }}><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value="all">All</option></select></label><button type="button" className="secondary" disabled={safeLocationPage === 0} onClick={() => setLocationPage((current) => Math.max(0, current - 1))}>Previous</button><strong>Page {safeLocationPage + 1} of {locationPageCount}</strong><button type="button" className="secondary" disabled={safeLocationPage >= locationPageCount - 1} onClick={() => setLocationPage((current) => Math.min(locationPageCount - 1, current + 1))}>Next</button></div>
     <p className="inventory-matrix__note">Counts reflect the latest accepted scan for each container. “Unknown / unassigned” keeps gaps visible instead of silently dropping them. The export includes one row per container so Excel users can filter or build a pivot table.</p>
   </section>;
 }
@@ -2411,7 +2512,7 @@ interface ContainerRouteContext {
   unresolvedSegmentCount: number;
 }
 
-function payloadLocationId(event: StoredEvent | undefined, key: "sourceLocationId" | "destinationLocationId") {
+function payloadLocationId(event: StoredEvent | undefined, key: "sourceLocationId") {
   const value = event?.payload[key];
   return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -2523,7 +2624,7 @@ function ContainerRouteCell({ route }: { route: ContainerRouteContext }) {
         <div className="container-route-cell__path container-route-cell__path--departure">
           <strong title={route.origin?.name ?? "Departure location not confirmed"}>Leaving {route.origin?.name ?? "departure location not confirmed"}</strong>
         </div>
-        <small>In transit · left {relativeTime(route.departedAt)}{route.segments.length > 1 ? ` · handoff ${route.segments.length}` : ""}</small>
+        <small>{inTransitDepartureSummary(route.origin?.name)} · {relativeTime(route.departedAt)}{route.segments.length > 1 ? ` · handoff ${route.segments.length}` : ""}</small>
        <small className="container-route-cell__truth">{inTransitDepartureDetail(route.origin?.name)}</small>
        </div>
     );
@@ -2594,7 +2695,7 @@ function LegacyContainersPage({ data, query, openDetail, openLocation, setPage }
         ["Current state", loadStateLabel(projection?.loadState)],
         ["Movement status", route.inTransit ? "In transit" : "Stationary / location confirmed"],
         ["Movement", humanRouteSummary(route)],
-        ["Last known location", route.inTransit ? `In transit — left ${route.origin?.name ?? route.lastConfirmedLocation?.name ?? "location not confirmed"}` : locationName(projection?.locationId ?? null)],
+        ["Last known location", route.inTransit ? inTransitDepartureSummary(route.origin?.name ?? route.lastConfirmedLocation?.name) : locationName(projection?.locationId ?? null)],
         ["History health", projectionHealthLabel(projection?.health)],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"],
         ["Container UUID", container.containerId]
@@ -2628,7 +2729,7 @@ function LegacyContainersPage({ data, query, openDetail, openLocation, setPage }
       <div className="toolbar"><div className="filter-tabs">{(["all", "loaded", "empty", "unknown"] as const).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => { setFilter(value); setPageIndex(0); }}>{value[0]!.toUpperCase() + value.slice(1)} <b>{filterCount(value)}</b></button>)}</div><div className="container-toolbar-actions"><span className="container-table-note"><CircleHelp size={13} /> Labels are unique; technical ID is in Details.</span><button className="secondary" onClick={exportRows}><Download size={16} /> Export CSV</button></div></div>
       {movementRows.length > 0 && <div className="container-movement-summary">
          <div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each item shows the confirmed location it left. The next arrival scan records where it was received.</p></div></div>
-         <div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.first)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`In transit — leaving ${group.origin?.name ?? "departure location not confirmed"}`}>In transit — leaving {group.origin?.name ?? "departure location not confirmed"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional departure{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div>
+         <div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.first)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={inTransitDepartureSummary(group.origin?.name)}>{inTransitDepartureSummary(group.origin?.name)}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional departure{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div>
       </div>}
       <div className="table-wrap">
         <table className="container-table">
@@ -2730,7 +2831,7 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
       ...events.map((event) => payloadLocationId(event, "sourceLocationId"))
     ].filter((value): value is string => Boolean(value))));
     const locationLabel = route.inTransit
-      ? `In transit — leaving ${route.origin?.name ?? "departure location not confirmed"}`
+      ? inTransitDepartureSummary(route.origin?.name)
       : route.currentLocation?.name ?? "Not yet observed";
     return { container, projection, route, movement, health: containerHealthKey(projection), locationIds, locationLabel, lastObservedAt, latestMessage: messages.at(-1) ?? null, messageCount: messages.length, events };
   }), [data]);
@@ -2809,7 +2910,7 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
         ["Current state", loadStateLabel(projection?.loadState)],
         ["Movement status", route.inTransit ? "In transit" : projection ? "Stationary / location confirmed" : "Not observed"],
         ["Movement", humanRouteSummary(route)],
-        ["Last known location", route.inTransit ? `In transit — left ${route.origin?.name ?? route.lastConfirmedLocation?.name ?? "location not confirmed"}` : locationName(projection?.locationId)],
+        ["Last known location", route.inTransit ? inTransitDepartureSummary(route.origin?.name ?? route.lastConfirmedLocation?.name) : locationName(projection?.locationId)],
         ["History health", projectionHealthLabel(projection?.health)],
         ["Messages", messageEvents.length ? `${messageEvents.length} message${messageEvents.length === 1 ? "" : "s"} from scanners` : "No scanner messages"],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"]
@@ -2842,7 +2943,7 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
         <label>From date<input type="date" value={draft.from} onChange={(event) => setDraft((current) => ({ ...current, from: event.target.value }))} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))} /></label>
       </div>{draftDateError && <p className="container-filter-error">{draftDateError}</p>}</div>
-      {movementRows.length > 0 && <div className="container-movement-summary"><div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each item shows the confirmed location it left. The next arrival scan records where it was received.</p></div></div><div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.rows[0]!.container)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`In transit — leaving ${group.origin?.name ?? "departure location not confirmed"}`}>In transit — leaving {group.origin?.name ?? "departure location not confirmed"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional departure{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div></div>}
+      {movementRows.length > 0 && <div className="container-movement-summary"><div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each item shows the confirmed location it left. The next arrival scan records where it was received.</p></div></div><div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.rows[0]!.container)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={inTransitDepartureSummary(group.origin?.name)}>{inTransitDepartureSummary(group.origin?.name)}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional departure{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div></div>}
       <div className="table-wrap"><table className="container-table"><thead><tr><th>Container label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>Messages</th><th>History health</th></tr></thead><tbody>{visibleRows.map((row) => <tr className="clickable-row" role="button" tabIndex={0} aria-label={`Open details for ${row.container.label}`} key={row.container.containerId} onClick={() => showContainer(row.container)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showContainer(row.container); } }}><td><strong className="asset-label" title="Unique container label">{row.container.label}</strong></td><td className="capitalize">{containerTypeLabel(row.container.type)}</td><td><Pill tone={row.projection?.loadState === "loaded" ? "blue" : row.projection?.loadState === "empty" ? "good" : "muted"}>{loadStateLabel(row.projection?.loadState)}</Pill></td><td><ContainerRouteCell route={row.route} /></td><td>{relativeTime(row.lastObservedAt)}</td><td>{row.messageCount ? <span className="container-message-count"><MessageSquare size={13} /> {row.messageCount}</span> : <span className="container-message-none">None</span>}</td><td>{row.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : row.health === "corrected" ? <Pill tone="blue">Corrected</Pill> : row.health === "clean" ? <Pill tone="good">Clean</Pill> : row.health === "warning" ? <Pill tone="warn">Warning</Pill> : <Pill tone="muted">No history</Pill>}</td></tr>)}</tbody></table>{filteredRows.length === 0 && <EmptyState>No containers match the current filters. Clear a filter or broaden the global search.</EmptyState>}</div>
       <PaginationControls pageIndex={pageIndex} pageCount={pageCount} pageSize={pageSize} total={filteredRows.length} ariaLabel="Container pagination" onPageChange={setPageIndex} onPageSizeChange={(nextSize) => { setPageSize(nextSize); setPageIndex(0); }} />
     </section>
@@ -3037,7 +3138,7 @@ function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, rout
     <div className="location-network__header"><div><span className="eyebrow">Location view option 1 · recommended</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. The system does not assume a store-to-warehouse path, so multi-hop and rerouted journeys remain honest." /></div><span className="location-network__hint">Best for daily triage: select a node to focus its containers, scanners, and open departures below.</span></div>
     <div className="location-network__summary"><span><b>{metrics.length}</b><small>operating locations</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>open departures</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>needs review</small></span></div>
     <div className="location-network__nodes">{[...metrics].sort(sortByWork).map(renderLocationNode)}</div>
-     <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Live departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>In transit — leaving {segment.origin?.name ?? "departure location not confirmed"}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan appears here with its confirmed departure location. The next arrival scan records where the container was received.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} additional in-transit containers are included in the location directory below.</small>}</div>
+      <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Live departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>{inTransitDepartureSummary(segment.origin?.name)}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan appears here with its confirmed departure location. The next arrival scan records where the container was received.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} additional in-transit containers are included in the location directory below.</small>}</div>
   </section>;
 }
 
@@ -3057,7 +3158,7 @@ function LocationNetworkMap({ metrics, movingCount, movingReviewCount, routeReco
      <div className="location-network__header"><div><span className="eyebrow">Location network</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. Open departures show the location they left; the next arrival scan records where they were received." /></div><span className="location-network__hint">Select a location to focus its containers, scanners, and recent activity below. Use the directory filters to narrow this map and its export.</span></div>
     <div className="location-network__summary"><span><b>{metrics.length}</b><small>locations in view</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>open departures</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>attention items</small></span></div>
     <div className="location-network__nodes">{[...metrics].sort(sortByWork).map(renderLocationNode)}</div>
-     <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Open departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit in this view"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>In transit — leaving {segment.origin?.name ?? "departure location not confirmed"}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan appears here with its confirmed departure location. The next arrival scan records where the container was received.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} more in-transit containers are available by filtering the location directory below.</small>}</div>
+      <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Open departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit in this view"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>{inTransitDepartureSummary(segment.origin?.name)}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan appears here with its confirmed departure location. The next arrival scan records where the container was received.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} more in-transit containers are available by filtering the location directory below.</small>}</div>
   </section>;
 }
 
@@ -3184,7 +3285,7 @@ function LocationWorkspacePage({ data, locationId, locationFilter, openLocation,
     const segment = route.activeSegment ?? route.segments.at(-1);
     if (!segment) return "Location confirmed";
     if (selectedBucket === "arriving") return `Received here${segment.origin?.name ? ` from ${segment.origin.name}` : ""}`;
-    if (selectedBucket === "leaving") return `In transit — leaving ${segment.origin?.name ?? location.name}`;
+    if (selectedBucket === "leaving") return inTransitDepartureSummary(segment.origin?.name ?? location.name);
     if (route.inTransit) return humanRouteSummary(route);
     return segment.destination ? `Received at ${segment.destination.name}` : "Location confirmed";
   };
@@ -3522,7 +3623,7 @@ function LocationWorkflowLane({ title, subtitle, tone, items, data, onOpen }: { 
       const routeDescription = tone === "arriving"
         ? "Arrival confirmed here"
         : tone === "leaving"
-          ? `In transit — leaving ${route.origin?.name ?? "this site"}`
+           ? inTransitDepartureSummary(route.origin?.name ?? "this site")
           : locationName(projection.locationId);
       return <button key={projection.containerId} onClick={() => onOpen(projection)}><span><strong>{record?.label ?? "Unknown"}</strong><small>{record?.type} · {loadStateLabel(projection.loadState)} · {routeLabel}</small><em>{routeDescription}{route.segments.length > 1 ? ` · ${route.segments.length} handoffs recorded` : ""}</em></span><Pill tone={projection.health === "needs_review" ? "warn" : projection.loadState === "loaded" ? "blue" : "good"}>{projection.health === "needs_review" ? "Needs review" : loadStateLabel(projection.loadState)}</Pill><ChevronRight size={16} /></button>;
     }) : <div className="workflow-lane__empty">No containers in this workflow lane.</div>}</div>

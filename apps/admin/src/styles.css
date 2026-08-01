@@ -1966,3 +1966,58 @@ footer > span:first-child { display: none; }
   .sign-in-dialog__form-panel { padding: 27px 20px 30px; }
   .sign-in-dialog__story h1 { font-size: 31px; }
 }
+
+/* Network-scale controls: keep the inventory matrix useful when Goodwill has
+   dozens of locations instead of forcing a very tall page. */
+.nav-label--secondary { margin-top: 18px !important; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.1); }
+.sign-in-dialog__password-field { position: relative; display: flex; align-items: stretch; }
+.sign-in-dialog__password-field input { flex: 1; min-width: 0; padding-right: 58px; }
+.sign-in-dialog__password-field button { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); min-height: 28px; padding: 0 7px; border: 0; border-radius: 4px; color: #176ba6; background: #eff8fb; font-size: 9px; font-weight: 800; cursor: pointer; }
+.sign-in-dialog__password-field button:hover { background: #dff1f6; }
+.inventory-matrix__filters { grid-template-columns: minmax(200px, 1.25fr) minmax(150px, .85fr) minmax(190px, 1fr) minmax(220px, 1.35fr) auto; }
+.inventory-matrix__location-search { display: grid; gap: 5px; min-width: 0; color: #687681; font-size: 8.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.inventory-matrix__location-search-input { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 9px; border: 1px solid #bdc9d2; border-radius: 4px; color: #7c909a; background: #fff; }
+.inventory-matrix__location-search-input input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: normal; }
+.inventory-matrix__location-search-input input::placeholder { color: #9aaab1; font-weight: 500; }
+.inventory-matrix__location-search-input button { display: grid; place-items: center; padding: 2px; border: 0; color: #80939b; background: transparent; cursor: pointer; }
+.inventory-matrix__location-search-input button:hover { color: var(--blue-800); }
+.inventory-matrix__pagination { display: flex; align-items: center; justify-content: flex-end; gap: 9px; padding: 11px 19px 13px; border-top: 1px solid #e5edf0; color: #718793; font-size: 8.5px; }
+.inventory-matrix__pagination > span { margin-right: auto; }
+.inventory-matrix__pagination label { display: inline-flex; align-items: center; gap: 5px; color: #718793; font-size: 8px; font-weight: 800; }
+.inventory-matrix__pagination select { min-height: 29px; padding: 0 6px; border: 1px solid #c9d9e0; border-radius: 3px; color: #304858; background: #fff; font: inherit; font-size: 8px; }
+.inventory-matrix__pagination .secondary { min-height: 29px; padding: 0 8px; font-size: 8px; }
+.inventory-matrix__pagination strong { color: #4c6875; font-size: 8px; white-space: nowrap; }
+@media (max-width: 1100px) { .inventory-matrix__filters { grid-template-columns: repeat(3, minmax(150px, 1fr)); } .inventory-matrix__filter-summary { grid-column: span 2; } }
+@media (max-width: 650px) { .inventory-matrix__filters { grid-template-columns: 1fr; } .inventory-matrix__filter-summary { grid-column: auto; } .inventory-matrix__pagination { justify-content: flex-start; flex-wrap: wrap; } .inventory-matrix__pagination > span { width: 100%; margin-right: 0; } }
+.service-plan__filter-grid { grid-template-columns: minmax(190px, 1.2fr) repeat(4, minmax(125px, 1fr)); }
+.service-plan__location-search { display: grid; gap: 4px; min-width: 0; color: #526b78; font-size: 10px; font-weight: 800; }
+.service-plan__location-search-input { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 8px; border: 1px solid #c8d9e0; border-radius: 3px; color: #7c909a; background: #fff; }
+.service-plan__location-search-input input { min-width: 0; flex: 1; border: 0; outline: 0; color: #304858; background: transparent; font: inherit; font-size: 9px; font-weight: 600; }
+.service-plan__location-search-input input::placeholder { color: #9aaab1; font-weight: 500; }
+.service-plan__location-search-input button { display: grid; place-items: center; padding: 2px; border: 0; color: #80939b; background: transparent; cursor: pointer; }
+.service-plan__queue-shell { min-width: 0; }
+.service-plan__queue-toolbar { display: flex; align-items: center; gap: 9px; padding: 10px 19px; border-bottom: 1px solid #e5edf0; color: #718793; font-size: 8.5px; }
+.service-plan__queue-toolbar > span { margin-right: auto; }
+.service-plan__queue-toolbar label { display: inline-flex; align-items: center; gap: 5px; color: #718793; font-size: 8px; font-weight: 800; }
+.service-plan__queue-toolbar select { min-height: 28px; padding: 0 6px; border: 1px solid #c9d9e0; border-radius: 3px; color: #304858; background: #fff; font: inherit; font-size: 8px; }
+.service-plan__queue-toolbar .secondary { min-height: 28px; padding: 0 8px; font-size: 8px; }
+.service-plan__location-group th { padding: 0 !important; background: #eef8fb !important; border-top: 1px solid #cde5ec; border-bottom: 1px solid #cde5ec; }
+.service-plan__location-group th > button:first-child { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: calc(100% - 108px); min-height: 58px; padding: 8px 10px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.service-plan__location-group th > button:first-child:hover { background: #e4f4f8; }
+.service-plan__location-group-main { display: inline-flex; align-items: center; min-width: 0; gap: 7px; }
+.service-plan__location-group-main strong { color: var(--ink); font-size: 10px; }
+.service-plan__location-group-main small { overflow: hidden; margin-left: 3px; color: #6e858f; font-size: 7.5px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.service-plan__location-group-icon { width: 25px; height: 25px; display: grid; place-items: center; color: var(--blue-800); background: #e6f3f8; border: 1px solid #cfe5ec; }
+.service-plan__group-chevron { color: #6d8994; transition: transform .16s ease; }
+.service-plan__group-chevron--open { transform: rotate(180deg); }
+.service-plan__location-group-summary { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.service-plan__location-group-summary b { color: #56717c; font-size: 7.5px; font-weight: 800; }
+.service-plan__location-group-summary em { color: #7a919a; font-size: 7px; font-style: normal; font-weight: 600; }
+.service-plan__group-open { position: absolute; right: 9px; min-height: 28px; padding: 0 8px; font-size: 8px; }
+.service-plan__location-group th { position: relative; }
+.service-plan__queue-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 11px 19px; border-top: 1px solid #e5edf0; color: #718793; font-size: 8px; }
+.service-plan__queue-pagination .secondary { min-height: 29px; padding: 0 9px; font-size: 8px; }
+.service-plan__queue-pagination strong { color: #4c6875; font-size: 8px; }
+@media (max-width: 1000px) { .service-plan__filter-grid { grid-template-columns: repeat(3, minmax(135px, 1fr)); } }
+@media (max-width: 700px) { .service-plan__filter-grid { grid-template-columns: repeat(2, minmax(135px, 1fr)); } .service-plan__location-group th > button:first-child { width: 100%; align-items: flex-start; flex-direction: column; } .service-plan__location-group-summary { padding-left: 20px; } .service-plan__group-open { position: static; margin: 0 10px 8px 20px; } }
+@media (max-width: 560px) { .service-plan__filter-grid { grid-template-columns: 1fr; } .service-plan__queue-toolbar { align-items: flex-start; flex-wrap: wrap; } .service-plan__queue-toolbar > span { width: 100%; } }
