@@ -1812,3 +1812,14 @@ footer > span:first-child { display: none; }
   .store-outlook__target-form-fields { grid-template-columns: 1fr; }
   .store-outlook__target-form-fields .store-outlook__target-actions { grid-column: auto; flex-wrap: wrap; }
 }
+
+/* The receipt horizon is an operational control, so keep it readable without overpowering the forecast value. */
+.warehouse-trend__forecast-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.warehouse-trend__forecast-heading > span { display: block; color: #5e7885; font-size: 8px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.warehouse-trend__forecast-heading label { display: grid; gap: 3px; color: #6d858f; font-size: 7px; font-weight: 800; text-align: right; }
+.warehouse-trend__forecast-heading label > span { display: block; color: #6d858f; font-size: 7px; letter-spacing: .02em; text-transform: none; }
+.warehouse-trend__forecast-heading select { min-height: 25px; padding: 0 5px; border: 1px solid #b9dbe5; border-radius: 3px; color: #304858; background: #fff; font: inherit; font-size: 7.5px; font-weight: 800; }
+@media (max-width: 650px) {
+  .warehouse-trend__header { flex-direction: column; }
+  .warehouse-trend__forecast { width: 100%; box-sizing: border-box; }
+}

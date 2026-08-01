@@ -1031,7 +1031,30 @@ interface WarehouseTrendRow {
   departed: number;
 }
 
+const warehouseOverviewHorizonKey = "stacktrack.warehouse.overview.receipt-horizon";
+
 function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
+  const [receiptHorizonDays, setReceiptHorizonDays] = useState<7 | 14 | 30>(() => {
+    try {
+      const saved = Number(window.localStorage.getItem(warehouseOverviewHorizonKey));
+      if (saved === 14 || saved === 30) return saved;
+      const rawSettings = window.localStorage.getItem(warehouseForecastSettingsKey);
+      const settings = rawSettings ? JSON.parse(rawSettings) as { horizonDays?: unknown } : null;
+      const sharedHorizon = Number(settings?.horizonDays);
+      return sharedHorizon === 14 || sharedHorizon === 30 ? sharedHorizon : 7;
+    } catch {
+      return 7;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(warehouseOverviewHorizonKey, String(receiptHorizonDays));
+      const rawSettings = window.localStorage.getItem(warehouseForecastSettingsKey);
+      const settings = rawSettings ? JSON.parse(rawSettings) as Record<string, unknown> : {};
+      window.localStorage.setItem(warehouseForecastSettingsKey, JSON.stringify({ ...settings, horizonDays: receiptHorizonDays }));
+    } catch { /* the overview remains usable if browser storage is unavailable */ }
+    window.dispatchEvent(new CustomEvent("stacktrack:warehouse-forecast-settings", { detail: { horizonDays: receiptHorizonDays } }));
+  }, [receiptHorizonDays]);
   const records = buildInventorySnapshotRecords(data);
   const warehouses = data.fixtures.locations.filter((location) => location.type === "warehouse" && !isUnknownLocation(location));
   const warehouseRecords = records.filter((record) => record.location?.type === "warehouse");
@@ -1070,8 +1093,9 @@ function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: Ope
   const completedTrend = trendRows.slice(0, -1).filter((row) => row.donationLoads > 0 || row.received > 0 || row.departed > 0);
   const observedTrend = completedTrend.length ? completedTrend : (latestTrend.donationLoads > 0 || latestTrend.received > 0 || latestTrend.departed > 0) ? [latestTrend] : [];
   const average = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
-  const expectedDonationLoads = average(observedTrend.map((row) => row.donationLoads));
-  const expectedReceipts = average(observedTrend.map((row) => row.received));
+  const baseExpectedReceipts = average(observedTrend.map((row) => row.received));
+  const expectedReceipts = baseExpectedReceipts === null ? null : Math.round(baseExpectedReceipts * (receiptHorizonDays / 7));
+  const receiptHorizonLabel = `next ${receiptHorizonDays} days`;
   const forecastBasis = completedTrend.length >= 2 ? `Average of ${completedTrend.length} complete seven-day periods` : completedTrend.length === 1 ? "Early signal from one complete seven-day period" : observedTrend.length ? "Provisional signal from the current seven-day period" : "Not enough history yet";
   const exportWarehouseReport = () => downloadCsv("stacktrack-warehouse-inventory-report.csv", [
     ["WAREHOUSE INVENTORY SNAPSHOT"],
@@ -1086,6 +1110,8 @@ function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: Ope
     ["Period", "Donation loads marked full", "Warehouse receipts", "Warehouse departures", "Net receipts"],
     ...trendRows.map((row) => [row.label, row.donationLoads, row.received, row.departed, row.received - row.departed]),
     [],
+    ["Projection window (days)", receiptHorizonDays],
+    ["Expected warehouse receipts", expectedReceipts ?? "Not enough history"],
     ["Forecast basis", forecastBasis]
   ]);
   const handleWarehouseCellCapture = (event: React.MouseEvent<HTMLElement>) => {
@@ -1102,12 +1128,12 @@ function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: Ope
     openLocation(warehouse.locationId, { goodsType: goodsColumns[cellIndex - 1], bucket: "current" });
   };
   return <section className="panel warehouse-inventory-panel warehouse-inventory-panel--compact" onClickCapture={handleWarehouseCellCapture}>
-    <div className="warehouse-inventory__header"><div><span className="eyebrow">Warehouse operations</span><h2>Warehouse inventory &amp; donation flow</h2><p>Current containers at warehouses, recent movement, and a transparent seven-day expectation based on completed scan periods.</p></div><div className="warehouse-inventory__actions"><button type="button" className="secondary" onClick={() => setPage("inventory")}><Layers3 size={15} /> Open company-wide inventory</button><button type="button" className="secondary" onClick={exportWarehouseReport} disabled={!warehouses.length}><Download size={15} /> Export warehouse report</button></div></div>
-    <div className="warehouse-inventory__summary"><div><span><Warehouse size={15} />Current warehouse inventory</span><strong>{currentTotal}</strong><small>Containers physically confirmed at warehouses</small></div><div><span><PackageCheck size={15} />Received last 7 days</span><strong>{latestTrend.received}</strong><small>Arrival scans recorded at warehouses</small></div><div><span><HandHeart size={15} />Donation loads last 7 days</span><strong>{latestTrend.donationLoads}</strong><small>Containers marked full at Donation Xpress sites</small></div><div><span><Clock3 size={15} />Expected next 7 days</span><strong>{expectedDonationLoads ?? "—"}</strong><small>{forecastBasis}</small></div></div>
+    <div className="warehouse-inventory__header"><div><span className="eyebrow">Warehouse operations</span><h2>Warehouse inventory &amp; donation flow</h2><p>Current containers at warehouses, recent movement, and a projection window you can adjust below.</p></div><div className="warehouse-inventory__actions"><button type="button" className="secondary" onClick={() => setPage("inventory")}><Layers3 size={15} /> Open company-wide inventory</button><button type="button" className="secondary" onClick={exportWarehouseReport} disabled={!warehouses.length}><Download size={15} /> Export warehouse report</button></div></div>
+    <div className="warehouse-inventory__summary"><div><span><Warehouse size={15} />Current warehouse inventory</span><strong>{currentTotal}</strong><small>Containers physically confirmed at warehouses</small></div><div><span><PackageCheck size={15} />Received last 7 days</span><strong>{latestTrend.received}</strong><small>Arrival scans recorded at warehouses</small></div><div><span><HandHeart size={15} />Donation loads last 7 days</span><strong>{latestTrend.donationLoads}</strong><small>Containers marked full at Donation Xpress sites</small></div><div><span><Clock3 size={15} />Expected warehouse receipts</span><strong>{expectedReceipts ?? "—"}</strong><small>{receiptHorizonLabel} · {forecastBasis}</small></div></div>
     <div className="warehouse-inventory__table-heading"><div><span className="eyebrow">Current warehouse inventory</span><strong>Containers by goods category</strong><p>Each container is counted once at its latest confirmed warehouse location. The small line in each cell shows the physical container mix.</p></div><span className="warehouse-inventory__scope">{warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"} · {currentTotal} containers</span></div>
     <div className="table-wrap warehouse-inventory__table-wrap"><table className="warehouse-inventory"><thead><tr><th>Warehouse</th>{goodsColumns.map((goodsType) => <th key={goodsType}>{goodsType}</th>)}<th>Total</th></tr></thead><tbody>{warehouses.map((warehouse) => { const items = locationRecords(warehouse.locationId); return <tr key={warehouse.locationId}><th scope="row"><button type="button" className="warehouse-inventory__location" onClick={() => openLocation(warehouse.locationId)}><span className="warehouse-inventory__location-icon"><Warehouse size={15} /></span><span><strong>{warehouse.name}</strong><small>Warehouse</small></span><ChevronRight size={13} /></button></th>{goodsColumns.map((goodsType) => { const goodsItems = items.filter((item) => item.goodsType === goodsType); return <td key={goodsType}>{goodsItems.length ? <button type="button" className="warehouse-inventory__cell" onClick={() => openLocation(warehouse.locationId)} title={`${goodsItems.length} ${goodsType} containers at ${warehouse.name}`}><strong>{goodsItems.length}</strong><small>{typeBreakdown(goodsItems)}</small></button> : <span className="warehouse-inventory__empty">—</span>}</td>; })}<td><button type="button" className="warehouse-inventory__cell warehouse-inventory__cell--total" onClick={() => openLocation(warehouse.locationId)}><strong>{items.length}</strong><small>All categories</small></button></td></tr>; })}</tbody><tfoot><tr><th>Warehouse total</th>{goodsColumns.map((goodsType) => <td key={goodsType}><strong>{countFor(warehouseRecords, goodsType)}</strong></td>)}<td><strong>{warehouseRecords.length}</strong></td></tr></tfoot></table></div>
-    <div className="warehouse-trend"><div className="warehouse-trend__header"><div><span className="eyebrow">Donation and warehouse trend</span><strong>What changed over the last four seven-day periods</strong><p>“Donation loads” is a container marked full at a Donation Xpress site. It is a planning proxy, not a count of donated items or dollars.</p></div><div className="warehouse-trend__forecast"><span>Expected warehouse receipts</span><strong>{expectedReceipts ?? "—"}</strong><small>next 7 days · {forecastBasis}</small></div></div><div className="table-wrap"><table className="warehouse-trend__table"><thead><tr><th>Period</th><th>Donation loads</th><th>Warehouse receipts</th><th>Warehouse departures</th><th>Net receipts</th></tr></thead><tbody>{trendRows.map((row) => <tr key={row.key}><th>{row.label}{row.key === latestTrend.key && <small>Current period</small>}</th><td>{row.donationLoads}</td><td>{row.received}</td><td>{row.departed}</td><td className={row.received - row.departed >= 0 ? "positive" : "negative"}>{row.received - row.departed >= 0 ? "+" : ""}{row.received - row.departed}</td></tr>)}</tbody></table></div></div>
-    <div className="warehouse-inventory__outlook"><div className="warehouse-inventory__outlook-copy"><span className="eyebrow">Capacity outlook</span><strong>Plan warehouse space and store coverage in one workspace</strong><p>Open the outlook to adjust store minimums and maximums, model major holidays, and see the calculation behind every expected count. The overview keeps only the current inventory picture.</p></div><div className="warehouse-inventory__outlook-stat"><span>Expected warehouse receipts</span><strong>{expectedReceipts ?? "—"}</strong><small>next 7 days · {forecastBasis}</small></div><button type="button" className="primary" onClick={() => setPage("forecast")}><TrendingUp size={15} /> Open warehouse outlook</button></div>
+    <div className="warehouse-trend"><div className="warehouse-trend__header"><div><span className="eyebrow">Donation and warehouse trend</span><strong>What changed over the last four seven-day periods</strong><p>“Donation loads” is a container marked full at a Donation Xpress site. It is a planning proxy, not a count of donated items or dollars.</p></div><div className="warehouse-trend__forecast"><div className="warehouse-trend__forecast-heading"><span>Expected warehouse receipts</span><label><span>Projection window</span><select aria-label="Expected warehouse receipt projection window" value={receiptHorizonDays} onChange={(event) => setReceiptHorizonDays(Number(event.target.value) as 7 | 14 | 30)}><option value={7}>Next 7 days</option><option value={14}>Next 14 days</option><option value={30}>Next 30 days</option></select></label></div><strong>{expectedReceipts ?? "—"}</strong><small>{receiptHorizonLabel} · {forecastBasis}</small></div></div><div className="table-wrap"><table className="warehouse-trend__table"><thead><tr><th>Period</th><th>Donation loads</th><th>Warehouse receipts</th><th>Warehouse departures</th><th>Net receipts</th></tr></thead><tbody>{trendRows.map((row) => <tr key={row.key}><th>{row.label}{row.key === latestTrend.key && <small>Current period</small>}</th><td>{row.donationLoads}</td><td>{row.received}</td><td>{row.departed}</td><td className={row.received - row.departed >= 0 ? "positive" : "negative"}>{row.received - row.departed >= 0 ? "+" : ""}{row.received - row.departed}</td></tr>)}</tbody></table></div></div>
+    <div className="warehouse-inventory__outlook"><div className="warehouse-inventory__outlook-copy"><span className="eyebrow">Capacity outlook</span><strong>Plan warehouse space and store coverage in one workspace</strong><p>Open the outlook to adjust store minimums and maximums, model major holidays, and see the calculation behind every expected count. The overview keeps only the current inventory picture.</p></div><div className="warehouse-inventory__outlook-stat"><span>Expected warehouse receipts</span><strong>{expectedReceipts ?? "—"}</strong><small>{receiptHorizonLabel} · Adjust the projection window above</small></div><button type="button" className="primary" onClick={() => setPage("forecast")}><TrendingUp size={15} /> Open warehouse outlook</button></div>
     <p className="warehouse-inventory__note">Current counts come from the latest accepted scanner projection. Forecast assumptions live in the Warehouse outlook workspace and never change official scan history.</p>
   </section>;
 }
@@ -1238,7 +1264,10 @@ function WarehouseForecastPanel({ data, warehouses, warehouseRecords, goodsColum
   const [plannerOpen, setPlannerOpen] = useState(false);
 
   useEffect(() => {
-    try { window.localStorage.setItem(warehouseForecastSettingsKey, JSON.stringify(settings)); } catch { /* local planning remains usable if storage is unavailable */ }
+    try {
+      window.localStorage.setItem(warehouseForecastSettingsKey, JSON.stringify(settings));
+      window.localStorage.setItem(warehouseOverviewHorizonKey, String(settings.horizonDays));
+    } catch { /* local planning remains usable if storage is unavailable */ }
     window.dispatchEvent(new CustomEvent("stacktrack:warehouse-forecast-settings", { detail: settings }));
   }, [settings]);
   useEffect(() => {
