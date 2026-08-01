@@ -320,6 +320,84 @@ main { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .warehouse-forecast__event-list article button { display: grid; place-items: center; flex: none; margin-left: auto; padding: 4px; border: 0; color: #748a95; background: transparent; cursor: pointer; }
 .warehouse-forecast__events-empty { align-self: center; padding: 9px; border: 1px dashed #cbdde3; color: #7c9099; background: #fbfdfe; font-size: 8px; }
 .warehouse-forecast__note { margin: 0; padding: 0 16px 14px; color: #7f9099; font-size: 8px; line-height: 1.45; }
+.warehouse-inventory-panel--compact .warehouse-trend, .warehouse-inventory-panel--compact .warehouse-forecast-panel { display: none; }
+.warehouse-inventory__outlook { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, .4fr) auto; align-items: center; gap: 14px; margin: 0 19px 0; padding: 13px 14px; border: 1px solid #cde5ec; border-left: 3px solid var(--cyan); background: #f1fafc; }
+.warehouse-inventory__outlook-copy { min-width: 0; }
+.warehouse-inventory__outlook-copy strong { display: block; margin-top: 4px; color: var(--ink); font: 800 12px/1.25 Manrope, sans-serif; }
+.warehouse-inventory__outlook-copy p { max-width: 720px; margin: 4px 0 0; color: #6d838e; font-size: 8.5px; line-height: 1.4; }
+.warehouse-inventory__outlook-stat { min-width: 0; padding: 8px 11px; border-left: 1px solid #cde5ec; }
+.warehouse-inventory__outlook-stat span { display: block; color: #5e7885; font-size: 7.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.warehouse-inventory__outlook-stat strong { display: block; margin-top: 3px; color: var(--blue-800); font: 800 18px/1.1 Manrope, sans-serif; }
+.warehouse-inventory__outlook-stat small { display: block; margin-top: 3px; color: #748b95; font-size: 7.5px; line-height: 1.25; }
+.warehouse-inventory__outlook .primary { white-space: nowrap; }
+.warehouse-outlook-page { display: grid; gap: 16px; }
+.warehouse-outlook-page > .warehouse-forecast-panel { margin: 0; }
+.warehouse-outlook-page__intro { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; border-left: 3px solid var(--cyan); background: #f4fbfd; }
+.warehouse-outlook-page__intro h2 { margin: 4px 0 0; color: var(--ink); font: 800 19px/1.15 Manrope, sans-serif; }
+.warehouse-outlook-page__intro p { max-width: 780px; margin: 6px 0 0; color: #6e838d; font-size: 9.5px; line-height: 1.45; }
+.warehouse-outlook-page__intro-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: none; }
+.store-outlook-panel { overflow: hidden; }
+.store-outlook__header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; padding: 17px 19px 15px; border-bottom: 1px solid #e2edf1; background: #fbfdfe; }
+.store-outlook__header h2 { margin: 4px 0 0; color: var(--ink); font: 800 17px/1.2 Manrope, sans-serif; }
+.store-outlook__header p { max-width: 750px; margin: 5px 0 0; color: #718793; font-size: 9px; line-height: 1.45; }
+.store-outlook__controls { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 9px; padding: 14px 19px; border-bottom: 1px solid #e5edf0; }
+.store-outlook__controls label, .store-outlook__target-editor label, .store-outlook__holiday-form label, .store-outlook__holiday-number { display: grid; gap: 4px; color: #657c88; font-size: 8px; font-weight: 800; }
+.store-outlook__controls select, .store-outlook__controls input, .store-outlook__target-editor select, .store-outlook__target-editor input, .store-outlook__holiday-form input, .store-outlook__holiday-form select, .store-outlook__holiday-number input { width: 100%; min-height: 32px; box-sizing: border-box; padding: 0 8px; border: 1px solid #c9d9e0; border-radius: 3px; color: #304858; background: #fff; font: inherit; font-size: 9px; }
+.store-outlook__summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; padding: 14px 19px; }
+.store-outlook__summary > div { min-width: 0; padding: 10px 11px; border: 1px solid #dce8ed; background: #fff; }
+.store-outlook__summary > div.store-outlook__summary-card--attention { border-color: #efd8ad; background: #fffaf0; }
+.store-outlook__summary span { display: flex; align-items: center; gap: 5px; color: #667d89; font-size: 8px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.store-outlook__summary span svg { color: var(--blue-800); flex: none; }
+.store-outlook__summary strong { display: block; margin-top: 5px; color: var(--ink); font: 800 18px/1.1 Manrope, sans-serif; }
+.store-outlook__summary small { display: block; margin-top: 4px; color: #7a8d96; font-size: 8px; line-height: 1.3; }
+.store-outlook__table-wrap { margin: 0 19px; overflow-x: auto; }
+.store-outlook__table { width: 100%; min-width: 980px; border-collapse: collapse; }
+.store-outlook__table th, .store-outlook__table td { padding: 9px 8px; border-bottom: 1px solid #e5edf0; color: #3d5866; font-size: 8.5px; text-align: right; vertical-align: middle; white-space: nowrap; }
+.store-outlook__table thead th { color: #667d89; background: #f5f9fa; font-size: 7.5px; letter-spacing: .04em; text-transform: uppercase; }
+.store-outlook__table th:first-child, .store-outlook__table td:first-child { text-align: left; }
+.store-outlook__table tbody th { color: #304858; font-weight: 800; }
+.store-outlook__table tbody th small, .store-outlook__table td small { display: block; margin-top: 3px; color: #8798a1; font-size: 7.5px; font-weight: 500; }
+.store-outlook__table tbody tr:hover { background: #f8fcfd; }
+.store-outlook__table .secondary { min-height: 27px; padding: 0 8px; font-size: 8px; }
+.store-outlook__gap--attention { color: #876628 !important; font-weight: 800; }
+.store-outlook__gap--ready { color: #277257 !important; font-weight: 800; }
+.store-outlook__holiday-chip { display: inline-grid; gap: 2px; min-width: 55px; padding: 4px 6px; border: 1px solid #d6e8c7; background: #f3faef; color: #4f7c32; font-weight: 800; text-align: center; }
+.store-outlook__holiday-chip small { margin: 0 !important; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.store-outlook__no-holiday { color: #8a9ba2; font-size: 8px; }
+.store-outlook__target-editor { display: grid; grid-template-columns: minmax(235px, .7fr) minmax(0, 1.7fr); gap: 18px; margin: 18px 19px 0; padding: 15px; border: 1px solid #cfe5ec; background: #f3fafc; }
+.store-outlook__target-editor h3, .store-outlook__holiday-section h3, .store-outlook__logic h3 { margin: 4px 0 0; color: var(--ink); font: 800 14px/1.2 Manrope, sans-serif; }
+.store-outlook__target-editor p, .store-outlook__holiday-section p, .store-outlook__logic p { margin: 5px 0 0; color: #6e858f; font-size: 8.5px; line-height: 1.45; }
+.store-outlook__target-editor form { display: grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); gap: 8px; align-items: end; }
+.store-outlook__target-actions { display: flex; align-items: flex-end; gap: 7px; grid-column: 1 / -1; }
+.store-outlook__target-actions button { min-height: 32px; }
+.store-outlook__holiday-section { margin: 18px 19px 0; padding-top: 16px; border-top: 1px solid #e4edf0; }
+.store-outlook__section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.store-outlook__holiday-count { flex: none; padding: 6px 8px; border: 1px solid #cce7d7; color: #357556; background: #f1faf4; font-size: 8px; font-weight: 800; }
+.store-outlook__holiday-form { display: grid; grid-template-columns: minmax(150px, 1.3fr) repeat(5, minmax(100px, 1fr)) auto; gap: 8px; margin-top: 12px; align-items: end; }
+.store-outlook__holiday-form .primary { min-height: 32px; white-space: nowrap; }
+.store-outlook__holiday-list { display: grid; gap: 6px; margin-top: 12px; }
+.store-outlook__holiday-list article { display: grid; grid-template-columns: auto minmax(170px, 1fr) 90px auto auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid #dce8ed; background: #fbfdfe; }
+.store-outlook__holiday-list article.store-outlook__holiday--disabled { opacity: .58; background: #f7f9fa; }
+.store-outlook__holiday-list article > div { min-width: 0; }
+.store-outlook__holiday-list strong { display: block; color: #304858; font-size: 9px; }
+.store-outlook__holiday-list small { display: block; margin-top: 3px; overflow: hidden; color: #7b8f98; font-size: 7.5px; text-overflow: ellipsis; white-space: nowrap; }
+.store-outlook__holiday-icon { width: 25px; height: 25px; display: grid; place-items: center; color: var(--blue-800); background: #e8f5fa; }
+.store-outlook__holiday-number { min-width: 70px; }
+.store-outlook__holiday-number span { color: #7b8e97; font-size: 7px; }
+.store-outlook__holiday-number input { min-height: 27px; }
+.store-outlook__holiday-list .secondary { min-height: 27px; padding: 0 8px; font-size: 8px; }
+.store-outlook__remove { display: grid; place-items: center; padding: 5px; border: 0; color: #748a95; background: transparent; cursor: pointer; }
+.store-outlook__remove:hover { color: var(--blue-800); background: #eaf7fb; }
+.store-outlook__logic { display: grid; grid-template-columns: minmax(220px, .55fr) minmax(0, 1.45fr); gap: 18px; margin: 18px 19px 0; padding: 15px; border: 1px solid #dce8ed; background: #fbfdfe; }
+.store-outlook__logic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.store-outlook__logic-grid > div { display: flex; align-items: flex-start; gap: 8px; padding: 9px; border: 1px solid #e0ebef; background: #fff; }
+.store-outlook__logic-grid b { width: 21px; height: 21px; display: grid; place-items: center; flex: none; border-radius: 50%; color: #fff; background: var(--blue-800); font-size: 9px; }
+.store-outlook__logic-grid span { display: grid; gap: 3px; }
+.store-outlook__logic-grid strong { color: #304858; font-size: 8.5px; }
+.store-outlook__logic-grid small { color: #778b95; font-size: 7.5px; line-height: 1.35; }
+.store-outlook__note { margin: 14px 19px 16px; color: #7f9099; font-size: 8px; line-height: 1.45; }
+@media (max-width: 1000px) { .warehouse-inventory__outlook { grid-template-columns: 1fr auto; } .warehouse-inventory__outlook-stat { border-left: 0; } .warehouse-inventory__outlook .primary { grid-column: 1 / -1; justify-self: start; } .store-outlook__controls { grid-template-columns: repeat(4, minmax(110px, 1fr)); } .store-outlook__target-editor, .store-outlook__logic { grid-template-columns: 1fr; } .store-outlook__holiday-form { grid-template-columns: repeat(4, minmax(110px, 1fr)); } .store-outlook__holiday-form .primary { justify-self: start; } }
+@media (max-width: 650px) { .warehouse-outlook-page__intro, .store-outlook__header, .store-outlook__section-heading { align-items: stretch; flex-direction: column; } .warehouse-inventory__outlook { grid-template-columns: 1fr; } .warehouse-inventory__outlook-stat { padding-left: 0; } .store-outlook__controls, .store-outlook__summary { grid-template-columns: repeat(2, minmax(120px, 1fr)); } .store-outlook__target-editor form, .store-outlook__holiday-form { grid-template-columns: repeat(2, minmax(120px, 1fr)); } .store-outlook__target-actions, .store-outlook__holiday-form .primary { grid-column: 1 / -1; } .store-outlook__holiday-list article { grid-template-columns: auto minmax(0, 1fr) auto; } .store-outlook__holiday-number, .store-outlook__holiday-list article .secondary { grid-column: 2; } .store-outlook__remove { grid-column: 3; grid-row: 1 / span 2; } .store-outlook__logic-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .warehouse-forecast__controls { grid-template-columns: repeat(3, minmax(120px, 1fr)); } .warehouse-forecast__body { grid-template-columns: 1fr; } }
 @media (max-width: 620px) { .warehouse-forecast__header, .warehouse-forecast__events, .warehouse-forecast__planner { grid-template-columns: 1fr; flex-direction: column; align-items: stretch; } .warehouse-forecast__actions { flex-wrap: wrap; } .warehouse-forecast__controls, .warehouse-forecast__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .warehouse-forecast__planner-grid { grid-template-columns: 1fr; } .warehouse-forecast__events { display: grid; } }
 .service-plan-page { display: grid; gap: 16px; }

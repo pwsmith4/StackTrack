@@ -92,6 +92,7 @@ type Page =
   | "dashboard"
   | "inventory"
   | "service"
+  | "forecast"
   | "containers"
   | "loads"
   | "locations"
@@ -202,6 +203,11 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
     title: "Daily service plan",
     description: "Prioritize full-crate pickups and empty-crate deliveries from each location’s operating targets."
   },
+  forecast: {
+    eyebrow: "Warehouse planning",
+    title: "Warehouse outlook",
+    description: "Model warehouse capacity and store coverage using history, operating targets, and holiday adjustments."
+  },
   containers: {
     eyebrow: "Reusable assets",
     title: "Containers",
@@ -258,6 +264,7 @@ const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
   { page: "dashboard", label: "Overview", icon: LayoutDashboard },
   { page: "inventory", label: "Inventory", icon: Layers3 },
   { page: "service", label: "Service plan", icon: Truck },
+  { page: "forecast", label: "Warehouse outlook", icon: TrendingUp },
   { page: "containers", label: "Containers", icon: ContainerIcon },
   { page: "loads", label: "Load codes", icon: PackageCheck },
   { page: "locations", label: "Locations", icon: MapPin },
@@ -963,6 +970,7 @@ function PageContent({
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} openLocation={openLocation} />;
   if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} />;
   if (page === "service") return <ServicePlanPage data={data} openLocation={openLocation} />;
+  if (page === "forecast") return <WarehouseForecastPage data={data} openLocation={openLocation} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
   if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} {...(locationFilter ? { focusedLocationFilter: locationFilter } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
@@ -1092,14 +1100,14 @@ function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: Ope
     event.stopPropagation();
     openLocation(warehouse.locationId, { goodsType: goodsColumns[cellIndex - 1], bucket: "current" });
   };
-  return <section className="panel warehouse-inventory-panel" onClickCapture={handleWarehouseCellCapture}>
+  return <section className="panel warehouse-inventory-panel warehouse-inventory-panel--compact" onClickCapture={handleWarehouseCellCapture}>
     <div className="warehouse-inventory__header"><div><span className="eyebrow">Warehouse operations</span><h2>Warehouse inventory &amp; donation flow</h2><p>Current containers at warehouses, recent movement, and a transparent seven-day expectation based on completed scan periods.</p></div><div className="warehouse-inventory__actions"><button type="button" className="secondary" onClick={() => setPage("inventory")}><Layers3 size={15} /> Open company-wide inventory</button><button type="button" className="secondary" onClick={exportWarehouseReport} disabled={!warehouses.length}><Download size={15} /> Export warehouse report</button></div></div>
     <div className="warehouse-inventory__summary"><div><span><Warehouse size={15} />Current warehouse inventory</span><strong>{currentTotal}</strong><small>Containers physically confirmed at warehouses</small></div><div><span><PackageCheck size={15} />Received last 7 days</span><strong>{latestTrend.received}</strong><small>Destination receipts scanned at warehouses</small></div><div><span><HandHeart size={15} />Donation loads last 7 days</span><strong>{latestTrend.donationLoads}</strong><small>Containers marked full at Donation Xpress sites</small></div><div><span><Clock3 size={15} />Expected next 7 days</span><strong>{expectedDonationLoads ?? "—"}</strong><small>{forecastBasis}</small></div></div>
     <div className="warehouse-inventory__table-heading"><div><span className="eyebrow">Current warehouse inventory</span><strong>Containers by goods category</strong><p>Each container is counted once at its latest confirmed warehouse location. The small line in each cell shows the physical container mix.</p></div><span className="warehouse-inventory__scope">{warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"} · {currentTotal} containers</span></div>
     <div className="table-wrap warehouse-inventory__table-wrap"><table className="warehouse-inventory"><thead><tr><th>Warehouse</th>{goodsColumns.map((goodsType) => <th key={goodsType}>{goodsType}</th>)}<th>Total</th></tr></thead><tbody>{warehouses.map((warehouse) => { const items = locationRecords(warehouse.locationId); return <tr key={warehouse.locationId}><th scope="row"><button type="button" className="warehouse-inventory__location" onClick={() => openLocation(warehouse.locationId)}><span className="warehouse-inventory__location-icon"><Warehouse size={15} /></span><span><strong>{warehouse.name}</strong><small>Warehouse</small></span><ChevronRight size={13} /></button></th>{goodsColumns.map((goodsType) => { const goodsItems = items.filter((item) => item.goodsType === goodsType); return <td key={goodsType}>{goodsItems.length ? <button type="button" className="warehouse-inventory__cell" onClick={() => openLocation(warehouse.locationId)} title={`${goodsItems.length} ${goodsType} containers at ${warehouse.name}`}><strong>{goodsItems.length}</strong><small>{typeBreakdown(goodsItems)}</small></button> : <span className="warehouse-inventory__empty">—</span>}</td>; })}<td><button type="button" className="warehouse-inventory__cell warehouse-inventory__cell--total" onClick={() => openLocation(warehouse.locationId)}><strong>{items.length}</strong><small>All categories</small></button></td></tr>; })}</tbody><tfoot><tr><th>Warehouse total</th>{goodsColumns.map((goodsType) => <td key={goodsType}><strong>{countFor(warehouseRecords, goodsType)}</strong></td>)}<td><strong>{warehouseRecords.length}</strong></td></tr></tfoot></table></div>
     <div className="warehouse-trend"><div className="warehouse-trend__header"><div><span className="eyebrow">Donation and warehouse trend</span><strong>What changed over the last four seven-day periods</strong><p>“Donation loads” is a container marked full at a Donation Xpress site. It is a planning proxy, not a count of donated items or dollars.</p></div><div className="warehouse-trend__forecast"><span>Expected warehouse receipts</span><strong>{expectedReceipts ?? "—"}</strong><small>next 7 days · {forecastBasis}</small></div></div><div className="table-wrap"><table className="warehouse-trend__table"><thead><tr><th>Period</th><th>Donation loads</th><th>Warehouse receipts</th><th>Warehouse departures</th><th>Net receipts</th></tr></thead><tbody>{trendRows.map((row) => <tr key={row.key}><th>{row.label}{row.key === latestTrend.key && <small>Current period</small>}</th><td>{row.donationLoads}</td><td>{row.received}</td><td>{row.departed}</td><td className={row.received - row.departed >= 0 ? "positive" : "negative"}>{row.received - row.departed >= 0 ? "+" : ""}{row.received - row.departed}</td></tr>)}</tbody></table></div></div>
-    <WarehouseForecastPanel data={data} warehouses={warehouses} warehouseRecords={warehouseRecords} goodsColumns={goodsColumns} openLocation={openLocation} />
-    <p className="warehouse-inventory__note">Forecasts use complete seven-day periods before the current period when available. If the pilot has no earlier period yet, the current period is shown as a provisional signal rather than a settled forecast; the expectation becomes more useful as Goodwill records additional weeks.</p>
+    <div className="warehouse-inventory__outlook"><div className="warehouse-inventory__outlook-copy"><span className="eyebrow">Capacity outlook</span><strong>Plan warehouse space and store coverage in one workspace</strong><p>Open the outlook to adjust store minimums and maximums, model major holidays, and see the calculation behind every expected count. The overview keeps only the current inventory picture.</p></div><div className="warehouse-inventory__outlook-stat"><span>Expected warehouse receipts</span><strong>{expectedReceipts ?? "â€”"}</strong><small>next 7 days · {forecastBasis}</small></div><button type="button" className="primary" onClick={() => setPage("forecast")}><TrendingUp size={15} /> Open warehouse outlook</button></div>
+    <p className="warehouse-inventory__note">Current counts come from the latest accepted scanner projection. Forecast assumptions live in the Warehouse outlook workspace and never change official scan history.</p>
   </section>;
 }
 
@@ -1230,6 +1238,7 @@ function WarehouseForecastPanel({ data, warehouses, warehouseRecords, goodsColum
 
   useEffect(() => {
     try { window.localStorage.setItem(warehouseForecastSettingsKey, JSON.stringify(settings)); } catch { /* local planning remains usable if storage is unavailable */ }
+    window.dispatchEvent(new CustomEvent("stacktrack:warehouse-forecast-settings", { detail: settings }));
   }, [settings]);
   useEffect(() => {
     try { window.localStorage.setItem(warehouseForecastEventsKey, JSON.stringify(planningEvents)); } catch { /* local planning remains usable if storage is unavailable */ }
@@ -1344,6 +1353,231 @@ function WarehouseForecastPanel({ data, warehouses, warehouseRecords, goodsColum
     {plannerOpen && <form className="warehouse-forecast__planner" onSubmit={addPlanningEvent}><div><span className="eyebrow">Holiday and event planner</span><h3>Add a demand adjustment</h3><p>Use an uplift only when Goodwill expects more or fewer container movements than the scan history suggests.</p><div className="warehouse-forecast__presets"><button type="button" onClick={() => addPreset("Holiday giving season", 12, 1, 20)}>Holiday giving season</button><button type="button" onClick={() => addPreset("Christmas peak", 12, 25, 25)}>Christmas peak</button><button type="button" onClick={() => addPreset("Back-to-school drive", 8, 15, 15)}>Back-to-school</button></div></div><div className="warehouse-forecast__planner-grid"><label>Event name<input required value={eventName} onChange={(event) => setEventName(event.target.value)} placeholder="Thanksgiving donation drive" /></label><label>Start date<input required type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} /></label><label>Duration (days)<input type="number" min="1" max="90" value={eventDuration} onChange={(event) => setEventDuration(event.target.value)} /></label><label>Expected change %<input type="number" min="-90" max="300" value={eventUplift} onChange={(event) => setEventUplift(event.target.value)} /></label><label>Warehouse<select value={eventWarehouse} onChange={(event) => setEventWarehouse(event.target.value)}><option value="all">All warehouses</option>{warehouses.map((warehouse) => <option key={warehouse.locationId} value={warehouse.locationId}>{warehouse.name}</option>)}</select></label><label>Goods category<select value={eventGoods} onChange={(event) => setEventGoods(event.target.value)}>{eventGoodsOptions.map((goodsType) => <option key={goodsType} value={goodsType}>{goodsType === "all" ? "All categories" : goodsType}</option>)}</select></label><div className="warehouse-forecast__planner-actions"><button type="button" className="secondary" onClick={() => setPlannerOpen(false)}>Cancel</button><button type="submit" className="primary"><Plus size={15} /> Add event adjustment</button></div></div></form>}
     <div className="warehouse-forecast__events"><div><span className="eyebrow">Active planning inputs</span><strong>{planningEvents.length ? `${planningEvents.length} event${planningEvents.length === 1 ? "" : "s"} saved` : "No holiday adjustments saved"}</strong><p>These are scenario inputs for planning. They do not alter scan history, projections, or official counts.</p></div>{planningEvents.length ? <div className="warehouse-forecast__event-list">{planningEvents.map((event) => <article key={event.id}><span className="warehouse-forecast__event-icon"><CalendarDays size={15} /></span><span><strong>{event.name}</strong><small>{event.date} · {event.durationDays} days · {event.upliftPercent >= 0 ? "+" : ""}{event.upliftPercent}% · {event.warehouseId === "all" ? "All warehouses" : warehouses.find((warehouse) => warehouse.locationId === event.warehouseId)?.name ?? "Selected warehouse"}{event.goodsType === "all" ? "" : ` · ${event.goodsType}`}</small></span><button type="button" onClick={() => setPlanningEvents((current) => current.filter((item) => item.id !== event.id))} aria-label={`Remove ${event.name}`}><Trash2 size={14} /></button></article>)}</div> : <div className="warehouse-forecast__events-empty">Add a holiday or promotion to make the forecast scenario-specific.</div>}</div>
     <p className="warehouse-forecast__note">Forecast math: historical weekly receipts are adjusted for the selected growth and event uplift, then multiplied by the planning horizon. Recommended on-hand inventory uses the target days of cover plus safety stock. Actual scan data remains authoritative.</p>
+  </section>;
+}
+
+interface StoreOutlookTarget {
+  locationId: string;
+  goodsType: string;
+  containerType: ServiceContainerType;
+  minimumOnHand: number;
+  maximumOnHand: number;
+}
+
+interface StoreHolidayAdjustment {
+  id: string;
+  name: string;
+  date: string;
+  durationDays: number;
+  upliftPercent: number;
+  locationId: string;
+  goodsType: string;
+  enabled: boolean;
+}
+
+interface StoreOutlookRow {
+  store: Location;
+  goodsType: string;
+  containerType: ServiceContainerType;
+  current: number;
+  weeklyBaseline: number;
+  expected: number;
+  recommended: number;
+  gap: number;
+  target: StoreOutlookTarget;
+  holidayUplift: number;
+  holidayNames: string[];
+}
+
+const storeOutlookTargetsKey = "stacktrack.warehouse.store-outlook.targets";
+const storeOutlookHolidaysKey = "stacktrack.warehouse.store-outlook.holidays";
+
+function storeOutlookTargetKey(locationId: string, goodsType: string, containerType: ServiceContainerType): string {
+  return `${locationId}::${goodsType}::${containerType}`;
+}
+
+function defaultStoreOutlookTarget(location: Location, containerType: ServiceContainerType): StoreOutlookTarget {
+  const defaults = serviceDefaultTarget(location, containerType);
+  return { locationId: location.locationId, goodsType: "", containerType, minimumOnHand: defaults.minimumOnHand, maximumOnHand: defaults.maximumOnHand };
+}
+
+function normalizeStoreOutlookTargets(value: unknown): Record<string, StoreOutlookTarget> {
+  if (!value || typeof value !== "object") return {};
+  const output: Record<string, StoreOutlookTarget> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, candidate]) => {
+    if (!candidate || typeof candidate !== "object") return;
+    const item = candidate as Record<string, unknown>;
+    if (typeof item.locationId !== "string" || typeof item.goodsType !== "string" || !serviceContainerTypes.includes(item.containerType as ServiceContainerType)) return;
+    const minimum = Number(item.minimumOnHand);
+    const maximum = Number(item.maximumOnHand);
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum)) return;
+    output[key] = { locationId: item.locationId, goodsType: item.goodsType, containerType: item.containerType as ServiceContainerType, minimumOnHand: Math.max(0, Math.min(999, Math.round(minimum))), maximumOnHand: Math.max(0, Math.min(999, Math.round(Math.max(minimum, maximum)))) };
+  });
+  return output;
+}
+
+function defaultStoreHolidayAdjustments(year: number): StoreHolidayAdjustment[] {
+  const presets: Array<[string, number, number, number, string]> = [
+    ["New Year's Day", 1, 1, -10, "A quieter post-holiday operating day"],
+    ["Valentine's Day", 2, 14, 8, "Seasonal donation and sorting lift"],
+    ["Easter weekend", 4, 5, 10, "Spring donation activity"],
+    ["Memorial Day weekend", 5, 25, 8, "Long-weekend donation pattern"],
+    ["Independence Day", 7, 4, -5, "Holiday hours may reduce throughput"],
+    ["Back-to-school drive", 8, 15, 18, "School and household donation lift"],
+    ["Labor Day weekend", 9, 1, 6, "Long-weekend donation pattern"],
+    ["Halloween", 10, 31, 4, "Seasonal demand change"],
+    ["Thanksgiving week", 11, 27, -8, "Holiday closures and reduced routes"],
+    ["Black Friday weekend", 11, 28, 20, "Post-Thanksgiving donation and retail activity"],
+    ["Holiday giving season", 12, 1, 24, "Peak charitable giving period"],
+    ["Christmas week", 12, 25, -15, "Holiday closures and reduced routes"],
+    ["New Year's Eve", 12, 31, -8, "Shorter holiday operating day"]
+  ];
+  return presets.map(([name, month, day, uplift]) => ({ id: warehouseForecastId(), name, date: dateInputValue(new Date(year, month - 1, day)), durationDays: name.includes("week") || name.includes("season") ? 7 : 3, upliftPercent: uplift, locationId: "all", goodsType: "all", enabled: true }));
+}
+
+function normalizeStoreHolidayAdjustments(value: unknown, fallback: StoreHolidayAdjustment[]): StoreHolidayAdjustment[] {
+  if (!Array.isArray(value)) return fallback;
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const item = candidate as Record<string, unknown>;
+    if (typeof item.name !== "string" || typeof item.date !== "string") return [];
+    const duration = Number(item.durationDays);
+    const uplift = Number(item.upliftPercent);
+    return [{
+      id: typeof item.id === "string" && item.id ? item.id : warehouseForecastId(),
+      name: item.name.trim().slice(0, 100),
+      date: item.date,
+      durationDays: Number.isFinite(duration) ? Math.max(1, Math.min(90, Math.round(duration))) : 3,
+      upliftPercent: Number.isFinite(uplift) ? Math.max(-90, Math.min(300, Math.round(uplift))) : 0,
+      locationId: typeof item.locationId === "string" ? item.locationId : "all",
+      goodsType: typeof item.goodsType === "string" ? item.goodsType : "all",
+      enabled: item.enabled !== false
+    }];
+  });
+}
+
+function WarehouseForecastPage({ data, openLocation }: { data: OperationsData; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
+  const records = buildInventorySnapshotRecords(data);
+  const warehouses = data.fixtures.locations.filter((location) => location.type === "warehouse" && !isUnknownLocation(location));
+  const warehouseRecords = records.filter((record) => record.location?.type === "warehouse");
+  const goodsColumns = Array.from(new Set([
+    ...data.fixtures.goodsTypes.map((goodsType) => goodsType.name),
+    ...records.map((record) => record.goodsType).filter((goodsType) => goodsType !== "Unclassified")
+  ]));
+  if (records.some((record) => record.goodsType === "Unclassified")) goodsColumns.push("Unclassified");
+  return <div className="warehouse-outlook-page">
+    <section className="panel warehouse-outlook-page__intro"><div><span className="eyebrow">Planning workspace</span><h2>Capacity decisions with a visible calculation</h2><p>Warehouse outlook is the planning layer for transportation. It estimates demand from accepted scanner history, then lets administrators tune store targets and holiday assumptions without changing official container history.</p></div><div className="warehouse-outlook-page__intro-badges"><Pill tone="blue">Warehouse capacity</Pill><Pill tone="good">Store coverage</Pill><Pill tone="muted">Scenario only</Pill></div></section>
+    <WarehouseForecastPanel data={data} warehouses={warehouses} warehouseRecords={warehouseRecords} goodsColumns={goodsColumns} openLocation={openLocation} />
+    <StoreCapacityOutlook data={data} records={records} goodsColumns={goodsColumns} />
+  </div>;
+}
+
+function StoreCapacityOutlook({ data, records, goodsColumns }: { data: OperationsData; records: InventorySnapshotRecord[]; goodsColumns: string[] }) {
+  const stores = data.fixtures.locations.filter((location) => location.type === "store_backroom" && !isUnknownLocation(location));
+  const containerOptions = serviceContainerTypes;
+  const today = new Date();
+  const [settings, setSettings] = useState<WarehouseForecastSettings>(() => normalizeWarehouseForecastSettings(readWarehouseForecastStorage<Partial<WarehouseForecastSettings> | null>(warehouseForecastSettingsKey, null), { horizonDays: 7, targetDays: 14, safetyStockPercent: 15, growthPercent: 0 }));
+  const [targets, setTargets] = useState<Record<string, StoreOutlookTarget>>(() => normalizeStoreOutlookTargets(readWarehouseForecastStorage<unknown>(storeOutlookTargetsKey, {})));
+  const [holidays, setHolidays] = useState<StoreHolidayAdjustment[]>(() => normalizeStoreHolidayAdjustments(readWarehouseForecastStorage<unknown>(storeOutlookHolidaysKey, null), defaultStoreHolidayAdjustments(today.getFullYear())));
+  const [storeScope, setStoreScope] = useState("all");
+  const [goodsScope, setGoodsScope] = useState("all");
+  const [containerScope, setContainerScope] = useState<"all" | ServiceContainerType>("all");
+  const [editorStore, setEditorStore] = useState(stores[0]?.locationId ?? "");
+  const [editorGoods, setEditorGoods] = useState(goodsColumns[0] ?? "Unclassified");
+  const [editorContainer, setEditorContainer] = useState<ServiceContainerType>("bin");
+  const [editorMinimum, setEditorMinimum] = useState("6");
+  const [editorMaximum, setEditorMaximum] = useState("18");
+  const [holidayName, setHolidayName] = useState("");
+  const [holidayDate, setHolidayDate] = useState(dateInputValue(addDays(today, 60)));
+  const [holidayDuration, setHolidayDuration] = useState("3");
+  const [holidayUplift, setHolidayUplift] = useState("10");
+  const [holidayLocation, setHolidayLocation] = useState("all");
+  const [holidayGoods, setHolidayGoods] = useState("all");
+
+  useEffect(() => { try { window.localStorage.setItem(storeOutlookTargetsKey, JSON.stringify(targets)); } catch { /* local planning remains usable */ } }, [targets]);
+  useEffect(() => { try { window.localStorage.setItem(storeOutlookHolidaysKey, JSON.stringify(holidays)); } catch { /* local planning remains usable */ } }, [holidays]);
+  useEffect(() => { try { window.localStorage.setItem(warehouseForecastSettingsKey, JSON.stringify(settings)); } catch { /* local planning remains usable */ } window.dispatchEvent(new CustomEvent("stacktrack:warehouse-forecast-settings", { detail: settings })); }, [settings]);
+  useEffect(() => {
+    const onSettings = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<WarehouseForecastSettings>>).detail;
+      setSettings((current) => {
+        const next = normalizeWarehouseForecastSettings(detail, current);
+        return next.horizonDays === current.horizonDays && next.targetDays === current.targetDays && next.safetyStockPercent === current.safetyStockPercent && next.growthPercent === current.growthPercent ? current : next;
+      });
+    };
+    window.addEventListener("stacktrack:warehouse-forecast-settings", onSettings);
+    return () => window.removeEventListener("stacktrack:warehouse-forecast-settings", onSettings);
+  }, []);
+  useEffect(() => {
+    const location = stores.find((item) => item.locationId === editorStore);
+    const fallback = location ? defaultStoreOutlookTarget(location, editorContainer) : { minimumOnHand: 6, maximumOnHand: 18 };
+    const existing = targets[storeOutlookTargetKey(editorStore, editorGoods, editorContainer)];
+    setEditorMinimum(String(existing?.minimumOnHand ?? fallback.minimumOnHand));
+    setEditorMaximum(String(existing?.maximumOnHand ?? fallback.maximumOnHand));
+  }, [editorStore, editorGoods, editorContainer, targets, stores]);
+
+  const referenceNow = new Date(Math.max(Date.now(), ...data.events.map((event) => Date.parse(event.eventAt)).filter(Number.isFinite)));
+  const historyWeeks = 8;
+  const eventContainerType = (event: StoredEvent) => String(event.payload.containerType ?? data.fixtures.containers.find((container) => container.containerId === event.containerId)?.type ?? "bin");
+  const eventGoodsType = (event: StoredEvent) => String(event.payload.goodsType ?? "Unclassified");
+  const activeHolidayFor = (storeId: string, goodsType: string) => holidays.filter((holiday) => {
+    if (!holiday.enabled || (holiday.locationId !== "all" && holiday.locationId !== storeId) || (holiday.goodsType !== "all" && holiday.goodsType !== goodsType)) return false;
+    const start = dateAtStart(holiday.date);
+    const end = addDays(start, holiday.durationDays);
+    return end >= referenceNow && start <= addDays(referenceNow, settings.horizonDays);
+  });
+  const rows: StoreOutlookRow[] = stores.flatMap((store) => goodsColumns.flatMap((goodsType) => containerOptions.map((containerType) => {
+    const key = storeOutlookTargetKey(store.locationId, goodsType, containerType);
+    const fallback = { ...defaultStoreOutlookTarget(store, containerType), goodsType };
+    const target = targets[key] ?? fallback;
+    const current = records.filter((record) => record.locationKey === store.locationId && record.goodsType === goodsType && record.container.type === containerType).length;
+    const historyEvents = data.events.filter((event) => event.locationId === store.locationId && event.eventType === "load_assigned" && eventGoodsType(event) === goodsType && eventContainerType(event) === containerType && Date.parse(event.eventAt) > addDays(referenceNow, -historyWeeks * 7).getTime());
+    const weeklyBaseline = historyEvents.length / historyWeeks;
+    const holidayEvents = activeHolidayFor(store.locationId, goodsType);
+    const holidayUplift = holidayEvents.reduce((sum, event) => sum + event.upliftPercent, 0);
+    const multiplier = Math.max(0, 1 + settings.growthPercent / 100 + holidayUplift / 100);
+    const expected = Math.round(weeklyBaseline * (settings.horizonDays / 7) * multiplier);
+    const recommended = Math.max(target.minimumOnHand, Math.ceil(weeklyBaseline * (settings.targetDays / 7) * multiplier * (1 + settings.safetyStockPercent / 100)));
+    return { store, goodsType, containerType, current, weeklyBaseline, expected, recommended, gap: recommended - current, target, holidayUplift, holidayNames: holidayEvents.map((event) => event.name) };
+  })));
+  const visibleRows = rows.filter((row) => (storeScope === "all" || row.store.locationId === storeScope) && (goodsScope === "all" || row.goodsType === goodsScope) && (containerScope === "all" || row.containerType === containerScope));
+  const shortageRows = visibleRows.filter((row) => row.gap > 0);
+  const network = visibleRows.reduce((summary, row) => ({ current: summary.current + row.current, expected: summary.expected + row.expected, recommended: summary.recommended + row.recommended, gap: summary.gap + Math.max(0, row.gap) }), { current: 0, expected: 0, recommended: 0, gap: 0 });
+  const saveTarget = (event: React.FormEvent) => {
+    event.preventDefault();
+    const location = stores.find((item) => item.locationId === editorStore);
+    if (!location || !editorGoods) return;
+    const minimum = Math.max(0, Math.min(999, Math.round(Number(editorMinimum) || 0)));
+    const maximum = Math.max(minimum, Math.min(999, Math.round(Number(editorMaximum) || minimum)));
+    setTargets((current) => ({ ...current, [storeOutlookTargetKey(editorStore, editorGoods, editorContainer)]: { locationId: editorStore, goodsType: editorGoods, containerType: editorContainer, minimumOnHand: minimum, maximumOnHand: maximum } }));
+  };
+  const resetTarget = () => setTargets((current) => { const next = { ...current }; delete next[storeOutlookTargetKey(editorStore, editorGoods, editorContainer)]; return next; });
+  const addHoliday = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!holidayName.trim() || !holidayDate) return;
+    setHolidays((current) => [...current, { id: warehouseForecastId(), name: holidayName.trim().slice(0, 100), date: holidayDate, durationDays: Math.max(1, Math.min(90, Number(holidayDuration) || 1)), upliftPercent: Math.max(-90, Math.min(300, Number(holidayUplift) || 0)), locationId: holidayLocation, goodsType: holidayGoods, enabled: true }].sort((left, right) => left.date.localeCompare(right.date)));
+    setHolidayName("");
+  };
+  const updateHoliday = (id: string, patch: Partial<StoreHolidayAdjustment>) => setHolidays((current) => current.map((holiday) => holiday.id === id ? { ...holiday, ...patch } : holiday));
+  const exportStoreOutlook = () => downloadCsv(`stacktrack-store-capacity-outlook-${dateInputValue(today)}.csv`, [
+    ["STORE CAPACITY OUTLOOK"],
+    ["Forecast horizon (days)", settings.horizonDays], ["Target days of cover", settings.targetDays], ["Safety stock (%)", settings.safetyStockPercent], ["Growth adjustment (%)", settings.growthPercent],
+    ["Calculation basis", "Accepted load-assignment scans over the last eight seven-day periods; holiday and store target settings are planning inputs."], [],
+    ["Store", "Goods category", "Container type", "Current on hand", "Weekly baseline", "Expected movement", "Recommended on hand", "Planning gap", "Minimum", "Maximum", "Holiday adjustment (%)", "Holiday inputs"],
+    ...visibleRows.map((row) => [row.store.name, row.goodsType, containerTypeLabel(row.containerType), row.current, Math.round(row.weeklyBaseline * 10) / 10, row.expected, row.recommended, row.gap, row.target.minimumOnHand, row.target.maximumOnHand, row.holidayUplift, row.holidayNames.join("; ")]), [],
+    ["HOLIDAY ADJUSTMENTS"], ["Name", "Date", "Duration (days)", "Adjustment (%)", "Location", "Goods category", "Enabled"], ...holidays.map((holiday) => [holiday.name, holiday.date, holiday.durationDays, holiday.upliftPercent, holiday.locationId === "all" ? "All stores" : stores.find((store) => store.locationId === holiday.locationId)?.name ?? holiday.locationId, holiday.goodsType === "all" ? "All categories" : holiday.goodsType, holiday.enabled ? "Yes" : "No"])
+  ]);
+
+  return <section className="panel store-outlook-panel">
+    <div className="store-outlook__header"><div><span className="eyebrow">Store coverage targets</span><h2>Which stores need crates next?</h2><p>Use store-level minimums and maximums to turn current on-hand counts into a delivery planning queue. This is separate from the warehouse capacity calculation, so transportation can see both sides of the handoff.</p></div><button type="button" className="secondary" onClick={exportStoreOutlook} disabled={!visibleRows.length}><Download size={15} /> Export store outlook</button></div>
+    <div className="warehouse-forecast__assumption-note"><Target size={16} /><span><strong>Store targets are editable planning assumptions.</strong><small>Current counts come from accepted scanner projections. Saving a target changes recommendations only; it never rewrites an observation or moves a container.</small></span><Pill tone={shortageRows.length ? "warn" : "good"}>{shortageRows.length ? `${shortageRows.length} rows need planning` : "No current shortages"}</Pill></div>
+    <div className="store-outlook__controls"><label><span>Store</span><select value={storeScope} onChange={(event) => setStoreScope(event.target.value)}><option value="all">All stores</option>{stores.map((store) => <option key={store.locationId} value={store.locationId}>{store.name}</option>)}</select></label><label><span>Goods category</span><select value={goodsScope} onChange={(event) => setGoodsScope(event.target.value)}><option value="all">All categories</option>{goodsColumns.map((goodsType) => <option key={goodsType} value={goodsType}>{goodsType}</option>)}</select></label><label><span>Container type</span><select value={containerScope} onChange={(event) => setContainerScope(event.target.value as "all" | ServiceContainerType)}><option value="all">All container types</option>{containerOptions.map((containerType) => <option key={containerType} value={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><label><span>Forecast horizon</span><select value={settings.horizonDays} onChange={(event) => setSettings((current) => ({ ...current, horizonDays: Number(event.target.value) }))}><option value={7}>Next 7 days</option><option value={14}>Next 14 days</option><option value={30}>Next 30 days</option></select></label><label><span>Target days of cover</span><input type="number" min="1" max="90" value={settings.targetDays} onChange={(event) => setSettings((current) => ({ ...current, targetDays: Math.min(90, Math.max(1, Number(event.target.value) || 1)) }))} /></label><label><span>Safety stock %</span><input type="number" min="0" max="100" value={settings.safetyStockPercent} onChange={(event) => setSettings((current) => ({ ...current, safetyStockPercent: Math.min(100, Math.max(0, Number(event.target.value) || 0)) }))} /></label><label><span>Growth adjustment %</span><input type="number" min="-50" max="200" value={settings.growthPercent} onChange={(event) => setSettings((current) => ({ ...current, growthPercent: Math.min(200, Math.max(-50, Number(event.target.value) || 0)) }))} /></label></div>
+    <div className="store-outlook__summary"><div><span><Store size={15} />Stores in scope</span><strong>{new Set(visibleRows.map((row) => row.store.locationId)).size}</strong><small>Locations included by the current filters</small></div><div><span><ContainerIcon size={15} />Current on hand</span><strong>{network.current}</strong><small>Latest accepted projection</small></div><div><span><TrendingUp size={15} />Expected movement</span><strong>{network.expected}</strong><small>Next {settings.horizonDays} days</small></div><div className={network.gap > 0 ? "store-outlook__summary-card--attention" : ""}><span><Target size={15} />Planning gap</span><strong>{network.gap > 0 ? `+${network.gap}` : "0"}</strong><small>{network.gap > 0 ? "Crates to plan for delivery" : "Current on hand meets minimum targets"}</small></div></div>
+    <div className="store-outlook__table-wrap table-wrap"><table className="store-outlook__table"><thead><tr><th>Store</th><th>Goods / crate</th><th>Current</th><th>Expected movement</th><th>Recommended on hand</th><th>Target range</th><th>Planning gap</th><th>Holiday input</th><th></th></tr></thead><tbody>{visibleRows.length ? visibleRows.map((row) => <tr key={storeOutlookTargetKey(row.store.locationId, row.goodsType, row.containerType)}><th><strong>{row.store.name}</strong><small>Store</small></th><td><strong>{row.goodsType}</strong><small>{containerTypeLabel(row.containerType)}</small></td><td>{row.current}<small>{Math.round(row.weeklyBaseline * 10) / 10}/week baseline</small></td><td>{row.expected}<small>Next {settings.horizonDays} days</small></td><td><strong>{row.recommended}</strong><small>History + targets + safety stock</small></td><td>{row.target.minimumOnHand}–{row.target.maximumOnHand}</td><td className={row.gap > 0 ? "store-outlook__gap--attention" : "store-outlook__gap--ready"}>{row.gap > 0 ? `+${row.gap}` : "On target"}<small>{row.gap > 0 ? "Plan delivery" : row.current > row.target.maximumOnHand ? "Review excess" : "No action"}</small></td><td>{row.holidayUplift ? <span className="store-outlook__holiday-chip">{row.holidayUplift > 0 ? "+" : ""}{row.holidayUplift}%<small>{row.holidayNames[0]}</small></span> : <span className="store-outlook__no-holiday">No adjustment</span>}</td><td><button type="button" className="secondary" onClick={() => { setEditorStore(row.store.locationId); setEditorGoods(row.goodsType); setEditorContainer(row.containerType); document.querySelector(".store-outlook__target-editor")?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>Configure</button></td></tr>) : <tr><td colSpan={9}><EmptyState>No store rows match these filters.</EmptyState></td></tr>}</tbody></table></div>
+    <div className="store-outlook__target-editor"><div><span className="eyebrow">Store target setup</span><h3>Set the operating range for a store</h3><p>Use the minimum as the point where a delivery becomes necessary and the maximum as the desired upper buffer. Start with the values Goodwill uses on paper, then tune them with real route history.</p></div><form onSubmit={saveTarget}><label><span>Store</span><select value={editorStore} onChange={(event) => setEditorStore(event.target.value)}>{stores.map((store) => <option value={store.locationId} key={store.locationId}>{store.name}</option>)}</select></label><label><span>Goods category</span><select value={editorGoods} onChange={(event) => setEditorGoods(event.target.value)}>{goodsColumns.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Container type</span><select value={editorContainer} onChange={(event) => setEditorContainer(event.target.value as ServiceContainerType)}>{containerOptions.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><label><span>Minimum on hand</span><input type="number" min="0" max="999" value={editorMinimum} onChange={(event) => setEditorMinimum(event.target.value)} /></label><label><span>Maximum on hand</span><input type="number" min="0" max="999" value={editorMaximum} onChange={(event) => setEditorMaximum(event.target.value)} /></label><div className="store-outlook__target-actions"><button type="button" className="secondary" onClick={resetTarget}>Use default</button><button type="submit" className="primary"><Target size={15} /> Save store target</button></div></form></div>
+    <div className="store-outlook__holiday-section"><div className="store-outlook__section-heading"><div><span className="eyebrow">Holiday adjustments</span><h3>Make seasonal planning explicit</h3><p>Major holidays are seeded with conservative starting values. Adjust, disable, remove, or add a holiday for every store or a single store. Positive values increase expected movement; negative values reduce it.</p></div><span className="store-outlook__holiday-count">{holidays.filter((holiday) => holiday.enabled).length} active inputs</span></div><form className="store-outlook__holiday-form" onSubmit={addHoliday}><label><span>Holiday or event</span><input required value={holidayName} onChange={(event) => setHolidayName(event.target.value)} placeholder="Community donation drive" /></label><label><span>Start date</span><input required type="date" value={holidayDate} onChange={(event) => setHolidayDate(event.target.value)} /></label><label><span>Duration</span><input type="number" min="1" max="90" value={holidayDuration} onChange={(event) => setHolidayDuration(event.target.value)} /></label><label><span>Expected change %</span><input type="number" min="-90" max="300" value={holidayUplift} onChange={(event) => setHolidayUplift(event.target.value)} /></label><label><span>Store scope</span><select value={holidayLocation} onChange={(event) => setHolidayLocation(event.target.value)}><option value="all">All stores</option>{stores.map((store) => <option value={store.locationId} key={store.locationId}>{store.name}</option>)}</select></label><label><span>Goods scope</span><select value={holidayGoods} onChange={(event) => setHolidayGoods(event.target.value)}><option value="all">All categories</option>{goodsColumns.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><button type="submit" className="primary"><Plus size={15} /> Add adjustment</button></form><div className="store-outlook__holiday-list">{holidays.map((holiday) => <article key={holiday.id} className={holiday.enabled ? "" : "store-outlook__holiday--disabled"}><span className="store-outlook__holiday-icon"><CalendarDays size={15} /></span><div><strong>{holiday.name}</strong><small>{holiday.date} · {holiday.durationDays} day{holiday.durationDays === 1 ? "" : "s"} · {holiday.locationId === "all" ? "All stores" : stores.find((store) => store.locationId === holiday.locationId)?.name ?? "Selected store"} · {holiday.goodsType === "all" ? "All categories" : holiday.goodsType}</small></div><label className="store-outlook__holiday-number"><span>Change %</span><input type="number" min="-90" max="300" value={holiday.upliftPercent} onChange={(event) => updateHoliday(holiday.id, { upliftPercent: Math.max(-90, Math.min(300, Number(event.target.value) || 0)) })} /></label><button type="button" className="secondary" onClick={() => updateHoliday(holiday.id, { enabled: !holiday.enabled })}>{holiday.enabled ? "Disable" : "Enable"}</button><button type="button" className="store-outlook__remove" onClick={() => setHolidays((current) => current.filter((item) => item.id !== holiday.id))} aria-label={`Remove ${holiday.name}`}><Trash2 size={14} /></button></article>)}</div></div>
+    <div className="store-outlook__logic"><div><span className="eyebrow">How StackTrack calculates this</span><h3>Every recommendation is explainable</h3><p>The pilot uses accepted scanner observations as a transparent starting point. Once Goodwill supplies historical inventory snapshots, the same structure can be upgraded to seasonality and route-aware forecasting without changing the user workflow.</p></div><div className="store-outlook__logic-grid"><div><b>1</b><span><strong>Historical baseline</strong><small>Count load-assignment scans for the store, goods category, and container type over the last eight seven-day periods, then average them into weekly movement.</small></span></div><div><b>2</b><span><strong>Expected movement</strong><small>Weekly baseline × selected horizon ÷ 7, adjusted by the growth setting and any active holiday inputs for that store.</small></span></div><div><b>3</b><span><strong>Recommended on hand</strong><small>Weekly baseline × target days of cover, increased by the safety-stock percentage, but never below the store minimum.</small></span></div><div><b>4</b><span><strong>Planning gap</strong><small>Recommended on hand − current accepted on-hand count. A positive value is a delivery planning signal; it is not an inventory correction.</small></span></div></div></div>
+    <p className="store-outlook__note">These settings are stored in this browser during the pilot. They are deliberately separate from immutable scans and should become organization-level configuration after Goodwill approves the target model, holiday calendar, and historical data source.</p>
   </section>;
 }
 
