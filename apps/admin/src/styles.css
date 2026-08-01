@@ -181,6 +181,67 @@ main { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .inventory-matrix__clear { min-height: 38px; padding: 0 10px; border: 1px solid #c7d5dc; border-radius: 4px; color: #59707d; background: #fff; cursor: pointer; font: inherit; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .inventory-matrix__clear:hover:not(:disabled) { border-color: #8fbaca; color: var(--blue-800); background: #f0fafc; }
 .inventory-matrix__clear:disabled { opacity: .45; cursor: default; }
+.warehouse-inventory-panel { margin-top: 18px; overflow: hidden; }
+.warehouse-inventory__header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; padding: 18px 19px 15px; border-bottom: 1px solid #e8ecef; background: #fbfdfe; }
+.warehouse-inventory__header h2 { margin: 4px 0 0; color: var(--ink); font: 800 18px/1.15 Manrope, sans-serif; }
+.warehouse-inventory__header p { max-width: 700px; margin: 6px 0 0; color: #788995; font-size: 9.5px; line-height: 1.45; }
+.warehouse-inventory__actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.warehouse-inventory__actions .secondary { white-space: nowrap; }
+.warehouse-inventory__summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 14px 19px; border-bottom: 1px solid #e8ecef; }
+.warehouse-inventory__summary > div { min-width: 0; padding: 11px 12px; border: 1px solid #dce8ed; background: #fff; }
+.warehouse-inventory__summary span { display: flex; align-items: center; gap: 5px; color: #667d89; font-size: 8.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.warehouse-inventory__summary span svg { color: var(--blue-800); flex: none; }
+.warehouse-inventory__summary strong { display: block; margin-top: 5px; color: var(--ink); font: 800 20px/1.1 Manrope, sans-serif; }
+.warehouse-inventory__summary small { display: block; margin-top: 4px; color: #8797a0; font-size: 8.5px; line-height: 1.3; }
+.warehouse-inventory__table-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 16px 19px 12px; }
+.warehouse-inventory__table-heading > div { min-width: 0; }
+.warehouse-inventory__table-heading strong { display: block; margin-top: 4px; color: var(--ink); font: 800 14px/1.2 Manrope, sans-serif; }
+.warehouse-inventory__table-heading p { max-width: 700px; margin: 5px 0 0; color: #788995; font-size: 9px; line-height: 1.4; }
+.warehouse-inventory__scope { flex: none; padding: 7px 9px; border: 1px solid #cde4ec; color: var(--blue-800); background: #eff9fc; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.warehouse-inventory__table-wrap { padding: 0 19px 16px; }
+.warehouse-inventory { min-width: 760px; border-collapse: separate; border-spacing: 0; }
+.warehouse-inventory th, .warehouse-inventory td { padding: 0; border-bottom: 1px solid #e5edf0; }
+.warehouse-inventory thead th { padding: 10px 9px; color: #667d89; background: #f5f9fa; border-bottom: 1px solid #dbe8ed; text-align: center; font-size: 8.5px; letter-spacing: .03em; text-transform: uppercase; }
+.warehouse-inventory thead th:first-child { width: 260px; text-align: left; }
+.warehouse-inventory tbody th { background: #fbfdfe; text-align: left; }
+.warehouse-inventory tbody tr:hover th, .warehouse-inventory tbody tr:hover td { background: #f8fcfd; }
+.warehouse-inventory__location { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 66px; padding: 9px; border: 0; color: var(--ink); background: transparent; text-align: left; }
+.warehouse-inventory__location > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.warehouse-inventory__location strong { overflow: hidden; color: #304858; font-size: 10px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-inventory__location small { color: #84939c; font-size: 8px; }
+.warehouse-inventory__location > svg { margin-left: auto; color: #9aabb4; flex: none; }
+.warehouse-inventory__location-icon { width: 28px; height: 28px; display: grid; place-items: center; flex: none; color: #327d64; background: #eaf7f0; border: 1px solid #d4eadf; }
+.warehouse-inventory td { min-width: 105px; text-align: center; }
+.warehouse-inventory__cell { display: grid; place-items: center; gap: 4px; width: calc(100% - 10px); min-height: 56px; margin: 5px; padding: 6px 5px; border: 1px solid transparent; color: var(--ink); background: #fbfdfe; text-align: center; }
+.warehouse-inventory__cell:hover { border-color: #a9d8e5; background: #eff9fc; }
+.warehouse-inventory__cell strong { color: var(--blue-800); font: 800 16px/1.05 Manrope, sans-serif; }
+.warehouse-inventory__cell small { display: block; overflow: hidden; max-width: 130px; color: #718793; font-size: 7.5px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-inventory__cell--total { background: #f2f7f9; }
+.warehouse-inventory__cell--total strong { color: #344f5e; }
+.warehouse-inventory__empty { display: grid; place-items: center; min-height: 56px; color: #b2bec4; font-size: 14px; }
+.warehouse-inventory tfoot th, .warehouse-inventory tfoot td { padding: 11px 9px; color: #314b59; background: #e9f4f8; text-align: center; }
+.warehouse-inventory tfoot th { text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
+.warehouse-inventory tfoot td { font: 800 13px/1.1 Manrope, sans-serif; }
+.warehouse-trend { margin: 0 19px 0; border: 1px solid #dce8ed; background: #fbfdfe; }
+.warehouse-trend__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 15px 14px 12px; border-bottom: 1px solid #e1ebef; }
+.warehouse-trend__header > div:first-child { min-width: 0; }
+.warehouse-trend__header strong { display: block; margin-top: 4px; color: var(--ink); font: 800 14px/1.2 Manrope, sans-serif; }
+.warehouse-trend__header p { max-width: 650px; margin: 5px 0 0; color: #788995; font-size: 9px; line-height: 1.4; }
+.warehouse-trend__forecast { min-width: 175px; padding: 9px 11px; border-left: 3px solid var(--cyan); background: #eaf7fb; }
+.warehouse-trend__forecast span { display: block; color: #5e7885; font-size: 8px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.warehouse-trend__forecast strong { margin-top: 4px; color: var(--blue-800); font: 800 21px/1 Manrope, sans-serif; }
+.warehouse-trend__forecast small { display: block; margin-top: 4px; color: #6d858f; font-size: 8px; line-height: 1.3; }
+.warehouse-trend .table-wrap { overflow-x: auto; }
+.warehouse-trend__table { width: 100%; min-width: 640px; border-collapse: collapse; }
+.warehouse-trend__table th, .warehouse-trend__table td { padding: 9px 11px; border-bottom: 1px solid #e6eef1; color: #405967; font-size: 9px; text-align: right; }
+.warehouse-trend__table thead th { color: #6d818b; background: #f5f9fa; font-size: 8px; letter-spacing: .04em; text-transform: uppercase; }
+.warehouse-trend__table th:first-child, .warehouse-trend__table td:first-child { text-align: left; }
+.warehouse-trend__table tbody tr:last-child th, .warehouse-trend__table tbody tr:last-child td { border-bottom: 0; }
+.warehouse-trend__table tbody th { font-weight: 700; }
+.warehouse-trend__table tbody th small { display: block; margin-top: 2px; color: var(--blue-800); font-size: 7.5px; font-weight: 800; text-transform: uppercase; }
+.warehouse-trend__table td.positive { color: var(--green-700, #257455); font-weight: 800; }
+.warehouse-trend__table td.negative { color: #866a32; font-weight: 800; }
+.warehouse-inventory__note { margin: 0; padding: 11px 19px 15px; color: #7f9099; font-size: 8.5px; line-height: 1.45; }
 .inventory-matrix__modes { display: inline-flex; border: 1px solid #cbd9e0; background: white; }
 .inventory-matrix__modes button { display: inline-flex; align-items: center; gap: 5px; min-height: 34px; padding: 0 9px; border: 0; color: #607582; background: white; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .inventory-matrix__modes button + button { border-left: 1px solid #dce6ea; }
@@ -1269,8 +1330,8 @@ footer > span:first-child { display: none; }
 @media (max-width: 1100px) { .container-filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 780px) { .container-filter-panel__header { align-items: stretch; flex-direction: column; } .container-filter-panel__actions { justify-content: space-between; } .container-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .container-filter-grid { grid-template-columns: 1fr; } .container-filter-panel__actions { align-items: stretch; flex-wrap: wrap; } .container-filter-panel__actions > span { width: 100%; } .container-filter-panel__actions button { flex: 1; justify-content: center; } .container-message-list article > div { flex-direction: column; gap: 4px; } }
-@media (max-width: 900px) { .inventory-matrix__toolbar { align-items: stretch; flex-direction: column; } .inventory-matrix__actions { justify-content: space-between; } .inventory-matrix__filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .inventory-matrix__filter-summary { min-width: 0; } .inventory-matrix__clear { justify-self: start; } }
-@media (max-width: 650px) { .inventory-matrix__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-inline: 12px; } .inventory-matrix__toolbar { padding-inline: 12px; } .inventory-matrix__filters { grid-template-columns: 1fr; padding-inline: 12px; } .inventory-matrix__actions { align-items: stretch; flex-direction: column; } .inventory-matrix__modes { width: 100%; } .inventory-matrix__modes button { flex: 1; justify-content: center; } .inventory-matrix__actions > .secondary { justify-content: center; } .inventory-matrix__table-wrap { padding-inline: 12px; } .inventory-matrix__note { padding-inline: 12px; } }
+@media (max-width: 900px) { .inventory-matrix__toolbar { align-items: stretch; flex-direction: column; } .inventory-matrix__actions { justify-content: space-between; } .inventory-matrix__filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .inventory-matrix__filter-summary { min-width: 0; } .inventory-matrix__clear { justify-self: start; } .warehouse-inventory__header, .warehouse-trend__header { align-items: stretch; flex-direction: column; } .warehouse-inventory__actions { justify-content: flex-start; flex-wrap: wrap; } .warehouse-inventory__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .warehouse-inventory__table-heading { align-items: stretch; flex-direction: column; } .warehouse-inventory__scope { align-self: flex-start; } }
+@media (max-width: 650px) { .inventory-matrix__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-inline: 12px; } .inventory-matrix__toolbar { padding-inline: 12px; } .inventory-matrix__filters { grid-template-columns: 1fr; padding-inline: 12px; } .inventory-matrix__actions { align-items: stretch; flex-direction: column; } .inventory-matrix__modes { width: 100%; } .inventory-matrix__modes button { flex: 1; justify-content: center; } .inventory-matrix__actions > .secondary { justify-content: center; } .inventory-matrix__table-wrap { padding-inline: 12px; } .inventory-matrix__note { padding-inline: 12px; } .warehouse-inventory__header, .warehouse-inventory__summary, .warehouse-inventory__table-heading, .warehouse-inventory__note { padding-inline: 12px; } .warehouse-inventory__actions { align-items: stretch; flex-direction: column; } .warehouse-inventory__actions .secondary { justify-content: center; } .warehouse-inventory__summary { grid-template-columns: 1fr 1fr; padding-inline: 12px; } .warehouse-inventory__table-wrap { padding-inline: 12px; } .warehouse-trend { margin-inline: 12px; } }
 
 /* Dedicated location workspaces. The network directory remains the corporate
    landing page; this hierarchy gives a manager a calm, local operating view. */

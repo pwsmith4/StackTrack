@@ -85,6 +85,7 @@ import stacktrackLogo from "./assets/stacktrack-logo-tight.png";
 
 type Page =
   | "dashboard"
+  | "inventory"
   | "containers"
   | "loads"
   | "locations"
@@ -185,6 +186,11 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
     title: "Know where every container is.",
     description: "A live operational picture built from the immutable scan history."
   },
+  inventory: {
+    eyebrow: "Inventory control",
+    title: "Company-wide inventory",
+    description: "Review the current container footprint by location, container type, and goods category."
+  },
   containers: {
     eyebrow: "Reusable assets",
     title: "Containers",
@@ -239,6 +245,7 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
 
 const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
   { page: "dashboard", label: "Overview", icon: LayoutDashboard },
+  { page: "inventory", label: "Inventory", icon: Layers3 },
   { page: "containers", label: "Containers", icon: ContainerIcon },
   { page: "loads", label: "Load codes", icon: PackageCheck },
   { page: "locations", label: "Locations", icon: MapPin },
@@ -909,6 +916,7 @@ function PageContent({
   onSignOut: () => Promise<void>;
 }) {
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} openLocation={openLocation} />;
+  if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
   if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
@@ -919,6 +927,120 @@ function PageContent({
   if (page === "devices") return <DevicesPage data={data} query={query} setQuery={setQuery} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
   return <SettingsPage data={data} setPage={setPage} session={session} refresh={refresh} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
+}
+
+function InventoryPage({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void }) {
+  return <div className="inventory-page"><DashboardInventoryMatrix data={data} setPage={setPage} openLocation={openLocation} /></div>;
+}
+
+function buildInventorySnapshotRecords(data: OperationsData): InventorySnapshotRecord[] {
+  const unknownLocation = data.fixtures.locations.find((location) => isUnknownLocation(location)) ?? null;
+  const unknownKey = "__unknown_inventory_location__";
+  const locationById = new Map(data.fixtures.locations.map((location) => [location.locationId, location]));
+  const latestLoadByContainer = new Map<string, StoredEvent>();
+  const loadByCode = new Map<string, StoredEvent>();
+  data.events
+    .filter((event) => event.eventType === "load_assigned")
+    .sort((left, right) => Date.parse(left.eventAt) - Date.parse(right.eventAt))
+    .forEach((event) => {
+      latestLoadByContainer.set(event.containerId, event);
+      if (event.loadCodeId) loadByCode.set(event.loadCodeId, event);
+    });
+  return data.fixtures.containers.map<InventorySnapshotRecord>((container) => {
+    const projection = data.projections[container.containerId];
+    const loadEvent = projection?.activeLoadCodeId
+      ? loadByCode.get(projection.activeLoadCodeId) ?? latestLoadByContainer.get(container.containerId)
+      : latestLoadByContainer.get(container.containerId);
+    const location = projection?.locationId ? locationById.get(projection.locationId) ?? null : null;
+    const locationKey = location && !isUnknownLocation(location) ? location.locationId : unknownKey;
+    return {
+      container,
+      projection,
+      locationKey,
+      location: locationKey === unknownKey ? unknownLocation : location,
+      locationName: locationKey === unknownKey ? "Unknown / unassigned" : location?.name ?? "Unknown / unassigned",
+      locationType: locationKey === unknownKey ? "Needs assignment" : location ? locationTypeLabel(location.type) : "Needs assignment",
+      goodsType: String(loadEvent?.payload.goodsType ?? "Unclassified"),
+      classification: String(loadEvent?.payload.secondaryValue ?? "Not specified")
+    };
+  });
+}
+
+interface WarehouseTrendRow {
+  key: string;
+  label: string;
+  start: Date;
+  end: Date;
+  donationLoads: number;
+  received: number;
+  departed: number;
+}
+
+function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void }) {
+  const records = buildInventorySnapshotRecords(data);
+  const warehouses = data.fixtures.locations.filter((location) => location.type === "warehouse" && !isUnknownLocation(location));
+  const warehouseRecords = records.filter((record) => record.location?.type === "warehouse");
+  const goodsColumns = Array.from(new Set([
+    ...data.fixtures.goodsTypes.map((goodsType) => goodsType.name),
+    ...warehouseRecords.map((record) => record.goodsType).filter((goodsType) => goodsType !== "Unclassified")
+  ]));
+  if (warehouseRecords.some((record) => record.goodsType === "Unclassified")) goodsColumns.push("Unclassified");
+  const locationRecords = (locationId: string) => warehouseRecords.filter((record) => record.locationKey === locationId);
+  const countFor = (items: InventorySnapshotRecord[], goodsType: string) => items.filter((item) => item.goodsType === goodsType).length;
+  const typeBreakdown = (items: InventorySnapshotRecord[]) => Array.from(new Set(items.map((item) => containerTypeLabel(item.container.type)))).map((type) => `${type} ${items.filter((item) => containerTypeLabel(item.container.type) === type).length}`).join(" · ");
+  const currentTotal = warehouseRecords.length;
+  const warehouseIds = new Set(warehouses.map((location) => location.locationId));
+  const donationIds = new Set(data.fixtures.locations.filter((location) => location.type === "donation_express").map((location) => location.locationId));
+  const eventTimes = data.events.map((event) => Date.parse(event.eventAt)).filter((value) => Number.isFinite(value));
+  const referenceNow = new Date(Math.max(Date.now(), ...eventTimes));
+  const periodLength = 7 * 24 * 60 * 60 * 1_000;
+  const formatPeriodDate = (date: Date) => date.toLocaleDateString([], { month: "numeric", day: "numeric" });
+  const trendRows: WarehouseTrendRow[] = [3, 2, 1, 0].map((offset) => {
+    const end = new Date(referenceNow.getTime() - offset * periodLength);
+    const start = new Date(end.getTime() - periodLength);
+    const events = data.events.filter((event) => {
+      const timestamp = Date.parse(event.eventAt);
+      return timestamp > start.getTime() && timestamp <= end.getTime();
+    });
+    const donationLoads = events.filter((event) => event.eventType === "load_assigned" && donationIds.has(event.locationId)).length;
+    const received = events.filter((event) => event.eventType === "batch_in" && warehouseIds.has(event.locationId)).length;
+    const departed = events.filter((event) => {
+      if (event.eventType !== "batch_out") return false;
+      const sourceId = payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data);
+      return Boolean(sourceId && warehouseIds.has(sourceId));
+    }).length;
+    return { key: `${start.toISOString()}-${end.toISOString()}`, label: `${formatPeriodDate(start)} – ${formatPeriodDate(end)}`, start, end, donationLoads, received, departed };
+  });
+  const latestTrend = trendRows.at(-1)!;
+  const completedTrend = trendRows.slice(0, -1).filter((row) => row.donationLoads > 0 || row.received > 0 || row.departed > 0);
+  const observedTrend = completedTrend.length ? completedTrend : (latestTrend.donationLoads > 0 || latestTrend.received > 0 || latestTrend.departed > 0) ? [latestTrend] : [];
+  const average = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+  const expectedDonationLoads = average(observedTrend.map((row) => row.donationLoads));
+  const expectedReceipts = average(observedTrend.map((row) => row.received));
+  const forecastBasis = completedTrend.length >= 2 ? `Average of ${completedTrend.length} complete seven-day periods` : completedTrend.length === 1 ? "Early signal from one complete seven-day period" : observedTrend.length ? "Provisional signal from the current seven-day period" : "Not enough history yet";
+  const exportWarehouseReport = () => downloadCsv("stacktrack-warehouse-inventory-report.csv", [
+    ["WAREHOUSE INVENTORY SNAPSHOT"],
+    ["Warehouse", ...goodsColumns, "Total containers"],
+    ...warehouses.map((warehouse) => {
+      const items = locationRecords(warehouse.locationId);
+      return [warehouse.name, ...goodsColumns.map((goodsType) => countFor(items, goodsType)), items.length];
+    }),
+    ["Warehouse total", ...goodsColumns.map((goodsType) => countFor(warehouseRecords, goodsType)), warehouseRecords.length],
+    [],
+    ["SEVEN-DAY ACTIVITY TREND"],
+    ["Period", "Donation loads marked full", "Warehouse receipts", "Warehouse departures", "Net receipts"],
+    ...trendRows.map((row) => [row.label, row.donationLoads, row.received, row.departed, row.received - row.departed]),
+    [],
+    ["Forecast basis", forecastBasis]
+  ]);
+  return <section className="panel warehouse-inventory-panel">
+    <div className="warehouse-inventory__header"><div><span className="eyebrow">Warehouse operations</span><h2>Warehouse inventory &amp; donation flow</h2><p>Current containers at warehouses, recent movement, and a transparent seven-day expectation based on completed scan periods.</p></div><div className="warehouse-inventory__actions"><button type="button" className="secondary" onClick={() => setPage("inventory")}><Layers3 size={15} /> Open company-wide inventory</button><button type="button" className="secondary" onClick={exportWarehouseReport} disabled={!warehouses.length}><Download size={15} /> Export warehouse report</button></div></div>
+    <div className="warehouse-inventory__summary"><div><span><Warehouse size={15} />Current warehouse inventory</span><strong>{currentTotal}</strong><small>Containers physically confirmed at warehouses</small></div><div><span><PackageCheck size={15} />Received last 7 days</span><strong>{latestTrend.received}</strong><small>Destination receipts scanned at warehouses</small></div><div><span><HandHeart size={15} />Donation loads last 7 days</span><strong>{latestTrend.donationLoads}</strong><small>Containers marked full at Donation Xpress sites</small></div><div><span><Clock3 size={15} />Expected next 7 days</span><strong>{expectedDonationLoads ?? "—"}</strong><small>{forecastBasis}</small></div></div>
+    <div className="warehouse-inventory__table-heading"><div><span className="eyebrow">Current warehouse inventory</span><strong>Containers by goods category</strong><p>Each container is counted once at its latest confirmed warehouse location. The small line in each cell shows the physical container mix.</p></div><span className="warehouse-inventory__scope">{warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"} · {currentTotal} containers</span></div>
+    <div className="table-wrap warehouse-inventory__table-wrap"><table className="warehouse-inventory"><thead><tr><th>Warehouse</th>{goodsColumns.map((goodsType) => <th key={goodsType}>{goodsType}</th>)}<th>Total</th></tr></thead><tbody>{warehouses.map((warehouse) => { const items = locationRecords(warehouse.locationId); return <tr key={warehouse.locationId}><th scope="row"><button type="button" className="warehouse-inventory__location" onClick={() => openLocation(warehouse.locationId)}><span className="warehouse-inventory__location-icon"><Warehouse size={15} /></span><span><strong>{warehouse.name}</strong><small>Warehouse</small></span><ChevronRight size={13} /></button></th>{goodsColumns.map((goodsType) => { const goodsItems = items.filter((item) => item.goodsType === goodsType); return <td key={goodsType}>{goodsItems.length ? <button type="button" className="warehouse-inventory__cell" onClick={() => openLocation(warehouse.locationId)} title={`${goodsItems.length} ${goodsType} containers at ${warehouse.name}`}><strong>{goodsItems.length}</strong><small>{typeBreakdown(goodsItems)}</small></button> : <span className="warehouse-inventory__empty">—</span>}</td>; })}<td><button type="button" className="warehouse-inventory__cell warehouse-inventory__cell--total" onClick={() => openLocation(warehouse.locationId)}><strong>{items.length}</strong><small>All categories</small></button></td></tr>; })}</tbody><tfoot><tr><th>Warehouse total</th>{goodsColumns.map((goodsType) => <td key={goodsType}><strong>{countFor(warehouseRecords, goodsType)}</strong></td>)}<td><strong>{warehouseRecords.length}</strong></td></tr></tfoot></table></div>
+    <div className="warehouse-trend"><div className="warehouse-trend__header"><div><span className="eyebrow">Donation and warehouse trend</span><strong>What changed over the last four seven-day periods</strong><p>“Donation loads” is a container marked full at a Donation Xpress site. It is a planning proxy, not a count of donated items or dollars.</p></div><div className="warehouse-trend__forecast"><span>Expected warehouse receipts</span><strong>{expectedReceipts ?? "—"}</strong><small>next 7 days · {forecastBasis}</small></div></div><div className="table-wrap"><table className="warehouse-trend__table"><thead><tr><th>Period</th><th>Donation loads</th><th>Warehouse receipts</th><th>Warehouse departures</th><th>Net receipts</th></tr></thead><tbody>{trendRows.map((row) => <tr key={row.key}><th>{row.label}{row.key === latestTrend.key && <small>Current period</small>}</th><td>{row.donationLoads}</td><td>{row.received}</td><td>{row.departed}</td><td className={row.received - row.departed >= 0 ? "positive" : "negative"}>{row.received - row.departed >= 0 ? "+" : ""}{row.received - row.departed}</td></tr>)}</tbody></table></div></div>
+    <p className="warehouse-inventory__note">Forecasts use complete seven-day periods before the current period when available. If the pilot has no earlier period yet, the current period is shown as a provisional signal rather than a settled forecast; the expectation becomes more useful as Goodwill records additional weeks.</p>
+  </section>;
 }
 
 function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void }) {
@@ -1068,7 +1190,7 @@ function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setP
         </div>
       </section>
 
-      <DashboardInventoryMatrix data={data} setPage={setPage} openLocation={openLocation} />
+      <WarehouseInventoryOverview data={data} setPage={setPage} openLocation={openLocation} />
     </>
   );
 }
@@ -1104,32 +1226,7 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
   const [selectedContainerTypes, setSelectedContainerTypes] = useState<string[]>([]);
   const unknownLocation = data.fixtures.locations.find((location) => isUnknownLocation(location)) ?? null;
   const unknownKey = "__unknown_inventory_location__";
-  const locationById = new Map(data.fixtures.locations.map((location) => [location.locationId, location]));
-  const latestLoadByContainer = new Map<string, StoredEvent>();
-  const loadByCode = new Map<string, StoredEvent>();
-  data.events
-    .filter((event) => event.eventType === "load_assigned")
-    .sort((left, right) => Date.parse(left.eventAt) - Date.parse(right.eventAt))
-    .forEach((event) => {
-      latestLoadByContainer.set(event.containerId, event);
-      if (event.loadCodeId) loadByCode.set(event.loadCodeId, event);
-    });
-  const allRecords = data.fixtures.containers.map<InventorySnapshotRecord>((container) => {
-    const projection = data.projections[container.containerId];
-    const loadEvent = projection?.activeLoadCodeId ? loadByCode.get(projection.activeLoadCodeId) ?? latestLoadByContainer.get(container.containerId) : latestLoadByContainer.get(container.containerId);
-    const location = projection?.locationId ? locationById.get(projection.locationId) ?? null : null;
-    const locationKey = location && !isUnknownLocation(location) ? location.locationId : unknownKey;
-    return {
-      container,
-      projection,
-      locationKey,
-      location: locationKey === unknownKey ? unknownLocation : location,
-      locationName: locationKey === unknownKey ? "Unknown / unassigned" : location?.name ?? "Unknown / unassigned",
-      locationType: locationKey === unknownKey ? "Needs assignment" : location ? locationTypeLabel(location.type) : "Needs assignment",
-      goodsType: String(loadEvent?.payload.goodsType ?? "Unclassified"),
-      classification: String(loadEvent?.payload.secondaryValue ?? "Not specified")
-    };
-  });
+  const allRecords = buildInventorySnapshotRecords(data);
   const selectedTypeSet = new Set(selectedContainerTypes);
   const records = allRecords.filter((record) => {
     const typeMatches = selectedTypeSet.size === 0 || selectedTypeSet.has(record.container.type);
