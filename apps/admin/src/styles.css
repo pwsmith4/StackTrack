@@ -1336,6 +1336,42 @@ footer > span:first-child { display: none; }
 /* Dedicated location workspaces. The network directory remains the corporate
    landing page; this hierarchy gives a manager a calm, local operating view. */
 .location-focused-page { display: grid; gap: 16px; }
+.location-inventory { overflow: hidden; }
+.location-inventory__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 17px 20px 14px; border-bottom: 1px solid var(--line); background: #fbfdfe; }
+.location-inventory__header h3 { margin: 3px 0 0; color: var(--ink); font: 800 15px/1.25 Manrope, sans-serif; }
+.location-inventory__header p { max-width: 720px; margin: 6px 0 0; color: #71818c; font-size: 9.5px; line-height: 1.5; }
+.location-inventory__header-count { display: grid; min-width: 105px; padding: 10px 12px; border-left: 3px solid var(--cyan); background: #eaf7fb; text-align: right; }
+.location-inventory__header-count strong { color: var(--blue-800); font: 800 22px/1 Manrope, sans-serif; }
+.location-inventory__header-count span { margin-top: 3px; color: #67808b; font-size: 8px; font-weight: 700; }
+.location-inventory__tabs { display: flex; flex-wrap: wrap; gap: 0; padding: 11px 20px 0; border-bottom: 1px solid var(--line); background: #fff; }
+.location-inventory__tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 35px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; color: #657b87; background: transparent; font: 800 9px Manrope, sans-serif; cursor: pointer; }
+.location-inventory__tabs button:hover { color: var(--blue-800); background: #f4fafc; }
+.location-inventory__tabs button.active { border-bottom-color: var(--cyan); color: var(--blue-800); background: #eff9fc; }
+.location-inventory__tabs b { color: #82949c; font-size: 8px; font-weight: 700; }
+.location-inventory__filters { display: grid; grid-template-columns: repeat(3, minmax(140px, 1fr)) minmax(190px, 1.4fr) auto; align-items: end; gap: 9px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: #f8fbfc; }
+.location-inventory__filters label { display: grid; gap: 5px; color: #657b87; font-size: 8px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.location-inventory__filters select { min-height: 36px; padding: 0 9px; border: 1px solid #bdcbd2; border-radius: 4px; color: var(--ink); background: #fff; font: inherit; font-size: 10px; font-weight: 600; letter-spacing: normal; text-transform: none; }
+.location-inventory__filter-summary { display: grid; align-content: center; min-height: 36px; padding: 0 10px; border-left: 3px solid var(--cyan); background: #eaf7fb; }
+.location-inventory__filter-summary strong { color: var(--blue-800); font-size: 10px; }
+.location-inventory__filter-summary span { overflow: hidden; margin-top: 2px; color: #6f858f; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.location-inventory__filters > .secondary { min-height: 36px; white-space: nowrap; }
+.location-inventory__breakdown { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+.location-inventory__breakdown button { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; min-width: 0; padding: 9px 11px; border: 1px solid #d9e6eb; background: #fff; color: var(--ink); text-align: left; cursor: pointer; }
+.location-inventory__breakdown button:hover, .location-inventory__breakdown button.active { border-color: #91cfdf; background: #eff9fc; }
+.location-inventory__breakdown strong { grid-row: span 2; color: var(--blue-800); font: 800 20px/1 Manrope, sans-serif; }
+.location-inventory__breakdown span { color: #314b59; font-size: 9px; font-weight: 800; }
+.location-inventory__breakdown small { color: #8798a0; font-size: 7.5px; }
+.location-inventory__list { display: grid; }
+.location-inventory__row { display: grid; grid-template-columns: auto minmax(0, 1.35fr) minmax(130px, .9fr) 75px auto; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 10px 20px; border: 0; border-bottom: 1px solid #edf1f3; background: #fff; color: var(--ink); text-align: left; cursor: pointer; }
+.location-inventory__row:hover:not(:disabled) { background: #f4fafc; }
+.location-inventory__row:disabled { cursor: default; }
+.location-inventory__row-icon { width: 29px; height: 29px; display: grid; place-items: center; color: var(--blue-800); background: #e8f4f9; border: 1px solid #d1e8f1; }
+.location-inventory__row-main, .location-inventory__row-main strong, .location-inventory__row-main small { display: block; min-width: 0; }
+.location-inventory__row-main strong { color: #304754; font-size: 10px; }
+.location-inventory__row-main small { margin-top: 3px; color: #81909a; font-size: 8px; }
+.location-inventory__row-movement { overflow: hidden; color: #5f7884; font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.location-inventory__row-time { color: #7d8d96; font-size: 8px; white-space: nowrap; }
+.location-inventory__row > svg { color: #9aaab2; }
 .location-focused-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .location-focused-toolbar__crumb { display: inline-flex; align-items: center; gap: 6px; color: #71828d; font-size: 10px; font-weight: 700; }
 .location-focused-toolbar__back { transform: rotate(180deg); }
@@ -1396,6 +1432,7 @@ footer > span:first-child { display: none; }
 .location-workspace-denied p { max-width: 480px; margin: 9px auto 18px; color: #73838e; font-size: 10px; line-height: 1.55; }
 .location-directory-card__open { display: inline-flex; align-items: center; gap: 3px; color: var(--blue-800); font-size: 8px; font-weight: 800; }
 .device-read-only { display: flex; align-items: center; gap: 5px; margin: 9px 0 -4px; padding: 7px 8px; color: #687f8c; background: #f3f8fa; font-size: 8.5px; line-height: 1.35; }
-@media (max-width: 1100px) { .location-focused-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } .location-focused-health { grid-template-columns: 1fr; } }
-@media (max-width: 850px) { .location-focused-hero { flex-direction: column; } .location-focused-hero__actions { justify-content: flex-start; } .location-focused-columns { grid-template-columns: 1fr; } }
-@media (max-width: 600px) { .location-focused-toolbar { align-items: stretch; flex-wrap: wrap; } .location-focused-toolbar__crumb { order: 3; width: 100%; } .location-focused-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-focused-section__header { flex-direction: column; } .location-health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-health-grid span:nth-child(2) { border-right: 0; } .location-health-grid span:nth-child(n + 3) { border-top: 1px solid var(--line); } }
+@media (max-width: 1100px) { .location-focused-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } .location-focused-health { grid-template-columns: 1fr; } .location-inventory__filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-inventory__filter-summary { min-width: 0; } }
+@media (max-width: 850px) { .location-focused-hero { flex-direction: column; } .location-focused-hero__actions { justify-content: flex-start; } .location-focused-columns { grid-template-columns: 1fr; } .location-inventory__header { flex-direction: column; } .location-inventory__header-count { align-self: flex-start; text-align: left; } .location-inventory__row { grid-template-columns: auto minmax(0, 1fr) auto; } .location-inventory__row-movement { grid-column: 2; } .location-inventory__row-time { grid-column: 3; grid-row: 1 / span 2; } .location-inventory__row > svg { grid-column: 3; grid-row: 1; display: none; } }
+@media (max-width: 600px) { .location-focused-toolbar { align-items: stretch; flex-wrap: wrap; } .location-focused-toolbar__crumb { order: 3; width: 100%; } .location-focused-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-focused-section__header { flex-direction: column; } .location-health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-health-grid span:nth-child(2) { border-right: 0; } .location-health-grid span:nth-child(n + 3) { border-top: 1px solid var(--line); } .location-inventory__tabs, .location-inventory__filters, .location-inventory__breakdown { padding-inline: 12px; } .location-inventory__filters { grid-template-columns: 1fr; } .location-inventory__filters > .secondary { justify-self: start; } .location-inventory__breakdown { grid-template-columns: 1fr; } .location-inventory__row { padding-inline: 12px; }
+}

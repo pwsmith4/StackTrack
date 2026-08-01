@@ -257,17 +257,41 @@ const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
   { page: "reports", label: "Reports & data", icon: BarChart3 }
 ];
 
-type AppRoute = { page: Page; locationId?: string };
+type LocationInventoryBucket = "current" | "arriving" | "leaving";
+
+interface LocationInventoryFilter {
+  containerType?: Container["type"] | undefined;
+  goodsType?: string | undefined;
+  loadState?: Projection["loadState"] | undefined;
+  bucket?: LocationInventoryBucket | undefined;
+}
+
+type AppRoute = { page: Page; locationId?: string; locationFilter?: LocationInventoryFilter };
 
 function routeFromHash(): AppRoute {
   // GitHub Pages can append a verification query to the hash during deploys.
   // Keep routing deliberately small and deterministic so a copied location
   // link never falls back to an unrelated page.
-  const raw = window.location.hash.replace(/^#\/?/, "").split("?")[0] ?? "";
+  const rawHash = window.location.hash.replace(/^#\/?/, "");
+  const [rawPath, rawQuery = ""] = rawHash.split("?");
+  const raw = rawPath ?? "";
   const parts = raw.split("/").filter(Boolean).map((part) => {
     try { return decodeURIComponent(part); } catch { return part; }
   });
-  if (parts[0] === "locations" && parts[1]) return { page: "locations", locationId: parts[1] };
+  if (parts[0] === "locations" && parts[1]) {
+    const params = new URLSearchParams(rawQuery);
+    const containerType = params.get("containerType");
+    const goodsType = params.get("goodsType");
+    const loadState = params.get("loadState");
+    const bucket = params.get("bucket");
+    const locationFilter: LocationInventoryFilter = {
+      ...(containerType === "bin" || containerType === "cart" || containerType === "gaylord" ? { containerType } : {}),
+      ...(goodsType ? { goodsType } : {}),
+      ...(loadState === "loaded" || loadState === "empty" || loadState === "unknown" ? { loadState } : {}),
+      ...(bucket === "current" || bucket === "arriving" || bucket === "leaving" ? { bucket } : {})
+    };
+    return { page: "locations", locationId: parts[1], ...(Object.keys(locationFilter).length ? { locationFilter } : {}) };
+  }
   const value = parts[0] as Page;
   return [...nav.map((item) => item.page), "settings"].includes(value)
     ? { page: value }
@@ -603,6 +627,7 @@ export function App() {
   const [route, setRoute] = useState<AppRoute>(routeFromHash);
   const page = route.page;
   const locationId = route.locationId;
+  const locationFilter = route.locationFilter;
   const [data, setData] = useState<OperationsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -673,10 +698,16 @@ export function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const openLocation = (nextLocationId: string) => {
+  const openLocation = (nextLocationId: string, nextFilter?: LocationInventoryFilter) => {
     if (!nextLocationId) return;
-    window.location.hash = `/locations/${encodeURIComponent(nextLocationId)}`;
-    setRoute({ page: "locations", locationId: nextLocationId });
+    const params = new URLSearchParams();
+    if (nextFilter?.containerType) params.set("containerType", nextFilter.containerType);
+    if (nextFilter?.goodsType) params.set("goodsType", nextFilter.goodsType);
+    if (nextFilter?.loadState) params.set("loadState", nextFilter.loadState);
+    if (nextFilter?.bucket) params.set("bucket", nextFilter.bucket);
+    const queryString = params.toString();
+    window.location.hash = `/locations/${encodeURIComponent(nextLocationId)}${queryString ? `?${queryString}` : ""}`;
+    setRoute({ page: "locations", locationId: nextLocationId, ...(nextFilter && Object.keys(nextFilter).length ? { locationFilter: nextFilter } : {}) });
     setDetail(null);
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -862,7 +893,7 @@ export function App() {
           {loading && !data ? (
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
-             <PageContent page={page} {...(locationId ? { locationId } : {})} data={data} query={query} setQuery={setQuery} setPage={setPage} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
+             <PageContent page={page} {...(locationId ? { locationId } : {})} {...(locationFilter ? { locationFilter } : {})} data={data} query={query} setQuery={setQuery} setPage={setPage} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
           ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
@@ -889,6 +920,7 @@ function SignInDialog({ onClose: _onClose, onSuccess }: { onClose: () => void; o
 function PageContent({
   page,
   locationId,
+  locationFilter,
   data,
   query,
   setQuery,
@@ -903,11 +935,12 @@ function PageContent({
 }: {
   page: Page;
   locationId?: string | undefined;
+  locationFilter?: LocationInventoryFilter;
   data: OperationsData;
   query: string;
   setQuery: (query: string) => void;
   setPage: (page: Page) => void;
-  openLocation: (locationId: string) => void;
+  openLocation: (locationId: string, filter?: LocationInventoryFilter) => void;
   openDetail: OpenDetail;
   refresh: () => Promise<void>;
   session: AdminSession | null;
@@ -919,7 +952,7 @@ function PageContent({
   if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
+  if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} {...(locationFilter ? { focusedLocationFilter: locationFilter } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
@@ -976,7 +1009,7 @@ interface WarehouseTrendRow {
   departed: number;
 }
 
-function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void }) {
+function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
   const records = buildInventorySnapshotRecords(data);
   const warehouses = data.fixtures.locations.filter((location) => location.type === "warehouse" && !isUnknownLocation(location));
   const warehouseRecords = records.filter((record) => record.location?.type === "warehouse");
@@ -1033,7 +1066,20 @@ function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: Ope
     [],
     ["Forecast basis", forecastBasis]
   ]);
-  return <section className="panel warehouse-inventory-panel">
+  const handleWarehouseCellCapture = (event: React.MouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    const button = target.closest("button.warehouse-inventory__cell");
+    const rowElement = button?.closest("tbody tr");
+    if (!button || !rowElement) return;
+    const rowIndex = Array.from(rowElement.parentElement?.children ?? []).indexOf(rowElement);
+    const warehouse = warehouses[rowIndex];
+    const cellIndex = (button.closest("td") as HTMLTableCellElement | null)?.cellIndex ?? -1;
+    if (!warehouse || cellIndex < 1 || cellIndex > goodsColumns.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openLocation(warehouse.locationId, { goodsType: goodsColumns[cellIndex - 1], bucket: "current" });
+  };
+  return <section className="panel warehouse-inventory-panel" onClickCapture={handleWarehouseCellCapture}>
     <div className="warehouse-inventory__header"><div><span className="eyebrow">Warehouse operations</span><h2>Warehouse inventory &amp; donation flow</h2><p>Current containers at warehouses, recent movement, and a transparent seven-day expectation based on completed scan periods.</p></div><div className="warehouse-inventory__actions"><button type="button" className="secondary" onClick={() => setPage("inventory")}><Layers3 size={15} /> Open company-wide inventory</button><button type="button" className="secondary" onClick={exportWarehouseReport} disabled={!warehouses.length}><Download size={15} /> Export warehouse report</button></div></div>
     <div className="warehouse-inventory__summary"><div><span><Warehouse size={15} />Current warehouse inventory</span><strong>{currentTotal}</strong><small>Containers physically confirmed at warehouses</small></div><div><span><PackageCheck size={15} />Received last 7 days</span><strong>{latestTrend.received}</strong><small>Destination receipts scanned at warehouses</small></div><div><span><HandHeart size={15} />Donation loads last 7 days</span><strong>{latestTrend.donationLoads}</strong><small>Containers marked full at Donation Xpress sites</small></div><div><span><Clock3 size={15} />Expected next 7 days</span><strong>{expectedDonationLoads ?? "—"}</strong><small>{forecastBasis}</small></div></div>
     <div className="warehouse-inventory__table-heading"><div><span className="eyebrow">Current warehouse inventory</span><strong>Containers by goods category</strong><p>Each container is counted once at its latest confirmed warehouse location. The small line in each cell shows the physical container mix.</p></div><span className="warehouse-inventory__scope">{warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"} · {currentTotal} containers</span></div>
@@ -1043,7 +1089,7 @@ function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: Ope
   </section>;
 }
 
-function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void }) {
+function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
   const projections = Object.values(data.projections).filter(Boolean) as Projection[];
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
   const loaded = projections.filter((item) => item.loadState === "loaded").length;
@@ -1220,7 +1266,7 @@ interface InventoryMatrixRow {
 
 const inventoryContainerTypes = ["bin", "cart", "gaylord"] as const;
 
-function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void }) {
+function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
   const [mode, setMode] = useState<InventoryMatrixMode>("container");
   const [locationScope, setLocationScope] = useState<InventoryLocationScope>("network");
   const [selectedContainerTypes, setSelectedContainerTypes] = useState<string[]>([]);
@@ -1256,7 +1302,7 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
   const transitRow = locationRows.find((row) => row.location?.type === "in_transit");
   const unknownRow = locationRows.find((row) => row.isUnknown);
   const physicalCount = records.length - (transitRow?.records.length ?? 0) - (unknownRow?.records.length ?? 0);
-  const openRow = (row: InventoryMatrixRow) => row.location && !row.isUnknown && row.location.type !== "in_transit" ? openLocation(row.location.locationId) : setPage("containers");
+  const openRow = (row: InventoryMatrixRow, filter?: LocationInventoryFilter) => row.location && !row.isUnknown && row.location.type !== "in_transit" ? openLocation(row.location.locationId, filter) : setPage("containers");
   const recordsForColumn = (row: InventoryMatrixRow, value: string) => row.records.filter((record) => mode === "container" ? record.container.type === value : record.goodsType === value);
   const statusSummary = (items: InventorySnapshotRecord[]) => {
     const loaded = items.filter((item) => item.projection?.loadState === "loaded").length;
@@ -1288,7 +1334,24 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
     setLocationScope("network");
     setSelectedContainerTypes([]);
   };
-  return <section className="panel inventory-matrix-panel">
+  const handleInventoryCellCapture = (event: React.MouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    const button = target.closest("button.inventory-matrix__cell");
+    const rowElement = button?.closest("tbody tr");
+    if (!button || !rowElement) return;
+    const rowIndex = Array.from(rowElement.parentElement?.children ?? []).indexOf(rowElement);
+    const row = locationRows[rowIndex];
+    const cellIndex = (button.closest("td") as HTMLTableCellElement | null)?.cellIndex ?? -1;
+    if (!row || cellIndex < 1 || cellIndex > columns.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const column = columns[cellIndex - 1];
+    if (!column) return;
+    openRow(row, mode === "container"
+      ? { containerType: column.value as Container["type"], bucket: "current" }
+      : { goodsType: column.value, bucket: "current" });
+  };
+  return <section className="panel inventory-matrix-panel" onClickCapture={handleInventoryCellCapture}>
     <PanelTitle title="Company-wide inventory" subtitle="Current container inventory by location and category. Each container is counted once using its latest accepted projection." action="View all containers" onClick={() => setPage("containers")} />
     <div className="inventory-matrix__toolbar"><div><span className="eyebrow">Network inventory snapshot</span><p>Use container type for physical capacity planning, or goods category to mirror the inventory report used by Goodwill operations.</p></div><div className="inventory-matrix__actions"><div className="inventory-matrix__modes" role="group" aria-label="Inventory breakdown"><button type="button" className={mode === "container" ? "active" : ""} onClick={() => setMode("container")}><ContainerIcon size={14} /> Container type</button><button type="button" className={mode === "goods" ? "active" : ""} onClick={() => setMode("goods")}><Boxes size={14} /> Goods category</button></div><button type="button" className="secondary" onClick={exportInventory} disabled={!records.length}><Download size={15} /> Excel-ready CSV</button></div></div>
     <div className="inventory-matrix__filters"><label><span>Location scope</span><select value={locationScope} onChange={(event) => setLocationScope(event.target.value as InventoryLocationScope)}><option value="network">All locations</option><option value="donation_express">Donation Xpress</option><option value="store_backroom">Stores</option><option value="warehouse">Warehouses</option></select></label><AuditMultiSelect label="Container types" options={inventoryContainerTypes.map((value) => ({ value, label: containerTypeLabel(value) }))} selected={selectedContainerTypes} onToggle={(value) => setSelectedContainerTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setSelectedContainerTypes([])} emptyLabel="All container types" /><div className="inventory-matrix__filter-summary"><strong>{scopeLabel}</strong><span>{typeLabel}</span><small>{records.length} container{records.length === 1 ? "" : "s"} included</small></div><button type="button" className="inventory-matrix__clear" onClick={clearInventoryFilters} disabled={locationScope === "network" && selectedContainerTypes.length === 0}>Clear filters</button></div>
@@ -1944,7 +2007,7 @@ function LocationLifecycleExplorer({ routeRecords, focusLocationId, onOpen }: { 
   return <section className="location-option location-lifecycle panel"><div className="location-option__header"><div><span className="eyebrow">Location view option 3 · container lifecycle</span><h2>Follow every checkpoint in order</h2><p>Use this when a container has visited several sites. It shows the recorded journey as a chain, highlights the current open hop, and keeps a reroute visible rather than flattening it into one “last location.”</p></div><span className="location-option__icon"><GitBranch size={19} /></span></div>{visible.length ? <div className="lifecycle-list">{visible.map((record) => { const route = record.route; const names = routeLocationNames(route); return <button className="lifecycle-row" key={record.container.containerId} onClick={() => onOpen(record)}><span className="lifecycle-row__identity"><span className="lifecycle-row__icon"><ContainerIcon size={15} /></span><span><strong>{record.container.label}</strong><small>{record.container.type} · {route.segments.length} recorded handoff{route.segments.length === 1 ? "" : "s"}</small></span></span><span className="lifecycle-row__journey">{names.map((name, index) => <span key={`${record.container.containerId}:${name}:${index}`}><b>{name}</b>{index < names.length - 1 && <ArrowRight size={12} />}</span>)}{!names.length && <em>Locations not recorded</em>}</span><span className="lifecycle-row__status">{route.inTransit ? <Pill tone="blue">In transit</Pill> : route.unresolvedSegmentCount ? <Pill tone="warn">Receipt gap</Pill> : <Pill tone="good">Journey recorded</Pill>}<ChevronRight size={15} /></span></button>; })}</div> : <div className="location-lifecycle__empty"><Layers3 size={19} /><span><strong>No multi-hop journeys match this location.</strong><small>Once a container is received and sent again, its complete checkpoint chain will appear here.</small></span></div>}{journeys.length > 8 && <button className="location-option__more" onClick={() => setShowAll((value) => !value)}>{showAll ? "Show fewer journeys" : `Show all ${journeys.length} journeys`}</button>}</section>;
 }
 
-function LocationWorkspacePage({ data, locationId, openDetail, setPage, session }: { data: OperationsData; locationId: string; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession | null }) {
+function LocationWorkspacePage({ data, locationId, locationFilter, openLocation, openDetail, setPage, session }: { data: OperationsData; locationId: string; locationFilter?: LocationInventoryFilter; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession | null }) {
   const location = data.fixtures.locations.find((item) => item.locationId === locationId && item.type !== "in_transit" && item.isActive !== false && !isUnknownLocation(item));
   const principal = session?.principal;
   const canManageScanners = Boolean(principal && ["organization_owner", "operations_administrator", "location_manager"].includes(principal.role));
@@ -1993,8 +2056,56 @@ function LocationWorkspacePage({ data, locationId, openDetail, setPage, session 
     recordIdLabel: "Observation ID",
      body: <><DetailFacts items={[["Observation", eventLabel(event.eventType)], ["Location", location.name], ["Scanner", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Data quality", event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagDetail).join(", ") : "No data-quality warnings"]]} /><h3 className="detail-section-title">Preserved evidence</h3><EventEvidence events={[event]} data={data} /></>
   });
+  const inventoryRecords = buildInventorySnapshotRecords(data);
+  const selectedBucket: LocationInventoryBucket = locationFilter?.bucket ?? "current";
+  const recordsForBucket = (bucket: LocationInventoryBucket) => inventoryRecords.filter((record) => {
+    const route = routeFor(record.container.containerId);
+    const isCurrent = record.projection?.locationId === location.locationId;
+    const isInTransit = Boolean(transitId && record.projection?.locationId === transitId);
+    const isArriving = isInTransit && route.activeSegment?.destination?.locationId === location.locationId;
+    const isLeaving = isInTransit && route.activeSegment?.origin?.locationId === location.locationId;
+    if (bucket === "arriving") return isArriving;
+    if (bucket === "leaving") return isLeaving;
+    return isCurrent;
+  }).filter((record) => {
+    if (locationFilter?.containerType && record.container.type !== locationFilter.containerType) return false;
+    if (locationFilter?.goodsType && record.goodsType !== locationFilter.goodsType) return false;
+    if (locationFilter?.loadState && record.projection?.loadState !== locationFilter.loadState) return false;
+    return true;
+  });
+  const inventoryByBucket = {
+    current: recordsForBucket("current"),
+    arriving: recordsForBucket("arriving"),
+    leaving: recordsForBucket("leaving")
+  } satisfies Record<LocationInventoryBucket, InventorySnapshotRecord[]>;
+  const visibleInventory = inventoryByBucket[selectedBucket];
+  const inventoryGoodsOptions = Array.from(new Set([
+    ...data.fixtures.goodsTypes.map((goodsType) => goodsType.name),
+    ...inventoryRecords.map((record) => record.goodsType)
+  ])).sort((left, right) => left.localeCompare(right));
+  const inventoryTypeOptions = ["bin", "cart", "gaylord"] as const;
+  const updateInventoryFilter = (next: Partial<LocationInventoryFilter>) => {
+    const nextFilter: LocationInventoryFilter = { ...(locationFilter ?? {}), ...next };
+    Object.entries(nextFilter).forEach(([key, value]) => { if (!value) delete nextFilter[key as keyof LocationInventoryFilter]; });
+    openLocation(location.locationId, nextFilter);
+  };
+  const clearInventoryFilters = () => openLocation(location.locationId);
+  const inventoryFilterSummary = [
+    locationFilter?.containerType ? containerTypeLabel(locationFilter.containerType) : "All container types",
+    locationFilter?.goodsType ?? "All goods categories",
+    locationFilter?.loadState ? loadStateLabel(locationFilter.loadState) : "Any state"
+  ];
+  const movementLabelFor = (record: InventorySnapshotRecord) => {
+    const segment = routeFor(record.container.containerId).activeSegment;
+    if (!segment) return "Location confirmed";
+    if (selectedBucket === "arriving") return `From ${segment.origin?.name ?? "origin pending"}`;
+    if (selectedBucket === "leaving") return `To ${segment.destination?.name ?? "destination pending"}`;
+    return segment.destination ? `Moving to ${segment.destination.name}` : "Destination pending";
+  };
+  const inventoryCountLabel = (bucket: LocationInventoryBucket) => `${inventoryByBucket[bucket].length} ${bucket === "current" ? "here" : bucket}`;
   const typeLabel = locationTypeLabel(location.type);
   return <div className="location-focused-page">
+    <section className="location-inventory panel"><div className="location-inventory__header"><div><span className="eyebrow">Location inventory</span><h3>Filter the containers associated with this site</h3><p>Select a count or filter to see the exact bins, carts, or gaylords behind it. The selected view is preserved in the URL so a filtered location link can be shared.</p></div><div className="location-inventory__header-count"><strong>{visibleInventory.length}</strong><span>{selectedBucket === "current" ? "at this location" : `${selectedBucket} this location`}</span></div></div><div className="location-inventory__tabs" role="tablist" aria-label="Location inventory view"><button type="button" className={selectedBucket === "current" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "current" })}>At this location <b>{inventoryCountLabel("current")}</b></button><button type="button" className={selectedBucket === "arriving" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "arriving" })}>Arriving <b>{inventoryCountLabel("arriving")}</b></button><button type="button" className={selectedBucket === "leaving" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "leaving" })}>Leaving <b>{inventoryCountLabel("leaving")}</b></button></div><div className="location-inventory__filters"><label><span>Container type</span><select value={locationFilter?.containerType ?? ""} onChange={(event) => updateInventoryFilter({ containerType: (event.target.value || undefined) as LocationInventoryFilter["containerType"] })}><option value="">All types</option>{inventoryTypeOptions.map((value) => <option value={value} key={value}>{containerTypeLabel(value)}</option>)}</select></label><label><span>Goods category</span><select value={locationFilter?.goodsType ?? ""} onChange={(event) => updateInventoryFilter({ goodsType: event.target.value || undefined })}><option value="">All categories</option>{inventoryGoodsOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></label><label><span>Current state</span><select value={locationFilter?.loadState ?? ""} onChange={(event) => updateInventoryFilter({ loadState: (event.target.value || undefined) as LocationInventoryFilter["loadState"] })}><option value="">Any state</option><option value="loaded">Loaded</option><option value="empty">Empty</option><option value="unknown">Unknown</option></select></label><div className="location-inventory__filter-summary"><strong>{visibleInventory.length} matching</strong><span>{inventoryFilterSummary.join(" · ")}</span></div><button type="button" className="secondary" onClick={clearInventoryFilters} disabled={!locationFilter || Object.keys(locationFilter).length === 0}>Clear filters</button></div><div className="location-inventory__breakdown">{inventoryTypeOptions.map((type) => { const count = visibleInventory.filter((record) => record.container.type === type).length; return <button type="button" key={type} className={locationFilter?.containerType === type ? "active" : ""} onClick={() => updateInventoryFilter({ containerType: locationFilter?.containerType === type ? undefined : type })}><strong>{count}</strong><span>{containerTypeLabel(type)}s</span><small>Show only these containers</small></button>; })}</div><div className="location-inventory__list">{visibleInventory.length ? visibleInventory.map((record) => <button type="button" className="location-inventory__row" key={record.container.containerId} onClick={() => record.projection && openContainer(record.projection)} disabled={!record.projection}><span className="location-inventory__row-icon"><ContainerIcon size={15} /></span><span className="location-inventory__row-main"><strong>{record.container.label}</strong><small>{containerTypeLabel(record.container.type)} · {record.goodsType} · {loadStateLabel(record.projection?.loadState)}</small></span><span className="location-inventory__row-movement">{movementLabelFor(record)}</span><span className="location-inventory__row-time">{record.projection ? relativeTime(record.projection.lastObservedAt) : "No observation"}</span><ChevronRight size={14} /></button>) : <div className="location-focused-empty">No containers match these filters in this workflow view.</div>}</div></section>
     <div className="location-focused-toolbar"><button className="secondary" onClick={() => setPage("locations")}><ArrowRight size={15} className="location-focused-toolbar__back" /> All locations</button><span className="location-focused-toolbar__crumb"><MapPin size={14} /> {typeLabel} workspace</span><button className="secondary" onClick={() => void window.scrollTo({ top: 0, behavior: "smooth" })}><RefreshCw size={15} /> Refresh view</button></div>
     <section className="location-focused-hero panel"><div className="location-focused-hero__identity"><span className={`location-title-icon location-title-icon--${location.type}`}><LocationTypeIcon location={location} size={23} /></span><div><span className="eyebrow">Focused operating location</span><h2>{location.name}</h2><p>{typeLabel} · {scanners.length} assigned scanner{scanners.length === 1 ? "" : "s"} · {scansLastDay} accepted scan{scansLastDay === 1 ? "" : "s"} in the last 24 hours</p><div className="location-focused-hero__tags"><Pill tone={openReviews.length ? "warn" : "good"}>{openReviews.length ? `${openReviews.length} review${openReviews.length === 1 ? "" : "s"} open` : "No open reviews"}</Pill><Pill tone={staleScanners.length ? "warn" : "good"}>{staleScanners.length ? `${staleScanners.length} stale scanner${staleScanners.length === 1 ? "" : "s"}` : "Scanner reports fresh"}</Pill></div></div></div><div className="location-focused-hero__actions"><button className={canManageScanners ? "primary" : "secondary"} onClick={() => setPage("devices")}><Smartphone size={15} /> {canManageScanners ? "Manage scanners" : "View scanners"}</button><button className="secondary" onClick={() => setPage("activity")}><Activity size={15} /> Local activity</button>{canRequestCorrections && <button className="secondary" onClick={() => setPage("corrections")}><FilePenLine size={15} /> Request correction</button>}</div></section>
     <section className="location-focused-metrics"><article><span className="location-focused-metric__icon location-focused-metric__icon--blue"><Boxes size={18} /></span><div><small>At this location</small><strong>{current.length}</strong><em>Latest projection</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--green"><ArrowRight size={18} /></span><div><small>Arriving</small><strong>{arriving.length}</strong><em>Destination receipt pending</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--orange"><Truck size={18} /></span><div><small>Leaving</small><strong>{leaving.length}</strong><em>Outbound handoff open</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--slate"><Smartphone size={18} /></span><div><small>Scanner coverage</small><strong>{scanners.filter((device) => device.isActive).length}/{scanners.length}</strong><em>{staleScanners.length ? `${staleScanners.length} report stale` : "Reports within 24 hours"}</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--cyan"><Activity size={18} /></span><div><small>Recent scans</small><strong>{scansLastDay}</strong><em>{flaggedScans ? `${flaggedScans} flagged for review` : "No scan-quality flags"}</em></div></article></section>
@@ -2004,7 +2115,7 @@ function LocationWorkspacePage({ data, locationId, openDetail, setPage, session 
   </div>;
 }
 
-function LocationsPage({ data, focusedLocationId, openLocation, openDetail, setPage, session }: { data: OperationsData; focusedLocationId?: string; openLocation: (locationId: string) => void; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession | null }) {
+function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLocation, openDetail, setPage, session }: { data: OperationsData; focusedLocationId?: string; focusedLocationFilter?: LocationInventoryFilter; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession | null }) {
   const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
   const [selectedLocationId, setSelectedLocationIdState] = useState(physicalLocations[0]?.locationId ?? "");
   const setSelectedLocationId = (nextLocationId: string) => {
@@ -2015,7 +2126,7 @@ function LocationsPage({ data, focusedLocationId, openLocation, openDetail, setP
   const [locationTypeFilter, setLocationTypeFilter] = useState<"all" | Location["type"]>("all");
   const [locationHealthFilter, setLocationHealthFilter] = useState<"all" | "attention">("all");
   const [locationSort, setLocationSort] = useState<"work" | "containers" | "activity" | "alphabetical">("work");
-  if (focusedLocationId) return <LocationWorkspacePage data={data} locationId={focusedLocationId} openDetail={openDetail} setPage={setPage} session={session} />;
+  if (focusedLocationId) return <LocationWorkspacePage data={data} locationId={focusedLocationId} {...(focusedLocationFilter ? { locationFilter: focusedLocationFilter } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
   const selected = (physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0])!;
   if (!selected) return <section className="panel"><EmptyState>No active operating locations are available. Add or restore a location from Settings before reviewing workflow.</EmptyState><button className="secondary" onClick={() => setPage("settings")}><Settings size={15} /> Open Settings</button></section>;
 
