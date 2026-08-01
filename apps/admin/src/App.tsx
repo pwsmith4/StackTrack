@@ -3870,8 +3870,8 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
         <SingleFilterSelect label="Scanners" options={deviceOptions} value={deviceFilters[0] ?? ""} onChange={(value) => setDeviceFilters(value ? [value] : [])} emptyLabel="All scanners" />
         <label>Quick time window<select value={windowFilter} onChange={(event) => setWindowFilter(event.target.value as ActivityWindow)}><option value="all">All available</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
         <label>From date<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
-        <label>From time<input type="time" value={fromTime} onChange={(event) => setFromTime(event.target.value)} /></label>
         <label>To date<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
+        <label>From time<input type="time" value={fromTime} onChange={(event) => setFromTime(event.target.value)} /></label>
         <label>To time<input type="time" value={toTime} onChange={(event) => setToTime(event.target.value)} /></label>
       </div>
       {dateRangeError && <p className="activity-filter-error" role="alert">{dateRangeError}</p>}
