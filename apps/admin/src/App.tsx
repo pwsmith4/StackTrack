@@ -285,7 +285,7 @@ interface LocationInventoryFilter {
   bucket?: LocationInventoryBucket | undefined;
 }
 
-type AppRoute = { page: Page; locationId?: string; locationFilter?: LocationInventoryFilter };
+type AppRoute = { page: Page; locationId?: string; locationFilter?: LocationInventoryFilter; focus?: string };
 
 function routeFromHash(): AppRoute {
   // GitHub Pages can append a verification query to the hash during deploys.
@@ -294,11 +294,12 @@ function routeFromHash(): AppRoute {
   const rawHash = window.location.hash.replace(/^#\/?/, "");
   const [rawPath, rawQuery = ""] = rawHash.split("?");
   const raw = rawPath ?? "";
+  const params = new URLSearchParams(rawQuery);
+  const focus = params.get("focus") || undefined;
   const parts = raw.split("/").filter(Boolean).map((part) => {
     try { return decodeURIComponent(part); } catch { return part; }
   });
   if (parts[0] === "locations" && parts[1]) {
-    const params = new URLSearchParams(rawQuery);
     const containerType = params.get("containerType");
     const goodsType = params.get("goodsType");
     const loadState = params.get("loadState");
@@ -309,11 +310,11 @@ function routeFromHash(): AppRoute {
       ...(loadState === "loaded" || loadState === "empty" || loadState === "unknown" ? { loadState } : {}),
       ...(bucket === "current" || bucket === "arriving" || bucket === "leaving" ? { bucket } : {})
     };
-    return { page: "locations", locationId: parts[1], ...(Object.keys(locationFilter).length ? { locationFilter } : {}) };
+    return { page: "locations", locationId: parts[1], ...(Object.keys(locationFilter).length ? { locationFilter } : {}), ...(focus ? { focus } : {}) };
   }
   const value = parts[0] as Page;
   return [...nav.map((item) => item.page), "settings"].includes(value)
-    ? { page: value }
+    ? { page: value, ...(focus ? { focus } : {}) }
     : { page: "dashboard" };
 }
 
@@ -393,7 +394,7 @@ function relativeTime(value?: string | null) {
 function eventLabel(type: StoredEvent["eventType"]) {
   return {
     load_assigned: "Marked full",
-    batch_out: "Departed",
+    batch_out: "In transit",
     batch_in: "Arrived",
     emptied: "Marked empty"
   }[type];
@@ -423,7 +424,7 @@ function eventNarrative(event: StoredEvent, data: OperationsData) {
   if (event.eventType === "emptied") return `${subject} marked empty at ${location}.`;
   if (event.eventType === "batch_out") {
     const origin = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
-    return `${subject} departed from ${origin ?? "its last confirmed location"}. The receiving site will be recorded when the arrival is scanned.`;
+    return `${subject} in transit — leaving ${origin ?? "its last confirmed location"}.`;
   }
   return `${subject} observed at ${location}.`;
 }
@@ -539,7 +540,7 @@ function humanizeDetailKey(key: string) {
     goodsType: "Goods category",
     secondaryValue: "Classification",
     sourceLocationId: "Departure origin",
-    destinationLocationId: "Receiving site",
+    destinationLocationId: "Received at",
     notes: "Message for operations",
     message: "Message for operations",
     operatorMessage: "Message for operations"
@@ -698,6 +699,36 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, [refresh]);
 
+  // Deep links from summary cards should land on the exact section that explains
+  // the selected count. The retry is intentional: some pages render their data
+  // table after the first route transition, especially when the API is still
+  // hydrating. Known page targets are mapped explicitly; other pages can opt
+  // in with a data-route-focus attribute without letting URL values become
+  // arbitrary CSS selectors.
+  useEffect(() => {
+    if (!route.focus) return;
+    let attempts = 0;
+    let timer: number | undefined;
+    const focusTarget = () => {
+      const knownClassTarget = route.focus === "location-inventory" ? document.querySelector<HTMLElement>(".location-inventory") : null;
+      const target = knownClassTarget ?? Array.from(document.querySelectorAll<HTMLElement>("[data-route-focus]"))
+        .find((element) => element.dataset.routeFocus === route.focus) ?? null;
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (attempts < 12) {
+        attempts += 1;
+        timer = window.setTimeout(focusTarget, 45);
+      }
+    };
+    const frame = window.requestAnimationFrame(focusTarget);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [route.page, route.locationId, route.focus]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -725,9 +756,10 @@ export function App() {
     if (nextFilter?.goodsType) params.set("goodsType", nextFilter.goodsType);
     if (nextFilter?.loadState) params.set("loadState", nextFilter.loadState);
     if (nextFilter?.bucket) params.set("bucket", nextFilter.bucket);
+    if (nextFilter && Object.keys(nextFilter).length) params.set("focus", "location-inventory");
     const queryString = params.toString();
     window.location.hash = `/locations/${encodeURIComponent(nextLocationId)}${queryString ? `?${queryString}` : ""}`;
-    setRoute({ page: "locations", locationId: nextLocationId, ...(nextFilter && Object.keys(nextFilter).length ? { locationFilter: nextFilter } : {}) });
+    setRoute({ page: "locations", locationId: nextLocationId, ...(nextFilter && Object.keys(nextFilter).length ? { locationFilter: nextFilter, focus: "location-inventory" } : {}) });
     setDetail(null);
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1438,6 +1470,62 @@ function StoreCoverageQueue({ groups, totalGroups, totalRows, pageSize, page, pa
   </section>;
 }
 
+function StoreCoverageQueueCollapsible({ groups, totalGroups, totalRows, pageSize, page, pageCount, horizonDays, storeSearch, onStoreSearchChange, onPageSizeChange, onPageChange, onConfigure, onOpenLocation }: {
+  groups: StoreOutlookGroup[];
+  totalGroups: number;
+  totalRows: number;
+  pageSize: 10 | 20 | 50 | "all";
+  page: number;
+  pageCount: number;
+  horizonDays: number;
+  storeSearch: string;
+  onStoreSearchChange: (value: string) => void;
+  onPageSizeChange: (size: 10 | 20 | 50 | "all") => void;
+  onPageChange: (page: number) => void;
+  onConfigure: (row: StoreOutlookRow) => void;
+  onOpenLocation: (locationId: string) => void;
+}) {
+  const [expandedStoreIds, setExpandedStoreIds] = useState<Set<string>>(() => new Set());
+  const visibleGroupKey = groups.map((group) => group.store.locationId).join("|");
+
+  useEffect(() => {
+    // A new page or search result starts compact. This keeps a long queue from
+    // unexpectedly opening every store after filters change.
+    setExpandedStoreIds(new Set());
+  }, [visibleGroupKey]);
+
+  const toggleStore = (locationId: string) => setExpandedStoreIds((current) => {
+    const next = new Set(current);
+    if (next.has(locationId)) next.delete(locationId); else next.add(locationId);
+    return next;
+  });
+  const expandAll = () => setExpandedStoreIds(new Set(groups.map((group) => group.store.locationId)));
+  const collapseAll = () => setExpandedStoreIds(new Set());
+  const allExpanded = groups.length > 0 && groups.every((group) => expandedStoreIds.has(group.store.locationId));
+
+  return <section className="store-outlook__queue" aria-labelledby="store-coverage-queue-title">
+    <div className="store-outlook__queue-heading">
+      <div><span className="eyebrow">Store coverage queue</span><h3 id="store-coverage-queue-title">Locations that need planning attention</h3><p>Each store starts collapsed so the network stays readable. Open one store to review its goods and container targets.</p></div>
+      <div className="store-outlook__queue-controls">
+        <label className="store-outlook__store-search"><span>Find a store</span><span className="store-outlook__store-search-input"><Search size={13} /><input type="search" value={storeSearch} onChange={(event) => onStoreSearchChange(event.target.value)} placeholder="Search store name" aria-label="Search store name" />{storeSearch && <button type="button" onClick={() => onStoreSearchChange("")} aria-label="Clear store search"><X size={13} /></button>}</span></label>
+        <label><span>Locations per page</span><select value={pageSize} onChange={(event) => onPageSizeChange(event.target.value === "all" ? "all" : Number(event.target.value) as 10 | 20 | 50)}><option value={10}>10 locations</option><option value={20}>20 locations</option><option value={50}>50 locations</option><option value="all">All locations</option></select></label>
+        <div className="store-outlook__queue-actions"><button type="button" className="secondary" onClick={allExpanded ? collapseAll : expandAll} disabled={!groups.length}>{allExpanded ? "Collapse all" : "Expand all"}</button><span className="store-outlook__queue-count">Showing {groups.length} of {totalGroups} locations · {totalRows} item rows</span></div>
+      </div>
+    </div>
+    <div className="store-outlook__group-table-wrap table-wrap"><table className="store-outlook__group-table"><thead><tr><th>Item category</th><th>Container type</th><th>Current on hand</th><th>Expected movement</th><th>Recommended on hand</th><th>Target range</th><th>Planning gap</th><th>Seasonal input</th><th></th></tr></thead><tbody>{groups.length ? groups.map((group) => {
+      const expanded = expandedStoreIds.has(group.store.locationId);
+      const totalCurrent = group.rows.reduce((sum, row) => sum + row.current, 0);
+      const totalToPlan = group.rows.reduce((sum, row) => sum + Math.max(0, row.gap), 0);
+      const signals = group.rows.filter((row) => row.gap > 0).length;
+      return <Fragment key={group.store.locationId}>
+        <tr className="store-outlook__group-row"><th colSpan={9}><div className="store-outlook__group-header"><button type="button" className="store-outlook__group-toggle" aria-expanded={expanded} onClick={() => toggleStore(group.store.locationId)}><span className="store-outlook__group-summary"><ChevronDown size={14} className={expanded ? "store-outlook__group-chevron store-outlook__group-chevron--open" : "store-outlook__group-chevron"} /><Store size={14} /><strong>{group.store.name}</strong><small>{group.rows.length} item type{group.rows.length === 1 ? "" : "s"} in this view · {signals} planning signal{signals === 1 ? "" : "s"}</small></span><span className="store-outlook__group-total"><b>{totalCurrent} on hand · {totalToPlan} to plan</b><span>{expanded ? "Hide details" : "Show details"}</span></span></button><button type="button" className="secondary store-outlook__open-location" onClick={() => onOpenLocation(group.store.locationId)}>Open location</button></div></th></tr>
+        {expanded && group.rows.map((row) => <tr key={storeOutlookTargetKey(row.store.locationId, row.goodsType, row.containerType)}><th><strong>{row.goodsType}</strong></th><td>{containerTypeLabel(row.containerType)}</td><td>{row.current}<small>{Math.round(row.weeklyBaseline * 10) / 10}/week baseline</small></td><td>{row.expected}<small>Next {horizonDays} days</small></td><td><strong>{row.recommended}</strong><small>Target + safety buffer</small></td><td>{row.target.minimumOnHand}–{row.target.maximumOnHand}</td><td className={row.gap > 0 ? "store-outlook__gap--attention" : "store-outlook__gap--ready"}>{row.gap > 0 ? `+${row.gap}` : "On target"}<small>{row.gap > 0 ? "Plan delivery" : row.current > row.target.maximumOnHand ? "Review excess" : "No action"}</small></td><td>{row.holidayUplift ? <span className="store-outlook__holiday-chip">{row.holidayUplift > 0 ? "+" : ""}{row.holidayUplift}%<small>{row.holidayNames[0]}</small></span> : <span className="store-outlook__no-holiday">No adjustment</span>}</td><td><button type="button" className="secondary" onClick={() => onConfigure(row)}>Configure</button></td></tr>)}
+      </Fragment>;
+    }) : <tr><td colSpan={9}><EmptyState>{storeSearch ? "No stores match this search." : "No store rows match these filters."}</EmptyState></td></tr>}</tbody></table></div>
+    {pageCount > 1 && <div className="store-outlook__queue-pagination"><button type="button" className="secondary" disabled={page === 0} onClick={() => onPageChange(Math.max(0, page - 1))}>Previous locations</button><span>Page {page + 1} of {pageCount}</span><button type="button" className="secondary" disabled={page >= pageCount - 1} onClick={() => onPageChange(Math.min(pageCount - 1, page + 1))}>Next locations</button></div>}
+  </section>;
+}
+
 function StoreHolidayPlanner({ holidays, stores, goodsColumns, editorOpen, setEditorOpen, holidayName, setHolidayName, holidayDate, setHolidayDate, holidayDuration, setHolidayDuration, holidayUplift, setHolidayUplift, holidayLocation, setHolidayLocation, holidayGoods, setHolidayGoods, onAdd, onUpdate, onRemove }: { holidays: StoreHolidayAdjustment[]; stores: Location[]; goodsColumns: string[]; editorOpen: boolean; setEditorOpen: (open: boolean) => void; holidayName: string; setHolidayName: (value: string) => void; holidayDate: string; setHolidayDate: (value: string) => void; holidayDuration: string; setHolidayDuration: (value: string) => void; holidayUplift: string; setHolidayUplift: (value: string) => void; holidayLocation: string; setHolidayLocation: (value: string) => void; holidayGoods: string; setHolidayGoods: (value: string) => void; onAdd: (event: React.FormEvent) => void; onUpdate: (id: string, patch: Partial<StoreHolidayAdjustment>) => void; onRemove: (id: string) => void }) {
   return <section className="store-outlook__holiday-section store-outlook__holiday-section--new"><div className="store-outlook__section-heading"><div><span className="eyebrow">Seasonal planning settings</span><h3>Adjust the calendar used by the forecast</h3><p>Keep holiday and local-event assumptions separate from everyday filters. Enable, disable, or tune an adjustment without changing scan history.</p></div><div className="store-outlook__holiday-heading-actions"><span className="store-outlook__holiday-count">{holidays.filter((holiday) => holiday.enabled).length} active</span><button type="button" className="secondary store-outlook__holiday-toggle" onClick={() => setEditorOpen(!editorOpen)}><Plus size={14} /> {editorOpen ? "Close editor" : "Add seasonal adjustment"}</button></div></div>{editorOpen && <div className="store-outlook__holiday-create"><span className="eyebrow">New planning assumption</span><strong>Choose when the forecast should move differently from normal history</strong><p>Use a positive value for higher movement and a negative value for a slower period. Apply it to every store or a specific location and goods category.</p><form className="store-outlook__holiday-form" onSubmit={onAdd}><label><span>Holiday or event</span><input required value={holidayName} onChange={(event) => setHolidayName(event.target.value)} placeholder="Community donation drive" /></label><label><span>Start date</span><input required type="date" value={holidayDate} onChange={(event) => setHolidayDate(event.target.value)} /></label><label><span>Duration (days)</span><input type="number" min="1" max="90" value={holidayDuration} onChange={(event) => setHolidayDuration(event.target.value)} /></label><label><span>Expected movement change %</span><input type="number" min="-90" max="300" value={holidayUplift} onChange={(event) => setHolidayUplift(event.target.value)} /></label><label><span>Store scope</span><select value={holidayLocation} onChange={(event) => setHolidayLocation(event.target.value)}><option value="all">All stores</option>{stores.map((store) => <option value={store.locationId} key={store.locationId}>{store.name}</option>)}</select></label><label><span>Goods scope</span><select value={holidayGoods} onChange={(event) => setHolidayGoods(event.target.value)}><option value="all">All categories</option>{goodsColumns.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><button type="submit" className="primary"><Plus size={15} /> Save adjustment</button></form></div>}<div className="store-outlook__holiday-list">{holidays.map((holiday) => <article key={holiday.id} className={holiday.enabled ? "" : "store-outlook__holiday--disabled"}><span className="store-outlook__holiday-icon"><CalendarDays size={15} /></span><div><strong>{holiday.name}</strong><small>{holiday.date} · {holiday.durationDays} day{holiday.durationDays === 1 ? "" : "s"} · {holiday.locationId === "all" ? "All stores" : stores.find((store) => store.locationId === holiday.locationId)?.name ?? "Selected store"} · {holiday.goodsType === "all" ? "All categories" : holiday.goodsType}</small></div><label className="store-outlook__holiday-number"><span>Movement change %</span><input type="number" min="-90" max="300" value={holiday.upliftPercent} onChange={(event) => onUpdate(holiday.id, { upliftPercent: Math.max(-90, Math.min(300, Number(event.target.value) || 0)) })} /></label><button type="button" className="secondary" onClick={() => onUpdate(holiday.id, { enabled: !holiday.enabled })}>{holiday.enabled ? "Disable" : "Enable"}</button><button type="button" className="store-outlook__remove" onClick={() => onRemove(holiday.id)} aria-label={`Remove ${holiday.name}`}><Trash2 size={14} /></button></article>)}</div></section>;
 }
@@ -1551,11 +1639,11 @@ function WarehouseForecastPage({ data, openLocation }: { data: OperationsData; o
   return <div className="warehouse-outlook-page">
     <section className="panel warehouse-outlook-page__intro"><div><span className="eyebrow">Planning workspace</span><h2>Capacity decisions with a visible calculation</h2><p>Warehouse outlook is the planning layer for transportation. It estimates demand from accepted scanner history, then lets administrators tune store targets and holiday assumptions without changing official container history.</p></div><div className="warehouse-outlook-page__intro-badges"><Pill tone="blue">Warehouse capacity</Pill><Pill tone="good">Store coverage</Pill><Pill tone="muted">Scenario only</Pill></div></section>
     <WarehouseForecastPanel data={data} warehouses={warehouses} warehouseRecords={warehouseRecords} goodsColumns={goodsColumns} openLocation={openLocation} />
-    <StoreCapacityOutlook data={data} records={records} goodsColumns={goodsColumns} />
+    <StoreCapacityOutlook data={data} records={records} goodsColumns={goodsColumns} openLocation={openLocation} />
   </div>;
 }
 
-function StoreCapacityOutlook({ data, records, goodsColumns }: { data: OperationsData; records: InventorySnapshotRecord[]; goodsColumns: string[] }) {
+function StoreCapacityOutlook({ data, records, goodsColumns, openLocation }: { data: OperationsData; records: InventorySnapshotRecord[]; goodsColumns: string[]; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
   const stores = data.fixtures.locations.filter((location) => location.type === "store_backroom" && !isUnknownLocation(location));
   const containerOptions = serviceContainerTypes;
   const today = new Date();
@@ -1582,6 +1670,7 @@ function StoreCapacityOutlook({ data, records, goodsColumns }: { data: Operation
     return saved === "all" || saved === 20 || saved === 50 ? saved : 10;
   });
   const [storeQueuePage, setStoreQueuePage] = useState(0);
+  const [storeQueueSearch, setStoreQueueSearch] = useState("");
 
   useEffect(() => { try { window.localStorage.setItem(storeOutlookTargetsKey, JSON.stringify(targets)); } catch { /* local planning remains usable */ } }, [targets]);
   useEffect(() => { try { window.localStorage.setItem(storeOutlookHolidaysKey, JSON.stringify(holidays)); } catch { /* local planning remains usable */ } }, [holidays]);
@@ -1637,9 +1726,14 @@ function StoreCapacityOutlook({ data, records, goodsColumns }: { data: Operation
     else groups.set(row.store.locationId, { store: row.store, rows: [row] });
     return groups;
   }, new Map<string, { store: Location; rows: StoreOutlookRow[] }>()).values()).sort((left, right) => left.store.name.localeCompare(right.store.name));
-  const storePageCount = storeQueuePageSize === "all" ? 1 : Math.max(1, Math.ceil(storeGroups.length / storeQueuePageSize));
+  const normalizedStoreQueueSearch = storeQueueSearch.trim().toLocaleLowerCase();
+  const searchedStoreGroups = normalizedStoreQueueSearch
+    ? storeGroups.filter((group) => group.store.name.toLocaleLowerCase().includes(normalizedStoreQueueSearch))
+    : storeGroups;
+  const storePageCount = storeQueuePageSize === "all" ? 1 : Math.max(1, Math.ceil(searchedStoreGroups.length / storeQueuePageSize));
   const safeStoreQueuePage = Math.min(storeQueuePage, storePageCount - 1);
-  const visibleStoreGroups = storeQueuePageSize === "all" ? storeGroups : storeGroups.slice(safeStoreQueuePage * storeQueuePageSize, (safeStoreQueuePage + 1) * storeQueuePageSize);
+  const visibleStoreGroups = storeQueuePageSize === "all" ? searchedStoreGroups : searchedStoreGroups.slice(safeStoreQueuePage * storeQueuePageSize, (safeStoreQueuePage + 1) * storeQueuePageSize);
+  const visibleStoreRows = searchedStoreGroups.flatMap((group) => group.rows);
   const shortageRows = visibleRows.filter((row) => row.gap > 0);
   const network = visibleRows.reduce((summary, row) => ({ current: summary.current + row.current, expected: summary.expected + row.expected, recommended: summary.recommended + row.recommended, gap: summary.gap + Math.max(0, row.gap) }), { current: 0, expected: 0, recommended: 0, gap: 0 });
   const saveTarget = (event: React.FormEvent) => {
@@ -1670,7 +1764,7 @@ function StoreCapacityOutlook({ data, records, goodsColumns }: { data: Operation
 
   return <section className="panel store-outlook-panel">
     <LocationTargetWorkspace stores={stores} rows={rows} targets={targets} containerOptions={containerOptions} editorStore={editorStore} setEditorStore={setEditorStore} editorGoods={editorGoods} setEditorGoods={setEditorGoods} editorContainer={editorContainer} setEditorContainer={setEditorContainer} editorMinimum={editorMinimum} setEditorMinimum={setEditorMinimum} editorMaximum={editorMaximum} setEditorMaximum={setEditorMaximum} onSave={saveTarget} onReset={resetTarget} />
-    <StoreCoverageQueue groups={visibleStoreGroups} totalGroups={storeGroups.length} totalRows={visibleRows.length} pageSize={storeQueuePageSize} page={safeStoreQueuePage} pageCount={storePageCount} horizonDays={settings.horizonDays} onPageSizeChange={(size) => { setStoreQueuePageSize(size); setStoreQueuePage(0); }} onPageChange={setStoreQueuePage} onConfigure={(row) => { setEditorStore(row.store.locationId); setEditorGoods(row.goodsType); setEditorContainer(row.containerType); document.querySelector(".store-outlook__target-editor")?.scrollIntoView({ behavior: "smooth", block: "center" }); }} />
+    <StoreCoverageQueueCollapsible groups={visibleStoreGroups} totalGroups={searchedStoreGroups.length} totalRows={visibleStoreRows.length} pageSize={storeQueuePageSize} page={safeStoreQueuePage} pageCount={storePageCount} horizonDays={settings.horizonDays} storeSearch={storeQueueSearch} onStoreSearchChange={(value) => { setStoreQueueSearch(value); setStoreQueuePage(0); }} onPageSizeChange={(size) => { setStoreQueuePageSize(size); setStoreQueuePage(0); }} onPageChange={setStoreQueuePage} onConfigure={(row) => { setEditorStore(row.store.locationId); setEditorGoods(row.goodsType); setEditorContainer(row.containerType); document.querySelector(".store-outlook__target-editor")?.scrollIntoView({ behavior: "smooth", block: "center" }); }} onOpenLocation={(locationId) => openLocation(locationId)} />
     <StoreHolidayPlanner holidays={holidays} stores={stores} goodsColumns={goodsColumns} editorOpen={holidayEditorOpen} setEditorOpen={setHolidayEditorOpen} holidayName={holidayName} setHolidayName={setHolidayName} holidayDate={holidayDate} setHolidayDate={setHolidayDate} holidayDuration={holidayDuration} setHolidayDuration={setHolidayDuration} holidayUplift={holidayUplift} setHolidayUplift={setHolidayUplift} holidayLocation={holidayLocation} setHolidayLocation={setHolidayLocation} holidayGoods={holidayGoods} setHolidayGoods={setHolidayGoods} onAdd={addHoliday} onUpdate={updateHoliday} onRemove={(id) => setHolidays((current) => current.filter((item) => item.id !== id))} />
     <div className="store-outlook__header"><div><span className="eyebrow">Store coverage planning</span><h2>Store supply outlook</h2><p>Review each location’s on-hand crates by goods category and container type. The queue below highlights where the configured target range is not yet met.</p></div><button type="button" className="secondary" onClick={exportStoreOutlook} disabled={!visibleRows.length}><Download size={15} /> Export store outlook</button></div>
     <div className="warehouse-forecast__assumption-note"><Target size={16} /><span><strong>Store targets are editable planning assumptions.</strong><small>Current counts come from accepted scanner projections. Saving a target changes recommendations only; it never rewrites an observation or moves a container.</small></span><Pill tone={shortageRows.length ? "warn" : "good"}>{shortageRows.length ? `${shortageRows.length} rows need planning` : "No current shortages"}</Pill></div>
@@ -1926,17 +2020,15 @@ function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setP
       return {
         containerId: projection.containerId,
         label: container(projection.containerId)?.label ?? "Container",
-        sourceLocationId: route.activeSegment?.origin?.locationId ?? null,
-        destinationLocationId: route.activeSegment?.destination?.locationId ?? null
+        sourceLocationId: route.activeSegment?.origin?.locationId ?? null
       };
     });
   const routeMap = new Map<string, DashboardRoute>();
   transitItems.forEach((item) => {
-    const key = `${item.sourceLocationId ?? "unknown"}:${item.destinationLocationId ?? "unknown"}`;
+    const key = item.sourceLocationId ?? "unknown";
     const route = routeMap.get(key) ?? {
       key,
       origin: data.fixtures.locations.find((location) => location.locationId === item.sourceLocationId) ?? null,
-      destination: data.fixtures.locations.find((location) => location.locationId === item.destinationLocationId) ?? null,
       items: []
     };
     route.items.push(item);
@@ -1966,7 +2058,7 @@ function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setP
       <div className="metric-grid">
         <Metric icon={<ContainerIcon />} label="Tracked containers" value={data.fixtures.containers.length} detail={`${operatingLocations.length} active operating locations`} tone="blue" onClick={() => setPage("containers")} />
         <Metric icon={<PackageCheck />} label="Currently loaded" value={loaded} detail={`${loadedPercent}% of tracked assets`} tone="cyan" onClick={() => setPage("containers")} />
-        <Metric icon={<Truck />} label="In transit" value={inTransit} detail="Waiting for a receiving scan" tone="navy" onClick={() => setPage("locations")} />
+        <Metric icon={<Truck />} label="In transit" value={inTransit} detail="Left a confirmed location · arrival pending" tone="navy" onClick={() => setPage("locations")} />
         <Metric icon={<AlertTriangle />} label="Needs attention" value={attentionCount} detail={attentionCount ? `${review} history issue${review === 1 ? "" : "s"} · ${pendingCorrections.length} approval${pendingCorrections.length === 1 ? "" : "s"}` : "No open exceptions"} tone={attentionCount ? "orange" : "green"} onClick={() => setPage("exceptions")} />
       </div>
 
@@ -1982,23 +2074,22 @@ function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setP
 
       <div className="dashboard-grid">
         <section className="panel network-panel">
-          <PanelTitle title="Active route monitor" subtitle={activeRoutes.length ? `${inTransit} container${inTransit === 1 ? "" : "s"} moving after departure across ${activeRoutes.length} open handoff${activeRoutes.length === 1 ? "" : "s"}` : "No active departures are waiting for a receiving scan"} action="View all locations" onClick={() => setPage("locations")} />
+          <PanelTitle title="Active departures" subtitle={activeRoutes.length ? `${inTransit} container${inTransit === 1 ? "" : "s"} in transit after leaving ${activeRoutes.length} location${activeRoutes.length === 1 ? "" : "s"}` : "No active departures are waiting for an arrival scan"} action="View all locations" onClick={() => setPage("locations")} />
           {activeRoutes.length ? <div className="dashboard-route-list">{activeRoutes.slice(0, 4).map((route) => {
             const labels = route.items.slice(0, 3).map((item) => item.label).join(", ");
             const remaining = route.items.length - Math.min(route.items.length, 3);
-            return <button className="dashboard-route" key={route.key} onClick={() => setPage("locations")} aria-label={`View ${route.items.length} containers departed from ${route.origin?.name ?? "origin pending"}; receiving site not confirmed`}>
-              <span className="dashboard-route__endpoint"><span className="dashboard-route__endpoint-icon">{route.origin ? <LocationTypeIcon location={route.origin} size={17} /> : <MapPin size={17} />}</span><span><strong title={route.origin?.name ?? "Origin pending"}>{route.origin?.name ?? "Origin pending"}</strong><small>{route.origin ? locationTypeLabel(route.origin.type) : "Origin not confirmed"}</small></span></span>
-              <span className="dashboard-route__motion"><span className="dashboard-route__status">{route.items.length} moving</span><span className="dashboard-route__track" aria-hidden="true"><i /><b><ContainerIcon size={13} /></b><em /></span><small>{labels}{remaining > 0 ? ` +${remaining} more` : ""}</small></span>
-              <span className="dashboard-route__endpoint"><span className="dashboard-route__endpoint-icon dashboard-route__endpoint-icon--destination"><MapPin size={17} /></span><span><strong title="The receiving site will be confirmed by the arrival scan">Receiving site not confirmed</strong><small>Established by arrival scan</small></span></span>
-              <ChevronRight size={16} />
-            </button>;
+            return <button className="dashboard-route" key={route.key} onClick={() => setPage("locations")} aria-label={`View ${route.items.length} containers in transit after leaving ${route.origin?.name ?? "departure location not confirmed"}`}>
+               <span className="dashboard-route__endpoint"><span className="dashboard-route__endpoint-icon">{route.origin ? <LocationTypeIcon location={route.origin} size={17} /> : <MapPin size={17} />}</span><span><strong title={route.origin?.name ?? "Origin pending"}>{route.origin?.name ?? "Origin pending"}</strong><small>{route.origin ? locationTypeLabel(route.origin.type) : "Origin not confirmed"}</small></span></span>
+               <span className="dashboard-route__motion"><span className="dashboard-route__status">In transit · {route.items.length} moving</span><span className="dashboard-route__track" aria-hidden="true"><i /><b><ContainerIcon size={13} /></b><em /></span><small>Leaving {route.origin?.name ?? "departure location not confirmed"} · {labels}{remaining > 0 ? ` +${remaining} more` : ""}</small></span>
+               <ChevronRight size={16} />
+             </button>;
           })}</div> : <div className="dashboard-route-empty"><span><CheckCircle2 size={20} /></span><div><strong>No containers are currently in transit.</strong><p>All latest valid observations point to a confirmed physical location. New transfers will appear here after a batch-out scan.</p></div></div>}
           {activeRoutes.length > 4 && <p className="dashboard-route-more">+ {activeRoutes.length - 4} additional active routes. Open Locations for the complete network view.</p>}
           <div className={`transit-summary ${inTransit ? "transit-summary--active" : ""}`}>
             <span className="transit-summary__icon"><Truck size={19} /></span>
             <div>
-              <strong>{inTransit ? `${inTransit} container${inTransit === 1 ? "" : "s"} currently between locations` : "No containers currently between locations"}</strong>
-              <span>{inTransit ? `${transitPreview} remain in transit until the receiving site scans the arrival.` : unobservedContainers ? `${unobservedContainers} container${unobservedContainers === 1 ? " has" : "s have"} no accepted observation yet.` : "All tracked containers have a confirmed physical location."}</span>
+              <strong>{inTransit ? `${inTransit} container${inTransit === 1 ? "" : "s"} currently in transit` : "No containers currently in transit"}</strong>
+               <span>{inTransit ? `${transitPreview} are in transit after leaving their last confirmed locations. An arrival scan will record where each one was received.` : unobservedContainers ? `${unobservedContainers} container${unobservedContainers === 1 ? " has" : "s have"} no accepted observation yet.` : "All tracked containers have a confirmed physical location."}</span>
             </div>
             <Pill tone={inTransit ? "blue" : "good"}>{inTransit ? "Moving" : "Clear"}</Pill>
           </div>
@@ -2172,7 +2263,7 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
     <PanelTitle title="Company-wide inventory" subtitle="Current container inventory by location and category. Each container is counted once using its latest accepted projection." action="View all containers" onClick={() => setPage("containers")} />
     <div className="inventory-matrix__toolbar"><div><span className="eyebrow">Network inventory snapshot</span><p>Use container type for physical capacity planning, or goods category to mirror the inventory report used by Goodwill operations.</p></div><div className="inventory-matrix__actions"><div className="inventory-matrix__modes" role="group" aria-label="Inventory breakdown"><button type="button" className={mode === "container" ? "active" : ""} onClick={() => setMode("container")}><ContainerIcon size={14} /> Container type</button><button type="button" className={mode === "goods" ? "active" : ""} onClick={() => setMode("goods")}><Boxes size={14} /> Goods category</button></div><button type="button" className="secondary" onClick={exportInventory} disabled={!records.length}><Download size={15} /> Excel-ready CSV</button></div></div>
     <div className="inventory-matrix__filters"><label><span>Location scope</span><select value={locationScope} onChange={(event) => setLocationScope(event.target.value as InventoryLocationScope)}><option value="network">All locations</option><option value="donation_express">Donation Xpress</option><option value="store_backroom">Stores</option><option value="warehouse">Warehouses</option></select></label><AuditMultiSelect label="Container types" options={inventoryContainerTypes.map((value) => ({ value, label: containerTypeLabel(value) }))} selected={selectedContainerTypes} onToggle={(value) => setSelectedContainerTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setSelectedContainerTypes([])} emptyLabel="All container types" /><div className="inventory-matrix__filter-summary"><strong>{scopeLabel}</strong><span>{typeLabel}</span><small>{records.length} container{records.length === 1 ? "" : "s"} included</small></div><button type="button" className="inventory-matrix__clear" onClick={clearInventoryFilters} disabled={locationScope === "network" && selectedContainerTypes.length === 0}>Clear filters</button></div>
-     <div className="inventory-matrix__summary"><div><span><ContainerIcon size={15} />Tracked containers</span><strong>{records.length}</strong><small>{scopeLabel} · {typeLabel}</small></div><div><span><MapPin size={15} />At operating locations</span><strong>{physicalCount}</strong><small>Confirmed physical placement</small></div><div><span><Truck size={15} />In transit</span><strong>{transitRow?.records.length ?? 0}</strong><small>Arrival scan pending</small></div><div><span><CircleHelp size={15} />Unknown / unassigned</span><strong>{unknownRow?.records.length ?? 0}</strong><small>{unknownRow?.records.length ? "Needs location follow-up" : "No current location gaps"}</small></div></div>
+      <div className="inventory-matrix__summary"><div><span><ContainerIcon size={15} />Tracked containers</span><strong>{records.length}</strong><small>{scopeLabel} · {typeLabel}</small></div><div><span><MapPin size={15} />At operating locations</span><strong>{physicalCount}</strong><small>Confirmed physical placement</small></div><div><span><Truck size={15} />In transit</span><strong>{transitRow?.records.length ?? 0}</strong><small>Left a confirmed location · arrival pending</small></div><div><span><CircleHelp size={15} />Unknown / unassigned</span><strong>{unknownRow?.records.length ?? 0}</strong><small>{unknownRow?.records.length ? "Needs location follow-up" : "No current location gaps"}</small></div></div>
      <div className="table-wrap inventory-matrix__table-wrap"><table className="inventory-matrix"><thead><tr><th>Location</th>{columns.map((column) => <th key={column.value}>{column.label}</th>)}<th>Total</th></tr></thead><tbody>{locationRows.map((row) => <tr key={row.key}><th scope="row"><button type="button" className="inventory-matrix__location" onClick={() => openRow(row)}><span className={`inventory-matrix__location-icon ${row.isUnknown ? "inventory-matrix__location-icon--unknown" : row.location ? `inventory-matrix__location-icon--${row.location.type}` : "inventory-matrix__location-icon--unknown"}`}>{row.location && !row.isUnknown ? <LocationTypeIcon location={row.location} size={15} /> : <CircleHelp size={15} />}</span><span><strong>{row.locationName}</strong><small>{row.locationType}{row.location?.isActive === false ? " · Inactive" : ""}</small></span><ChevronRight size={13} /></button></th>{columns.map((column) => { const items = recordsForColumn(row, column.value); return <td key={column.value}>{items.length ? <button type="button" className="inventory-matrix__cell" onClick={() => openRow(row)} title={`${items.length} ${column.label.toLowerCase()} at ${row.locationName}. ${statusSummary(items)}.`}><strong>{items.length}</strong><small>{statusSummary(items)}</small><em>{cellDetail(items)}</em></button> : <span className="inventory-matrix__empty">—</span>}</td>; })}<td><button type="button" className="inventory-matrix__cell inventory-matrix__cell--total" onClick={() => openRow(row)} title={`${row.records.length} containers at ${row.locationName}.`}><strong>{row.records.length}</strong><small>{statusSummary(row.records) || "No current inventory"}</small></button></td></tr>)}</tbody><tfoot><tr><th>Network total</th>{columns.map((column) => <td key={column.value}><strong>{records.filter((record) => mode === "container" ? record.container.type === column.value : record.goodsType === column.value).length}</strong></td>)}<td><strong>{records.length}</strong></td></tr></tfoot></table></div>
     <p className="inventory-matrix__note">Counts reflect the latest accepted scan for each container. “Unknown / unassigned” keeps gaps visible instead of silently dropping them. The export includes one row per container so Excel users can filter or build a pivot table.</p>
   </section>;
@@ -2181,8 +2272,7 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
 interface DashboardRoute {
   key: string;
   origin: Location | null;
-  destination: Location | null;
-  items: { containerId: string; label: string; sourceLocationId: string | null; destinationLocationId: string | null }[];
+  items: { containerId: string; label: string; sourceLocationId: string | null }[];
 }
 
 function Metric({ icon, label, value, detail, tone, onClick }: { icon: ReactNode; label: string; value: number; detail: string; tone: string; onClick?: () => void }) {
@@ -2306,8 +2396,8 @@ function routeLocationNames(route: ContainerRouteContext): string[] {
 function humanRouteSummary(route: ContainerRouteContext): string {
   if (route.inTransit) {
     return route.origin
-      ? `Departed from ${route.origin.name}; receiving site not confirmed`
-      : "Departed; origin and receiving site are not confirmed";
+      ? `In transit — leaving ${route.origin.name}`
+      : "In transit — departure location not confirmed";
   }
   if (route.segments.length > 0) {
     return `${route.segments.length} handoff${route.segments.length === 1 ? "" : "s"} recorded`;
@@ -2317,9 +2407,9 @@ function humanRouteSummary(route: ContainerRouteContext): string {
 
 function humanSegmentSummary(segment: ContainerRouteSegment): string {
   const origin = segment.origin?.name ?? "Departure origin not confirmed";
-  if (segment.status === "in_transit") return `Departed from ${origin}; receiving site not confirmed`;
-  const destination = segment.destination?.name ?? "Receiving site not confirmed";
-  return `${origin} to ${destination}`;
+  if (segment.status === "in_transit") return `In transit — leaving ${origin}`;
+  const destination = segment.destination?.name ?? "arrival location not recorded";
+  return `Received at ${destination} after leaving ${origin}`;
 }
 
 function locationLaneSummary(route: ContainerRouteContext, tone: "here" | "arriving" | "leaving"): string {
@@ -2335,13 +2425,11 @@ function ContainerRouteCell({ route }: { route: ContainerRouteContext }) {
     return (
       <div className="container-route-cell container-route-cell--active">
         <span className="container-route-cell__status"><i aria-hidden="true" /> In transit</span>
-        <div className="container-route-cell__path">
-          <strong title={route.origin?.name ?? "Origin pending"}>{route.origin?.name ?? "Origin pending"}</strong>
-          <span className="container-route-cell__connector" aria-hidden="true"><i /><ArrowRight size={13} /></span>
-          <strong title="The receiving site will be confirmed by the arrival scan">Receiving site not confirmed</strong>
+        <div className="container-route-cell__path container-route-cell__path--departure">
+          <strong title={route.origin?.name ?? "Departure location not confirmed"}>Leaving {route.origin?.name ?? "departure location not confirmed"}</strong>
         </div>
-        <small>Departed {relativeTime(route.departedAt)} · arrival scan pending{route.segments.length > 1 ? ` · hop ${route.segments.length}` : ""}</small>
-       <small className="container-route-cell__truth">The receiving site is confirmed by the arrival scan.</small>
+        <small>In transit · left {relativeTime(route.departedAt)}{route.segments.length > 1 ? ` · handoff ${route.segments.length}` : ""}</small>
+       <small className="container-route-cell__truth">The next arrival scan records where it was received.</small>
        </div>
     );
   }
@@ -2367,15 +2455,13 @@ function ContainerRouteSummary({ containerId, data, onOpenLocation }: { containe
   const current = data.events.filter((event) => event.containerId === containerId).sort((left, right) => Date.parse(left.effectiveAt) - Date.parse(right.effectiveAt)).at(-1);
   const currentName = route.currentLocation?.name ?? "Not confirmed";
   return <div className={`detail-route-summary ${route.inTransit ? "detail-route-summary--active" : ""}`}>
-    <div className="detail-route-summary__heading"><span><Truck size={15} /> Route context</span><Pill tone={route.inTransit ? "blue" : "good"}>{route.inTransit ? "In transit" : "Physical location confirmed"}</Pill></div>
-    {route.inTransit && <div className="detail-route-summary__path">
-       <div><small>Origin</small><RouteLocationLink location={route.origin} fallback="Origin not confirmed" onOpenLocation={onOpenLocation} /></div>
-       <span className="detail-route-summary__connector" aria-hidden="true"><i /><ArrowRight size={16} /></span>
-       <div><small>Receiving site</small><RouteLocationLink location={route.destination} fallback="Not confirmed yet" onOpenLocation={onOpenLocation} /></div>
-     </div>}
+    <div className="detail-route-summary__heading"><span><Truck size={15} /> Movement context</span><Pill tone={route.inTransit ? "blue" : "good"}>{route.inTransit ? "In transit" : "Physical location confirmed"}</Pill></div>
+    {route.inTransit && <div className="detail-route-summary__path detail-route-summary__path--departure">
+       <div><small>Movement</small><RouteLocationLink location={route.origin} fallback="Departure location not confirmed" onOpenLocation={onOpenLocation} /><em>In transit — leaving this location</em></div>
+      </div>}
      {!route.inTransit && route.segments.length > 0 && <div className="detail-route-summary__journey"><small>Recorded journey</small><strong>{routeLocationNames(route).join("  →  ")}</strong></div>}
      {!route.inTransit && route.currentLocation && <button type="button" className="detail-route-summary__workspace-link" onClick={() => onOpenLocation(route.currentLocation!.locationId)}>Open {currentName} location workspace <ChevronRight size={13} aria-hidden="true" /></button>}
-     <small className="detail-route-summary__note">{route.inTransit ? `Movement is active after departure from ${route.origin?.name ?? "the last confirmed location"}. The receiving site will be established when the arrival is scanned.` : current ? `Last authoritative observation: ${eventLabel(current.eventType)} at ${currentName}. ${route.segments.length > 1 ? `${route.segments.length} handoffs are recorded for this container.` : ""}` : "No route observations are recorded yet."}</small>
+      <small className="detail-route-summary__note">{route.inTransit ? `In transit after leaving ${route.origin?.name ?? "the last confirmed location"}. The next arrival scan records where it was received.` : current ? `Last authoritative observation: ${eventLabel(current.eventType)} at ${currentName}. ${route.segments.length > 1 ? `${route.segments.length} handoffs are recorded for this container.` : ""}` : "No route observations are recorded yet."}</small>
     {route.unresolvedSegmentCount > 0 && !route.inTransit && <div className="detail-route-summary__warning"><AlertTriangle size={14} /> {route.unresolvedSegmentCount} handoff{route.unresolvedSegmentCount === 1 ? "" : "s"} still lacks a matching receipt.</div>}
   </div>;
 }
@@ -2412,8 +2498,8 @@ function LegacyContainersPage({ data, query, openDetail, openLocation, setPage }
       body: <><DetailFacts items={[
         ["Current state", loadStateLabel(projection?.loadState)],
         ["Movement status", route.inTransit ? "In transit" : "Stationary / location confirmed"],
-        ["Route", humanRouteSummary(route)],
-        ["Last known location", route.inTransit ? `In transit · last confirmed ${route.lastConfirmedLocation?.name ?? "not recorded"}` : locationName(projection?.locationId ?? null)],
+        ["Movement", humanRouteSummary(route)],
+        ["Last known location", route.inTransit ? `In transit — left ${route.origin?.name ?? route.lastConfirmedLocation?.name ?? "location not confirmed"}` : locationName(projection?.locationId ?? null)],
         ["History health", projectionHealthLabel(projection?.health)],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"],
         ["Container UUID", container.containerId]
@@ -2422,10 +2508,10 @@ function LegacyContainersPage({ data, query, openDetail, openLocation, setPage }
   };
   const movementRows = data.fixtures.containers.map((container) => ({ container, route: getContainerRouteContext(container.containerId, data) })).filter((item) => item.route.inTransit);
   const movementGroups = Array.from(new Map(movementRows.map((item) => {
-    const key = `${item.route.origin?.locationId ?? "unknown"}:${item.route.destination?.locationId ?? "unknown"}`;
-    return [key, { key, origin: item.route.origin, destination: item.route.destination, count: 0, labels: [] as string[], first: item.container }] as const;
+    const key = item.route.origin?.locationId ?? "unknown";
+    return [key, { key, origin: item.route.origin, count: 0, labels: [] as string[], first: item.container }] as const;
   })).values()).map((group) => {
-    const matches = movementRows.filter((item) => (item.route.origin?.locationId ?? "unknown") === (group.origin?.locationId ?? "unknown") && (item.route.destination?.locationId ?? "unknown") === (group.destination?.locationId ?? "unknown"));
+    const matches = movementRows.filter((item) => (item.route.origin?.locationId ?? "unknown") === (group.origin?.locationId ?? "unknown"));
     return { ...group, count: matches.length, labels: matches.slice(0, 3).map((item) => item.container.label) };
   });
   const exportRows = () => downloadCsv("stacktrack-containers.csv", [
@@ -2446,8 +2532,8 @@ function LegacyContainersPage({ data, query, openDetail, openLocation, setPage }
     <section className="panel">
       <div className="toolbar"><div className="filter-tabs">{(["all", "loaded", "empty", "unknown"] as const).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => { setFilter(value); setPageIndex(0); }}>{value[0]!.toUpperCase() + value.slice(1)} <b>{filterCount(value)}</b></button>)}</div><div className="container-toolbar-actions"><span className="container-table-note"><CircleHelp size={13} /> Labels are unique; technical ID is in Details.</span><button className="secondary" onClick={exportRows}><Download size={16} /> Export CSV</button></div></div>
       {movementRows.length > 0 && <div className="container-movement-summary">
-        <div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each route shows the confirmed departure origin; the receiving site is added by the arrival scan. The movement closes when the arrival is scanned.</p></div></div>
-        <div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.first)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`${group.origin?.name ?? "Origin pending"} to ${group.destination?.name ?? "Receiving site not confirmed"}`}>{group.origin?.name ?? "Origin pending"} <ArrowRight size={12} /> {group.destination?.name ?? "Receiving site not confirmed"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional route{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div>
+         <div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each item shows the confirmed location it left. The next arrival scan records where it was received.</p></div></div>
+         <div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.first)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`In transit — leaving ${group.origin?.name ?? "departure location not confirmed"}`}>In transit — leaving {group.origin?.name ?? "departure location not confirmed"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional departure{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div>
       </div>}
       <div className="table-wrap">
         <table className="container-table">
@@ -2549,7 +2635,7 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
       ...events.map((event) => payloadLocationId(event, "sourceLocationId"))
     ].filter((value): value is string => Boolean(value))));
     const locationLabel = route.inTransit
-      ? `${route.origin?.name ?? "Origin pending"} → ${route.destination?.name ?? "Receiving site not confirmed"}`
+      ? `In transit — leaving ${route.origin?.name ?? "departure location not confirmed"}`
       : route.currentLocation?.name ?? "Not yet observed";
     return { container, projection, route, movement, health: containerHealthKey(projection), locationIds, locationLabel, lastObservedAt, latestMessage: messages.at(-1) ?? null, messageCount: messages.length, events };
   }), [data]);
@@ -2627,8 +2713,8 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
       body: <><DetailFacts items={[
         ["Current state", loadStateLabel(projection?.loadState)],
         ["Movement status", route.inTransit ? "In transit" : projection ? "Stationary / location confirmed" : "Not observed"],
-        ["Route", humanRouteSummary(route)],
-        ["Last known location", route.inTransit ? `In transit · last confirmed ${route.lastConfirmedLocation?.name ?? "not recorded"}` : locationName(projection?.locationId)],
+        ["Movement", humanRouteSummary(route)],
+        ["Last known location", route.inTransit ? `In transit — left ${route.origin?.name ?? route.lastConfirmedLocation?.name ?? "location not confirmed"}` : locationName(projection?.locationId)],
         ["History health", projectionHealthLabel(projection?.health)],
         ["Messages", messageEvents.length ? `${messageEvents.length} message${messageEvents.length === 1 ? "" : "s"} from scanners` : "No scanner messages"],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"]
@@ -2637,10 +2723,10 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
   };
   const movementRows = filteredRows.filter((row) => row.movement === "in_transit");
   const movementGroups = Array.from(new Map(movementRows.map((row) => {
-    const key = `${row.route.origin?.locationId ?? "unknown"}:${row.route.destination?.locationId ?? "unknown"}`;
-    return [key, { key, origin: row.route.origin, destination: row.route.destination, rows: [] as ContainerFilterRow[] }] as const;
+    const key = row.route.origin?.locationId ?? "unknown";
+    return [key, { key, origin: row.route.origin, rows: [] as ContainerFilterRow[] }] as const;
   })).values()).map((group) => {
-    const rows = movementRows.filter((row) => (row.route.origin?.locationId ?? "unknown") === (group.origin?.locationId ?? "unknown") && (row.route.destination?.locationId ?? "unknown") === (group.destination?.locationId ?? "unknown"));
+    const rows = movementRows.filter((row) => (row.route.origin?.locationId ?? "unknown") === (group.origin?.locationId ?? "unknown"));
     return { ...group, rows, count: rows.length, labels: rows.slice(0, 3).map((row) => row.container.label) };
   });
   const exportRows = () => downloadCsv("stacktrack-containers.csv", [
@@ -2661,7 +2747,7 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
         <label>From date<input type="date" value={draft.from} onChange={(event) => setDraft((current) => ({ ...current, from: event.target.value }))} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))} /></label>
       </div>{draftDateError && <p className="container-filter-error">{draftDateError}</p>}</div>
-      {movementRows.length > 0 && <div className="container-movement-summary"><div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each route shows the confirmed departure origin; the receiving site is recorded by the arrival scan. The movement closes when the arrival is scanned.</p></div></div><div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.rows[0]!.container)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`${group.origin?.name ?? "Origin pending"} to ${group.destination?.name ?? "Receiving site not confirmed"}`}>{group.origin?.name ?? "Origin pending"} <ArrowRight size={12} /> {group.destination?.name ?? "Receiving site not confirmed"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional route{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div></div>}
+      {movementRows.length > 0 && <div className="container-movement-summary"><div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each item shows the confirmed location it left. The next arrival scan records where it was received.</p></div></div><div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.rows[0]!.container)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`In transit — leaving ${group.origin?.name ?? "departure location not confirmed"}`}>In transit — leaving {group.origin?.name ?? "departure location not confirmed"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional departure{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div></div>}
       <div className="table-wrap"><table className="container-table"><thead><tr><th>Container label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>Messages</th><th>History health</th></tr></thead><tbody>{visibleRows.map((row) => <tr className="clickable-row" role="button" tabIndex={0} aria-label={`Open details for ${row.container.label}`} key={row.container.containerId} onClick={() => showContainer(row.container)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showContainer(row.container); } }}><td><strong className="asset-label" title="Unique container label">{row.container.label}</strong></td><td className="capitalize">{containerTypeLabel(row.container.type)}</td><td><Pill tone={row.projection?.loadState === "loaded" ? "blue" : row.projection?.loadState === "empty" ? "good" : "muted"}>{loadStateLabel(row.projection?.loadState)}</Pill></td><td><ContainerRouteCell route={row.route} /></td><td>{relativeTime(row.lastObservedAt)}</td><td>{row.messageCount ? <span className="container-message-count"><MessageSquare size={13} /> {row.messageCount}</span> : <span className="container-message-none">None</span>}</td><td>{row.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : row.health === "corrected" ? <Pill tone="blue">Corrected</Pill> : row.health === "clean" ? <Pill tone="good">Clean</Pill> : row.health === "warning" ? <Pill tone="warn">Warning</Pill> : <Pill tone="muted">No history</Pill>}</td></tr>)}</tbody></table>{filteredRows.length === 0 && <EmptyState>No containers match the current filters. Clear a filter or broaden the global search.</EmptyState>}</div>
       <PaginationControls pageIndex={pageIndex} pageCount={pageCount} pageSize={pageSize} total={filteredRows.length} ariaLabel="Container pagination" onPageChange={setPageIndex} onPageSizeChange={(nextSize) => { setPageSize(nextSize); setPageIndex(0); }} />
     </section>
@@ -2853,10 +2939,10 @@ function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, rout
     </span>
   </button>;
   return <section className="location-network panel">
-    <div className="location-network__header"><div><span className="eyebrow">Location view option 1 · recommended</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. The system does not assume a store-to-warehouse path, so multi-hop and rerouted journeys remain honest." /></div><span className="location-network__hint">Best for daily triage: select a node to focus its containers, scanners, and active handoffs below.</span></div>
-    <div className="location-network__summary"><span><b>{metrics.length}</b><small>operating locations</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>active handoffs</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>needs review</small></span></div>
+    <div className="location-network__header"><div><span className="eyebrow">Location view option 1 · recommended</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. The system does not assume a store-to-warehouse path, so multi-hop and rerouted journeys remain honest." /></div><span className="location-network__hint">Best for daily triage: select a node to focus its containers, scanners, and open departures below.</span></div>
+    <div className="location-network__summary"><span><b>{metrics.length}</b><small>operating locations</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>open departures</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>needs review</small></span></div>
     <div className="location-network__nodes">{[...metrics].sort(sortByWork).map(renderLocationNode)}</div>
-     <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Live handoffs</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} between locations` : "No containers are currently between locations"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>Departed from {segment.origin?.name ?? "origin not confirmed"}; receiving site not confirmed</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan will appear here with its confirmed origin. The receiving site is added only after an arrival scan.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} additional handoffs are included in the route matrix below.</small>}</div>
+     <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Live departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>In transit — leaving {segment.origin?.name ?? "departure location not confirmed"}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan appears here with its confirmed departure location. The next arrival scan records where the container was received.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} additional in-transit containers are included in the location directory below.</small>}</div>
   </section>;
 }
 
@@ -2873,10 +2959,10 @@ function LocationNetworkMap({ metrics, movingCount, movingReviewCount, routeReco
     <span className="location-flow-node__actions">{metric.needsReview > 0 ? <Pill tone="warn">{metric.needsReview} review</Pill> : metric.flaggedEvents > 0 ? <Pill tone="warn">{metric.flaggedEvents} flagged</Pill> : metric.staleScanners > 0 ? <Pill tone="warn">{metric.staleScanners} stale</Pill> : null}<ChevronRight size={15} /></span>
   </button>;
   return <section className="location-network panel">
-    <div className="location-network__header"><div><span className="eyebrow">Location network</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. Open departures show their confirmed origin only; the receiving site appears after an arrival scan." /></div><span className="location-network__hint">Select a location to focus its containers, scanners, and recent activity below. Use the directory filters to narrow this map and its export.</span></div>
+     <div className="location-network__header"><div><span className="eyebrow">Location network</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. Open departures show the location they left; the next arrival scan records where they were received." /></div><span className="location-network__hint">Select a location to focus its containers, scanners, and recent activity below. Use the directory filters to narrow this map and its export.</span></div>
     <div className="location-network__summary"><span><b>{metrics.length}</b><small>locations in view</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>open departures</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>attention items</small></span></div>
     <div className="location-network__nodes">{[...metrics].sort(sortByWork).map(renderLocationNode)}</div>
-    <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Open departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} with an open departure` : "No open departures in this view"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>Departed from {segment.origin?.name ?? "Origin not confirmed"}; receiving site not confirmed</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan will appear here with its confirmed origin. The receiving site is added only after an arrival scan.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} more open departures are available by filtering the location directory below.</small>}</div>
+     <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Open departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit in this view"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>In transit — leaving {segment.origin?.name ?? "departure location not confirmed"}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan appears here with its confirmed departure location. The next arrival scan records where the container was received.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} more in-transit containers are available by filtering the location directory below.</small>}</div>
   </section>;
 }
 
@@ -3003,8 +3089,9 @@ function LocationWorkspacePage({ data, locationId, locationFilter, openLocation,
     const segment = route.activeSegment ?? route.segments.at(-1);
     if (!segment) return "Location confirmed";
     if (selectedBucket === "arriving") return `Received here${segment.origin?.name ? ` from ${segment.origin.name}` : ""}`;
-    if (selectedBucket === "leaving") return "Receiving site not confirmed";
-    return segment.destination ? `Last received at ${segment.destination.name}` : "Receiving site not confirmed";
+    if (selectedBucket === "leaving") return `In transit — leaving ${segment.origin?.name ?? location.name}`;
+    if (route.inTransit) return humanRouteSummary(route);
+    return segment.destination ? `Received at ${segment.destination.name}` : "Location confirmed";
   };
   const inventoryBucketLabel = (bucket: LocationInventoryBucket) => bucket === "current" ? "at this location" : bucket === "arriving" ? "confirmed receipts" : "open departures";
   const inventoryCountLabel = (bucket: LocationInventoryBucket) => `${inventoryByBucket[bucket].length} ${bucket === "current" ? "here" : bucket === "arriving" ? "confirmed receipts" : "open departures"}`;
@@ -3330,7 +3417,7 @@ function LocationWorkflowLane({ title, subtitle, tone, items, data, onOpen }: { 
   const visible = expanded ? items : items.slice(0, 8);
   const locationName = (id: string | null) => data.fixtures.locations.find((location) => location.locationId === id)?.name ?? "Unconfirmed";
   const displayTitle = tone === "arriving" ? "Received here" : title;
-  const displaySubtitle = tone === "arriving" ? "Latest accepted scan confirms arrival at this site" : tone === "leaving" ? "Departed from this site; receiving site not yet confirmed" : subtitle;
+   const displaySubtitle = tone === "arriving" ? "Latest accepted scan confirms arrival at this site" : tone === "leaving" ? "In transit after leaving this site" : subtitle;
   return <section className={`workflow-lane workflow-lane--${tone}`}>
     <header><span>{tone === "here" ? <Boxes size={18} /> : tone === "arriving" ? <ArrowRight size={18} /> : <Truck size={18} />}</span><div><h3>{displayTitle}</h3><p>{displaySubtitle}</p></div><b>{items.length}</b></header>
     <div className="workflow-lane__items">{visible.length ? visible.map((projection) => {
@@ -3340,7 +3427,7 @@ function LocationWorkflowLane({ title, subtitle, tone, items, data, onOpen }: { 
       const routeDescription = tone === "arriving"
         ? "Arrival confirmed here"
         : tone === "leaving"
-          ? "Receiving site not yet confirmed"
+          ? `In transit — leaving ${route.origin?.name ?? "this site"}`
           : locationName(projection.locationId);
       return <button key={projection.containerId} onClick={() => onOpen(projection)}><span><strong>{record?.label ?? "Unknown"}</strong><small>{record?.type} · {loadStateLabel(projection.loadState)} · {routeLabel}</small><em>{routeDescription}{route.segments.length > 1 ? ` · ${route.segments.length} handoffs recorded` : ""}</em></span><Pill tone={projection.health === "needs_review" ? "warn" : projection.loadState === "loaded" ? "blue" : "good"}>{projection.health === "needs_review" ? "Needs review" : loadStateLabel(projection.loadState)}</Pill><ChevronRight size={16} /></button>;
     }) : <div className="workflow-lane__empty">No containers in this workflow lane.</div>}</div>
@@ -3814,7 +3901,7 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
   const deviceOptions = data.fixtures.devices.map((device) => ({ value: device.deviceId, label: `${scannerNumber(device.deviceId)} · ${device.label}` }));
   const actionOptions = [
     { value: "load_assigned", label: "Marked full" },
-    { value: "batch_out", label: "Departed / in transit" },
+    { value: "batch_out", label: "In transit" },
     { value: "batch_in", label: "Arrived" },
     { value: "emptied", label: "Marked empty" }
   ] as const;
@@ -4255,11 +4342,11 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       return;
     }
     if (report.id === "transit") {
-      downloadCsv("stacktrack-transit-aging.csv", [["Container", "Departure origin", "Receiving site (if scanned)", "Departed at", "Age hours", "Health", "Arrival status"], ...transitRows.map((row) => [containerLabel(row.projection.containerId), locationName(row.originId), row.receivingLocationId ? locationName(row.receivingLocationId) : "Not confirmed at departure", row.outbound?.effectiveAt ?? "", row.ageHours === null ? "" : row.ageHours.toFixed(1), projectionHealthLabel(row.projection.health), row.outbound ? "Awaiting arrival scan" : "Missing departure evidence"])]);
+      downloadCsv("stacktrack-transit-aging.csv", [["Container", "Left location", "Received at (after arrival scan)", "Left at", "Age hours", "Health", "Arrival status"], ...transitRows.map((row) => [containerLabel(row.projection.containerId), locationName(row.originId), row.receivingLocationId ? locationName(row.receivingLocationId) : "Not recorded yet", row.outbound?.effectiveAt ?? "", row.ageHours === null ? "" : row.ageHours.toFixed(1), projectionHealthLabel(row.projection.health), row.outbound ? "Awaiting arrival scan" : "Missing departure evidence"])]);
       return;
     }
     if (report.id === "routes") {
-      downloadCsv("stacktrack-multi-hop-route-ledger.csv", [["Container", "Hop", "Departure origin", "Receiving site (if scanned)", "Departed", "Received", "Status", "Health"], ...routeRows.map((row) => [row.container.label, row.container.containerId, row.segment.origin?.name ?? "Origin not recorded", row.segment.destination?.name ?? "Not confirmed at departure", row.segment.departedAt, row.segment.receivedAt ?? "", row.segment.status === "received" ? "Received" : row.segment.status === "superseded" ? "Superseded by later departure" : "Awaiting arrival scan", projectionHealthLabel(row.projection?.health)]) ]);
+      downloadCsv("stacktrack-multi-hop-route-ledger.csv", [["Container", "Hop", "Left location", "Received at (after arrival scan)", "Left at", "Received", "Status", "Health"], ...routeRows.map((row) => [row.container.label, row.container.containerId, row.segment.origin?.name ?? "Location not recorded", row.segment.destination?.name ?? "Not recorded yet", row.segment.departedAt, row.segment.receivedAt ?? "", row.segment.status === "received" ? "Received" : row.segment.status === "superseded" ? "Superseded by later departure" : "In transit — arrival not recorded", projectionHealthLabel(row.projection?.health)]) ]);
       return;
     }
     if (report.id === "latency") {
@@ -4280,7 +4367,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
         <AuditMultiSelect label="Locations" options={reportLocationOptions} selected={draft.locationIds} onToggle={(value) => setDraft((current) => ({ ...current, locationIds: current.locationIds.includes(value) ? current.locationIds.filter((item) => item !== value) : [...current.locationIds, value] }))} onClear={() => updateDraft("locationIds", [])} emptyLabel="All locations" />
         <AuditMultiSelect label="Scanners" options={reportDeviceOptions} selected={draft.deviceIds} onToggle={(value) => setDraft((current) => ({ ...current, deviceIds: current.deviceIds.includes(value) ? current.deviceIds.filter((item) => item !== value) : [...current.deviceIds, value] }))} onClear={() => updateDraft("deviceIds", [])} emptyLabel="All scanners" />
         <AuditMultiSelect label="Users" options={actorOptions.map((actor) => ({ value: actor, label: actor }))} selected={draft.actors} onToggle={(value) => setDraft((current) => ({ ...current, actors: current.actors.includes(value) ? current.actors.filter((item) => item !== value) : [...current.actors, value] }))} onClear={() => updateDraft("actors", [])} emptyLabel="All users" />
-        <AuditMultiSelect label="Observation types" options={[{ value: "load_assigned", label: "Marked full" }, { value: "batch_out", label: "Departed / in transit" }, { value: "batch_in", label: "Arrived" }, { value: "emptied", label: "Marked empty" }]} selected={draft.eventTypes} onToggle={(value) => setDraft((current) => ({ ...current, eventTypes: current.eventTypes.includes(value as StoredEvent["eventType"]) ? current.eventTypes.filter((item) => item !== value) : [...current.eventTypes, value as StoredEvent["eventType"]] }))} onClear={() => updateDraft("eventTypes", [])} emptyLabel="All observations" />
+        <AuditMultiSelect label="Observation types" options={[{ value: "load_assigned", label: "Marked full" }, { value: "batch_out", label: "In transit" }, { value: "batch_in", label: "Arrived here" }, { value: "emptied", label: "Marked empty" }]} selected={draft.eventTypes} onToggle={(value) => setDraft((current) => ({ ...current, eventTypes: current.eventTypes.includes(value as StoredEvent["eventType"]) ? current.eventTypes.filter((item) => item !== value) : [...current.eventTypes, value as StoredEvent["eventType"]] }))} onClear={() => updateDraft("eventTypes", [])} emptyLabel="All observations" />
         <AuditMultiSelect label="Data health" options={[{ value: "clean", label: "Clean projection" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }]} selected={draft.healthValues} onToggle={(value) => setDraft((current) => ({ ...current, healthValues: current.healthValues.includes(value as Projection["health"]) ? current.healthValues.filter((item) => item !== value) : [...current.healthValues, value as Projection["health"]] }))} onClear={() => updateDraft("healthValues", [])} emptyLabel="All projection health" />
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateDraft("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateDraft("to", event.target.value)} /></label>

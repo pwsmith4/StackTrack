@@ -125,7 +125,7 @@ main { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .flow-lane--active .flow-lane__line { background: linear-gradient(90deg, var(--cyan), var(--blue-800)); }
 .flow-lane--active .flow-lane__arrow { border-color: var(--blue-800); }
 .dashboard-route-list { display: grid; gap: 8px; padding: 14px 18px 0; }
-.dashboard-route { display: grid; grid-template-columns: minmax(125px, .9fr) minmax(150px, 1.35fr) minmax(125px, .9fr) auto; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid #dfe8ed; background: #fbfdfe; color: var(--ink); text-align: left; transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
+.dashboard-route { display: grid; grid-template-columns: minmax(145px, .9fr) minmax(190px, 1.5fr) auto; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid #dfe8ed; background: #fbfdfe; color: var(--ink); text-align: left; transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
 .dashboard-route:hover { border-color: #9ccfe0; background: #fff; box-shadow: 0 4px 12px rgba(0, 58, 111, .07); }
 .dashboard-route:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
 .dashboard-route__endpoint { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -612,6 +612,7 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .container-route-cell__status { display: inline-flex; align-items: center; gap: 6px; width: fit-content; color: #087ca6; font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .container-route-cell__status i { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 3px #dff5fc; animation: container-route-pulse 1.8s ease-in-out infinite; }
 .container-route-cell__path { display: grid; grid-template-columns: minmax(105px, 1.05fr) minmax(120px, 1.35fr) minmax(105px, 1.05fr); align-items: center; gap: 9px; }
+.container-route-cell__path--departure { display: block; }
 .container-route-cell__path strong { overflow: hidden; color: #344957; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .container-route-cell__path strong:last-child { text-align: right; }
 .container-route-cell__connector, .detail-route-summary__connector { position: relative; display: flex; align-items: center; min-width: 0; color: #087ca6; }
@@ -621,7 +622,7 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .container-table th:nth-child(4) { text-align: left; }
 .container-table td:nth-child(4) { vertical-align: middle; }
 .container-route-cell > small { overflow: hidden; color: #7a8790; font-size: 8.5px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.container-route-cell--active > small:not(.container-route-cell__truth) { display: none; }
+.container-route-cell--active > small { display: block; }
 .container-route-cell__truth { color: #087ca6; font-weight: 700; }
 .container-location-cell { display: flex; align-items: center; gap: 9px; min-width: 190px; }
 .container-location-cell__icon { width: 29px; height: 29px; display: grid; place-items: center; flex: none; color: var(--blue-800); background: #eaf4f9; border: 1px solid #d7e9f1; }
@@ -1249,7 +1250,7 @@ footer > span:first-child { display: none; }
   .container-toolbar-actions { width: 100%; justify-content: space-between; }
   .location-dependency-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .location-workspace__counts { justify-content: flex-start; }
-  .dashboard-route { grid-template-columns: minmax(105px, .9fr) minmax(120px, 1.2fr) minmax(105px, .9fr) auto; gap: 7px; padding: 9px; }
+  .dashboard-route { grid-template-columns: minmax(125px, .9fr) minmax(155px, 1.2fr) auto; gap: 7px; padding: 9px; }
   .dashboard-route__endpoint-icon { width: 27px; height: 27px; }
   .exception-card { grid-template-columns: auto 1fr; }
   .exception-card__actions { grid-column: 1 / -1; flex-direction: row; }
@@ -1272,7 +1273,6 @@ footer > span:first-child { display: none; }
   .container-toolbar-actions { align-items: flex-start; flex-wrap: wrap; }
   .container-table-note { white-space: normal; }
   .dashboard-route { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
-  .dashboard-route__endpoint:nth-child(3) { grid-column: 1; }
   .dashboard-route__motion { grid-column: 1 / -1; grid-row: 2; }
   .dashboard-route > svg { grid-column: 2; grid-row: 1; margin-top: 6px; }
   .notice-banner { align-items: flex-start; flex-wrap: wrap; }
@@ -1428,6 +1428,7 @@ footer > span:first-child { display: none; }
 .detail-route-summary__path > .detail-route-summary__connector::before { background: linear-gradient(90deg, #8bd4ea, var(--blue-800)); }
 .detail-route-summary__path small { color: #7d8993; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
 .detail-route-summary__path strong { overflow: hidden; color: #344957; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.detail-route-summary__path em { display: block; margin-top: 3px; color: #087ca6; font-size: 9px; font-style: normal; font-weight: 700; }
 .detail-route-summary__location-link, .detail-route-summary__workspace-link { display: inline-flex; align-items: center; gap: 4px; width: fit-content; min-width: 0; padding: 2px 0; border: 0; background: transparent; color: #344957; text-align: left; }
 .detail-route-summary__location-link strong { overflow: hidden; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .detail-route-summary__location-link svg, .detail-route-summary__workspace-link svg { flex: none; color: var(--blue-800); }
@@ -1580,7 +1581,7 @@ footer > span:first-child { display: none; }
 .location-focused-page > section.location-focused-section { order: 5; }
 .location-focused-page > .location-focused-health { order: 6; }
 .location-focused-page > .location-inventory { order: 7; }
-.location-inventory { overflow: hidden; }
+.location-inventory { overflow: hidden; scroll-margin-top: 20px; }
 .location-inventory__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 17px 20px 14px; border-bottom: 1px solid var(--line); background: #fbfdfe; }
 .location-inventory__header h3 { margin: 3px 0 0; color: var(--ink); font: 800 15px/1.25 Manrope, sans-serif; }
 .location-inventory__header p { max-width: 720px; margin: 6px 0 0; color: #71818c; font-size: 9.5px; line-height: 1.5; }
@@ -1717,6 +1718,15 @@ footer > span:first-child { display: none; }
 .store-outlook__queue-controls label { display: grid; gap: 4px; color: #657c88; font-size: 8px; font-weight: 800; }
 .store-outlook__queue-controls select { min-height: 30px; padding: 0 8px; border: 1px solid #c9d9e0; border-radius: 3px; color: #304858; background: #fff; font: inherit; font-size: 8.5px; }
 .store-outlook__queue-count { padding-bottom: 7px; color: #7a8d96; font-size: 8px; white-space: nowrap; }
+.store-outlook__store-search { min-width: 190px; }
+.store-outlook__store-search-input { display: flex; align-items: center; min-height: 30px; padding: 0 8px; border: 1px solid #c9d9e0; border-radius: 3px; background: #fff; color: #76909a; }
+.store-outlook__store-search-input:focus-within { border-color: #69bfd4; box-shadow: 0 0 0 2px rgba(34, 167, 201, .12); }
+.store-outlook__store-search-input input { width: 100%; min-width: 0; padding: 0 6px; border: 0; outline: 0; color: #304858; background: transparent; font: inherit; font-size: 8.5px; font-weight: 600; }
+.store-outlook__store-search-input input::placeholder { color: #9aaab1; font-weight: 500; }
+.store-outlook__store-search-input button { display: grid; place-items: center; padding: 2px; border: 0; color: #80939b; background: transparent; cursor: pointer; }
+.store-outlook__store-search-input button:hover { color: var(--blue-800); }
+.store-outlook__queue-actions { display: flex; align-items: flex-end; gap: 9px; }
+.store-outlook__queue-actions .secondary { min-height: 30px; padding: 0 8px; font-size: 8px; white-space: nowrap; }
 .store-outlook__group-table-wrap { overflow-x: auto; }
 .store-outlook__group-table { width: 100%; min-width: 980px; border-collapse: collapse; }
 .store-outlook__group-table th, .store-outlook__group-table td { padding: 8px 9px; border-bottom: 1px solid #e5edf0; color: #3d5866; font-size: 8.5px; text-align: right; vertical-align: middle; white-space: nowrap; }
@@ -1727,11 +1737,19 @@ footer > span:first-child { display: none; }
 .store-outlook__group-table tbody th small, .store-outlook__group-table tbody td small { display: block; margin-top: 3px; color: #8798a1; font-size: 7.5px; font-weight: 500; }
 .store-outlook__group-table .secondary { min-height: 27px; padding: 0 8px; font-size: 8px; }
 .store-outlook__group-row th { padding: 10px 9px; text-align: left !important; background: #eef8fb; border-top: 1px solid #cde5ec; border-bottom: 1px solid #cde5ec; }
-.store-outlook__group-row th > span { display: inline-flex; align-items: center; gap: 6px; }
-.store-outlook__group-row th svg { color: var(--blue-800); }
-.store-outlook__group-row th strong { color: var(--ink); font-size: 10px; }
-.store-outlook__group-row th small { margin: 0 0 0 4px; color: #6e858f; font-size: 7.5px; font-weight: 500; }
-.store-outlook__group-row th b { float: right; color: #53707c; font-size: 8px; font-weight: 800; }
+.store-outlook__group-header { display: flex; align-items: center; gap: 8px; }
+.store-outlook__group-toggle { display: flex; align-items: center; justify-content: space-between; flex: 1; min-width: 0; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.store-outlook__group-toggle:hover .store-outlook__group-summary strong { color: var(--blue-800); }
+.store-outlook__group-summary { display: inline-flex; align-items: center; min-width: 0; gap: 6px; }
+.store-outlook__group-summary > svg:not(.store-outlook__group-chevron) { color: var(--blue-800); flex: none; }
+.store-outlook__group-summary strong { color: var(--ink); font-size: 10px; }
+.store-outlook__group-summary small { overflow: hidden; margin-left: 4px; color: #6e858f; font-size: 7.5px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.store-outlook__group-chevron { color: #6d8994; transition: transform .16s ease; }
+.store-outlook__group-chevron--open { transform: rotate(180deg); }
+.store-outlook__group-total { display: inline-flex; align-items: flex-end; gap: 7px; flex: none; color: #53707c; }
+.store-outlook__group-total b { color: #53707c; font-size: 8px; font-weight: 800; }
+.store-outlook__group-total span { color: #7a919a; font-size: 7px; font-weight: 600; }
+.store-outlook__open-location { min-height: 27px; padding: 0 8px; font-size: 8px; white-space: nowrap; }
 .store-outlook__queue-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px; border-top: 1px solid #e5edf0; color: #6f858f; font-size: 8px; }
 .store-outlook__queue-pagination .secondary { min-height: 28px; padding: 0 9px; font-size: 8px; }
 .store-outlook__holiday-section { padding-bottom: 16px; }
@@ -1746,6 +1764,11 @@ footer > span:first-child { display: none; }
   .store-outlook__queue-heading { align-items: stretch; flex-direction: column; }
   .store-outlook__queue-controls { justify-content: flex-start; flex-wrap: wrap; }
   .store-outlook__queue-count { padding-bottom: 0; }
+  .store-outlook__store-search { flex: 1 1 100%; }
+  .store-outlook__queue-actions { align-items: center; flex-wrap: wrap; }
+  .store-outlook__group-header { align-items: stretch; flex-direction: column; }
+  .store-outlook__group-total { justify-content: space-between; padding-left: 20px; }
+  .store-outlook__open-location { align-self: flex-start; }
 }
 
 /* Location-first target setup: keep the high-level view compact and reveal item settings only after a location is chosen. */

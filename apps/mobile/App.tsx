@@ -125,7 +125,7 @@ function displayLoadCode(loadCodeId: string) {
 function actionSummary(action: ActionType, locationName?: string) {
   const location = locationName ? ` at ${locationName}` : " here";
   if (action === "load_assigned") return `Container marked full${location}`;
-  if (action === "batch_out") return `Container departed from ${locationName ?? "this location"}; receiving site not yet confirmed`;
+  if (action === "batch_out") return `In transit — leaving ${locationName ?? "this location"}`;
   if (action === "batch_in") return `Container received${location}`;
   return `Container marked empty${location}`;
 }
@@ -587,7 +587,7 @@ function ObservationRow({ item, locations, fallbackLocation, last }: { item: Loc
 function ActivityScreen({ observations, locations, deviceLocationName }: { observations: LocalObservation[]; locations?: Fixtures["locations"] | undefined; deviceLocationName: string }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
-      <Text style={styles.pageEyebrow}>DEVICE HISTORY</Text><Text style={styles.pageTitle}>Your activity</Text><Text style={styles.pageDescription}>Actions recorded on this scanner. Departures show where a container left; the receiving site confirms the next location when it scans the arrival.</Text>
+      <Text style={styles.pageEyebrow}>DEVICE HISTORY</Text><Text style={styles.pageTitle}>Your activity</Text><Text style={styles.pageDescription}>Actions recorded on this scanner. An in-transit record shows the location the container left; the next arrival scan records where it was received.</Text>
       <View style={styles.activitySummary}><View style={styles.summaryItem}><Text style={styles.summaryValue}>{observations.length}</Text><Text style={styles.summaryLabel}>RECORDED</Text></View><View style={styles.summaryItem}><Text style={styles.summaryValue}>{observations.filter((item) => item.status === "synced").length}</Text><Text style={styles.summaryLabel}>SYNCED</Text></View><View style={styles.summaryItem}><Text style={styles.summaryValue}>{observations.filter((item) => item.status === "pending").length}</Text><Text style={styles.summaryLabel}>WAITING</Text></View></View>
       <View style={styles.recentCard}>{observations.length ? observations.map((item, index) => <ObservationRow key={item.localId} item={item} locations={locations} fallbackLocation={deviceLocationName} last={index === observations.length - 1} />) : <View style={styles.emptyRecent}><Icon name="time-outline" size={28} color={colors.muted} /><Text style={styles.emptyRecentTitle}>No activity on this device</Text></View>}</View>
     </ScrollView>
@@ -666,7 +666,7 @@ function ScanStep({ workflow, setWorkflow, onContinue }: { workflow: WorkflowSta
 function ActionStep({ container, onChoose }: { container: ContainerReference; onChoose: (action: ActionType) => void }) {
   const actions: { action: ActionType; icon: IconName; title: string; text: string; accent: string }[] = [
     { action: "load_assigned", icon: "archive-outline", title: "Mark container full", text: "Start a load and generate its load code.", accent: colors.blue },
-    { action: "batch_out", icon: "arrow-forward-circle-outline", title: "Record container departure", text: "Record that the container is leaving this location. The receiving site is not selected here.", accent: colors.cyan },
+    { action: "batch_out", icon: "arrow-forward-circle-outline", title: "Record container departure", text: "Record that the container is leaving this location. It will remain in transit until another location records its arrival.", accent: colors.cyan },
     { action: "batch_in", icon: "arrow-down-circle-outline", title: "Record arrival here", text: "Confirm that the container arrived at this location.", accent: colors.green },
     { action: "emptied", icon: "checkmark-circle-outline", title: "Mark container empty", text: "Close the active load at this location.", accent: colors.orange }
   ];
@@ -697,9 +697,9 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
   const detailText = workflow.action === "load_assigned"
     ? "Choose the goods category before you mark the container full."
     : workflow.action === "batch_out"
-      ? "This scanner records where the container left. It does not ask for a receiving site because the local team cannot know it; the receiving site is confirmed when the container arrives."
+      ? "This scanner records where the container left. It does not ask where the truck is going; the next location records the arrival when the container gets there."
       : workflow.action === "batch_in"
-        ? "Confirm that the container arrived at this location. This scan is what establishes the receiving site."
+        ? "Confirm that the container arrived at this location. This scan records where the container was received."
         : "Confirm that the container is empty at this location.";
   return (
     <View style={styles.step}>
@@ -710,7 +710,7 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
           <Text style={styles.fieldLabel}>{selectedGoods?.secondaryLabel.toUpperCase()}</Text><View style={styles.choiceWrap}>{selectedGoods?.options.map((item) => <Pressable key={item} onPress={() => setWorkflow((current) => ({ ...current, secondaryValue: item }))} style={[styles.choice, workflow.secondaryValue === item && styles.choiceActive]}><Text style={[styles.choiceText, workflow.secondaryValue === item && styles.choiceTextActive]}>{item}</Text></Pressable>)}</View>
         </>
       ) : isDeparture ? (
-        <View style={styles.departureNotice}><View style={styles.departureNoticeIcon}><Icon name="arrow-forward-circle-outline" size={24} color={colors.blue} /></View><View style={styles.departureNoticeCopy}><Text style={styles.departureNoticeTitle}>Leaving {fixtures.locations.find((item) => item.locationId === assignedLocationId)?.name ?? "this location"}</Text><Text style={styles.departureNoticeText}>No receiving site is selected at departure. The next receiving scan will establish where this container arrived.</Text></View></View>
+        <View style={styles.departureNotice}><View style={styles.departureNoticeIcon}><Icon name="arrow-forward-circle-outline" size={24} color={colors.blue} /></View><View style={styles.departureNoticeCopy}><Text style={styles.departureNoticeTitle}>In transit — leaving {fixtures.locations.find((item) => item.locationId === assignedLocationId)?.name ?? "this location"}</Text><Text style={styles.departureNoticeText}>The truck destination is not selected here. Another location will record the arrival when the container is received.</Text></View></View>
       ) : null}
       <Text style={styles.fieldLabel}>MESSAGE FOR OPERATIONS (OPTIONAL)</Text><TextInput value={workflow.notes} onChangeText={(notes) => setWorkflow((current) => ({ ...current, notes }))} placeholder="Example: lid damaged, moved to dock 3, or paperwork attached" placeholderTextColor="#98A2AB" style={[styles.labelInput, styles.noteInput]} multiline />
       <PrimaryButton onPress={onContinue} icon="arrow-forward">REVIEW OBSERVATION</PrimaryButton>
@@ -727,7 +727,7 @@ function ConfirmStep({ workflow, fixtures, submitting, deviceLocationName, onSub
         <ConfirmRow label="Action" value={actionSummary(workflow.action!, deviceLocationName)} />
         <ConfirmRow label="Scanned at" value={deviceLocationName} />
         {workflow.action === "load_assigned" && <><ConfirmRow label="Goods" value={workflow.goodsType} /><ConfirmRow label="Quality" value={workflow.secondaryValue} /></>}
-        {workflow.action === "batch_out" && <ConfirmRow label="Receiving site" value="Confirmed when the next location scans arrival" />}
+        {workflow.action === "batch_out" && <ConfirmRow label="Movement" value={`In transit — leaving ${deviceLocationName}`} />}
         {workflow.notes && <ConfirmRow label="Message for operations" value={workflow.notes} />}
         <ConfirmRow label="Device time" value={new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} last />
       </View>

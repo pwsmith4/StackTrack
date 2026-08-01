@@ -1,6 +1,6 @@
 # StackTrack mobile
 
-This package is an Expo/React Native shared-device field app and a browser-testable local preview. The implemented workflow supports typed or keyboard-wedge labels, mark full, send out, receive, mark empty, goods classification, confirmation, generated load codes, persistent local activity, and offline queue/retry behavior.
+This package is an Expo/React Native shared-device field app and a browser-testable local preview. The implemented workflow supports typed or keyboard-wedge labels, marking a container full, recording a departure (without choosing a destination), recording an arrival at the scanning site, marking empty, goods classification, confirmation, generated load codes, persistent local activity, and offline queue/retry behavior.
 
 The existing scanner adapter, clock-offset estimate, and shared queue/sync core remain independent of the eventual Unitech model. A future camera or hardware SDK can implement the same input boundary without changing the event ledger.
 
