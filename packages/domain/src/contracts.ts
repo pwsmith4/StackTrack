@@ -51,7 +51,7 @@ export const eventSubmissionSchema = z
         code: z.ZodIssueCode.custom,
         path: ["payload", "destinationLocationId"],
         message:
-          "A receiving site is recorded only by the arrival scan. Do not include a planned destination in event payloads."
+          "A departure scan records only where the container left. Do not include a receiving site or planned destination; a later arrival scan, if one occurs, provides that location."
       });
     }
 
