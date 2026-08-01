@@ -1680,3 +1680,70 @@ footer > span:first-child { display: none; }
 @media (max-width: 850px) { .location-focused-hero { flex-direction: column; } .location-focused-hero__actions { justify-content: flex-start; } .location-focused-columns { grid-template-columns: 1fr; } .location-inventory__header { flex-direction: column; } .location-inventory__header-count { align-self: flex-start; text-align: left; } .location-inventory__row { grid-template-columns: auto minmax(0, 1fr) auto; } .location-inventory__row-movement { grid-column: 2; } .location-inventory__row-time { grid-column: 3; grid-row: 1 / span 2; } .location-inventory__row > svg { grid-column: 3; grid-row: 1; display: none; } }
 @media (max-width: 600px) { .location-focused-toolbar { align-items: stretch; flex-wrap: wrap; } .location-focused-toolbar__crumb { order: 3; width: 100%; } .location-focused-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-focused-section__header { flex-direction: column; } .location-health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-health-grid span:nth-child(2) { border-right: 0; } .location-health-grid span:nth-child(n + 3) { border-top: 1px solid var(--line); } .location-inventory__tabs, .location-inventory__filters, .location-inventory__breakdown { padding-inline: 12px; } .location-inventory__filters { grid-template-columns: 1fr; } .location-inventory__filters > .secondary { justify-self: start; } .location-inventory__breakdown { grid-template-columns: 1fr; } .location-inventory__row { padding-inline: 12px; }
 }
+
+/* Warehouse outlook hierarchy: make the history chart the visual anchor, then let admins move into detail. */
+.warehouse-forecast__body { display: flex; flex-direction: column; gap: 14px; padding: 0 16px 15px; }
+.warehouse-forecast__body > .warehouse-forecast__chart { order: 1; min-height: 190px; }
+.warehouse-forecast__body > .warehouse-forecast__table-wrap { order: 2; }
+.warehouse-forecast__chart-heading strong { font-size: 12px; }
+.warehouse-forecast__chart-heading p { margin: 4px 0 0; color: #718793; font-size: 8px; line-height: 1.35; }
+.warehouse-forecast__chart-heading small { max-width: 310px; }
+.warehouse-forecast__legend { align-items: center; flex-wrap: wrap; }
+.warehouse-forecast__legend em { margin-left: auto; color: #8798a1; font-size: 7px; font-style: normal; }
+.warehouse-forecast__body .warehouse-forecast__table-wrap { margin-top: 14px; }
+.warehouse-forecast__events { display: none; }
+.warehouse-forecast__saved-events { display: grid; grid-template-columns: minmax(190px, .55fr) minmax(0, 1.45fr); gap: 15px; margin: 0 16px 14px; padding: 12px; border-top: 1px solid #e3edf0; }
+.warehouse-forecast__saved-events h3 { margin: 4px 0 0; color: var(--ink); font: 800 12px/1.2 Manrope, sans-serif; }
+.warehouse-forecast__saved-events p { margin: 4px 0 0; color: #7a8d96; font-size: 8px; line-height: 1.35; }
+
+/* Store coverage is grouped by location; the legacy flat table remains available to the component during the transition but is not shown. */
+.store-outlook-panel { display: flex; flex-direction: column; }
+.store-outlook-panel > .store-outlook__header { order: 1; }
+.store-outlook-panel > .warehouse-forecast__assumption-note { order: 2; }
+.store-outlook-panel > .store-outlook__controls { order: 3; }
+.store-outlook-panel > .store-outlook__summary { order: 4; }
+.store-outlook-panel > .store-outlook__queue { order: 5; }
+.store-outlook-panel > .store-outlook__table-wrap { display: none; }
+.store-outlook-panel > .store-outlook__target-editor { order: 6; }
+.store-outlook-panel > .store-outlook__logic { order: 7; }
+.store-outlook-panel > .store-outlook__holiday-section { order: 8; }
+.store-outlook-panel > .store-outlook__holiday-section:not(.store-outlook__holiday-section--new) { display: none; }
+.store-outlook-panel > .store-outlook__note { order: 9; }
+.store-outlook__queue { margin: 0 19px; border: 1px solid #dce8ed; background: #fff; }
+.store-outlook__queue-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 14px 15px; border-bottom: 1px solid #e2edf1; background: #fbfdfe; }
+.store-outlook__queue-heading h3 { margin: 4px 0 0; color: var(--ink); font: 800 14px/1.2 Manrope, sans-serif; }
+.store-outlook__queue-heading p { max-width: 680px; margin: 5px 0 0; color: #718793; font-size: 8.5px; line-height: 1.4; }
+.store-outlook__queue-controls { display: flex; align-items: flex-end; justify-content: flex-end; gap: 10px; flex: none; }
+.store-outlook__queue-controls label { display: grid; gap: 4px; color: #657c88; font-size: 8px; font-weight: 800; }
+.store-outlook__queue-controls select { min-height: 30px; padding: 0 8px; border: 1px solid #c9d9e0; border-radius: 3px; color: #304858; background: #fff; font: inherit; font-size: 8.5px; }
+.store-outlook__queue-count { padding-bottom: 7px; color: #7a8d96; font-size: 8px; white-space: nowrap; }
+.store-outlook__group-table-wrap { overflow-x: auto; }
+.store-outlook__group-table { width: 100%; min-width: 980px; border-collapse: collapse; }
+.store-outlook__group-table th, .store-outlook__group-table td { padding: 8px 9px; border-bottom: 1px solid #e5edf0; color: #3d5866; font-size: 8.5px; text-align: right; vertical-align: middle; white-space: nowrap; }
+.store-outlook__group-table thead th { color: #667d89; background: #f5f9fa; font-size: 7.5px; letter-spacing: .04em; text-transform: uppercase; }
+.store-outlook__group-table tbody th:first-child, .store-outlook__group-table tbody td:first-child { text-align: left; }
+.store-outlook__group-table tbody tr:not(.store-outlook__group-row):hover { background: #f8fcfd; }
+.store-outlook__group-table tbody th strong, .store-outlook__group-table tbody td strong { color: #304858; font-weight: 800; }
+.store-outlook__group-table tbody th small, .store-outlook__group-table tbody td small { display: block; margin-top: 3px; color: #8798a1; font-size: 7.5px; font-weight: 500; }
+.store-outlook__group-table .secondary { min-height: 27px; padding: 0 8px; font-size: 8px; }
+.store-outlook__group-row th { padding: 10px 9px; text-align: left !important; background: #eef8fb; border-top: 1px solid #cde5ec; border-bottom: 1px solid #cde5ec; }
+.store-outlook__group-row th > span { display: inline-flex; align-items: center; gap: 6px; }
+.store-outlook__group-row th svg { color: var(--blue-800); }
+.store-outlook__group-row th strong { color: var(--ink); font-size: 10px; }
+.store-outlook__group-row th small { margin: 0 0 0 4px; color: #6e858f; font-size: 7.5px; font-weight: 500; }
+.store-outlook__group-row th b { float: right; color: #53707c; font-size: 8px; font-weight: 800; }
+.store-outlook__queue-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px; border-top: 1px solid #e5edf0; color: #6f858f; font-size: 8px; }
+.store-outlook__queue-pagination .secondary { min-height: 28px; padding: 0 9px; font-size: 8px; }
+.store-outlook__holiday-section { padding-bottom: 16px; }
+.store-outlook__holiday-heading-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.store-outlook__holiday-toggle { min-height: 32px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.store-outlook__holiday-create { margin-top: 12px; padding: 12px; border: 1px solid #cfe5ec; background: #f3fafc; }
+.store-outlook__holiday-create > strong { display: block; margin-top: 4px; color: var(--ink); font-size: 10px; }
+.store-outlook__holiday-create > p { margin-top: 3px; }
+.store-outlook__holiday-form { margin-top: 10px; padding-top: 10px; border-top: 1px solid #d8e9ee; }
+
+@media (max-width: 800px) {
+  .store-outlook__queue-heading { align-items: stretch; flex-direction: column; }
+  .store-outlook__queue-controls { justify-content: flex-start; flex-wrap: wrap; }
+  .store-outlook__queue-count { padding-bottom: 0; }
+}
