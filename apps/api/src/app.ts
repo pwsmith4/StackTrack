@@ -562,6 +562,16 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
     app.options("/*", async (_request, reply) => reply.code(204).send());
   }
 
+  // Keep the container root useful when an operator opens the Azure URL in a
+  // browser.  It deliberately exposes no tenant data or configuration; the
+  // authenticated API remains behind the routes below and `/health` stays the
+  // machine-readable probe used by platform checks.
+  app.get("/", async () => ({
+    service: "StackTrack API",
+    status: "ok",
+    health: "/health"
+  }));
+
   app.get("/health", async () => ({ status: "ok" }));
 
   app.get("/api/v1/time", async (request, reply) => {

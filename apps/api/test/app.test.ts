@@ -61,6 +61,19 @@ afterEach(async () => {
 });
 
 describe("StackTrack API foundation", () => {
+  it("returns a safe service response at the container root", async () => {
+    app = await createApp();
+
+    const response = await app.inject({ method: "GET", url: "/" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      service: "StackTrack API",
+      status: "ok",
+      health: "/health"
+    });
+  });
+
   it("accepts an event and returns its projected state", async () => {
     app = await createApp({ now: () => new Date("2026-07-22T12:00:01.000Z") });
 
