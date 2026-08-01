@@ -2701,8 +2701,10 @@ function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, rout
     <span className={`location-flow-node__icon location-flow-node__icon--${metric.location.type}`}><LocationTypeIcon location={metric.location} size={16} /></span>
     <span className="location-flow-node__body"><strong>{metric.location.name}</strong><small>{locationTypeLabel(metric.location.type)} · {metric.current.length} here · {metric.arriving.length} inbound</small></span>
     <span className="location-flow-node__stats"><b>{metric.eventsLastDay}</b><small>24h scans</small></span>
-    {metric.needsReview > 0 && <Pill tone="warn">{metric.needsReview} review</Pill>}
-    <ChevronRight size={15} />
+    <span className="location-flow-node__actions">
+      {metric.needsReview > 0 && <Pill tone="warn">{metric.needsReview} review</Pill>}
+      <ChevronRight size={15} />
+    </span>
   </button>;
   return <section className="location-network panel">
     <div className="location-network__header"><div><span className="eyebrow">Location view option 1 · recommended</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. The system does not assume a store-to-warehouse path, so multi-hop and rerouted journeys remain honest." /></div><span className="location-network__hint">Best for daily triage: select a node to focus its containers, scanners, and active handoffs below.</span></div>

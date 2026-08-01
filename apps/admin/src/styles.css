@@ -745,7 +745,8 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .location-flow-node__stats { display: grid; justify-items: end; gap: 2px; }
 .location-flow-node__stats b { color: var(--blue-800); font-size: 12px; }
 .location-flow-node__stats small { color: #8b969e; font-size: 7px; white-space: nowrap; }
-.location-flow-node > svg { color: #9caab3; }
+.location-flow-node__actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; min-width: 0; white-space: nowrap; }
+.location-flow-node__actions > svg { flex: none; color: #9caab3; }
 .location-flow-node .pill { min-height: 20px; padding: 0 6px; font-size: 7px; white-space: nowrap; }
 .location-selector { margin-bottom: 18px; }
 .location-selector__heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; padding-right: 18px; }
