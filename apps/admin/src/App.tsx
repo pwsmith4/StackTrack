@@ -464,14 +464,14 @@ function inTransitDepartureSummary(origin?: string | null) {
 
 function inTransitDepartureDetail(origin?: string | null) {
   return origin
-    ? `The container left ${origin}. A departure scan does not select or predict a receiving location.`
-    : "The container is in transit, but its departure location is not confirmed. A departure scan does not select or predict a receiving location.";
+    ? `The container left ${origin}. The receiving location is not known until another scanner records its arrival.`
+    : "The container is in transit, but its departure location is not confirmed. The receiving location is not known until another scanner records its arrival.";
 }
 
 function inTransitEventSummary(subject: string, origin?: string | null) {
   return origin
-    ? `${subject} is in transit — leaving ${origin}.`
-    : `${subject} is in transit; the departure location is not confirmed yet.`;
+    ? `${subject} is in transit after leaving ${origin}. The receiving location will be recorded on arrival.`
+    : `${subject} is in transit; the departure location is not confirmed yet. The receiving location will be recorded on arrival.`;
 }
 
 function containerTypeLabel(value?: string | null) {
@@ -2663,6 +2663,7 @@ function humanRouteSummary(route: ContainerRouteContext): string {
 function humanSegmentSummary(segment: ContainerRouteSegment): string {
   const origin = segment.origin?.name ?? "Departure origin not confirmed";
   if (segment.status === "in_transit") return inTransitDepartureSummary(origin);
+  if (segment.status === "superseded") return `Left ${origin}; no arrival scan was recorded before a later departure`;
   const destination = segment.destination?.name ?? "arrival location not recorded";
   return `Received at ${destination} after leaving ${origin}`;
 }

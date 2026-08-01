@@ -666,7 +666,7 @@ function ScanStep({ workflow, setWorkflow, onContinue }: { workflow: WorkflowSta
 function ActionStep({ container, onChoose }: { container: ContainerReference; onChoose: (action: ActionType) => void }) {
   const actions: { action: ActionType; icon: IconName; title: string; text: string; accent: string }[] = [
     { action: "load_assigned", icon: "archive-outline", title: "Mark container full", text: "Start a load and generate its load code.", accent: colors.blue },
-    { action: "batch_out", icon: "arrow-forward-circle-outline", title: "Record container departure", text: "Record that the container is leaving this location. It will remain in transit until another location records its arrival.", accent: colors.cyan },
+    { action: "batch_out", icon: "arrow-forward-circle-outline", title: "Record container departure", text: "The container is leaving this location. StackTrack records the departure only; another scanner records where it arrives.", accent: colors.cyan },
     { action: "batch_in", icon: "arrow-down-circle-outline", title: "Record arrival here", text: "Confirm that the container arrived at this location.", accent: colors.green },
     { action: "emptied", icon: "checkmark-circle-outline", title: "Mark container empty", text: "Close the active load at this location.", accent: colors.orange }
   ];
@@ -697,7 +697,7 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
   const detailText = workflow.action === "load_assigned"
     ? "Choose the goods category before you mark the container full."
     : workflow.action === "batch_out"
-      ? "This scanner records where the container left. It does not ask where the truck is going; the next location records the arrival when the container gets there."
+      ? "This scan records only that the container left this location. It does not ask for a receiving site or predict where the truck is going; another scanner records the arrival when the container gets there."
       : workflow.action === "batch_in"
         ? "Confirm that the container arrived at this location. This scan records where the container was received."
         : "Confirm that the container is empty at this location.";
@@ -710,7 +710,7 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
           <Text style={styles.fieldLabel}>{selectedGoods?.secondaryLabel.toUpperCase()}</Text><View style={styles.choiceWrap}>{selectedGoods?.options.map((item) => <Pressable key={item} onPress={() => setWorkflow((current) => ({ ...current, secondaryValue: item }))} style={[styles.choice, workflow.secondaryValue === item && styles.choiceActive]}><Text style={[styles.choiceText, workflow.secondaryValue === item && styles.choiceTextActive]}>{item}</Text></Pressable>)}</View>
         </>
       ) : isDeparture ? (
-        <View style={styles.departureNotice}><View style={styles.departureNoticeIcon}><Icon name="arrow-forward-circle-outline" size={24} color={colors.blue} /></View><View style={styles.departureNoticeCopy}><Text style={styles.departureNoticeTitle}>In transit — leaving {fixtures.locations.find((item) => item.locationId === assignedLocationId)?.name ?? "this location"}</Text><Text style={styles.departureNoticeText}>This scan records only that the container left this location. It does not ask for or predict where the truck is going.</Text></View></View>
+        <View style={styles.departureNotice}><View style={styles.departureNoticeIcon}><Icon name="arrow-forward-circle-outline" size={24} color={colors.blue} /></View><View style={styles.departureNoticeCopy}><Text style={styles.departureNoticeTitle}>In transit — leaving {fixtures.locations.find((item) => item.locationId === assignedLocationId)?.name ?? "this location"}</Text><Text style={styles.departureNoticeText}>No receiving site is selected here. Another scanner records where the container arrives.</Text></View></View>
       ) : null}
       <Text style={styles.fieldLabel}>MESSAGE FOR OPERATIONS (OPTIONAL)</Text><TextInput value={workflow.notes} onChangeText={(notes) => setWorkflow((current) => ({ ...current, notes }))} placeholder="Example: lid damaged, moved to dock 3, or paperwork attached" placeholderTextColor="#98A2AB" style={[styles.labelInput, styles.noteInput]} multiline />
       <PrimaryButton onPress={onContinue} icon="arrow-forward">REVIEW OBSERVATION</PrimaryButton>
