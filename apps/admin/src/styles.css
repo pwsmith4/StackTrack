@@ -757,6 +757,9 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .location-search input { width: 100%; border: 0; outline: 0; color: var(--ink); font: inherit; font-size: 11px; }
 .location-directory-summary { display: flex; flex-wrap: wrap; gap: 14px 24px; padding: 0 18px 13px; color: #7b8993; font-size: 9px; }
 .location-directory-summary b { color: var(--ink); }
+.location-directory-export { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 18px 13px; padding: 9px 11px; border: 1px solid #dce9ee; background: #f7fbfc; color: #71838d; font-size: 9px; }
+.location-directory-export__actions { display: flex; align-items: center; gap: 7px; flex: none; }
+.location-directory-export .secondary { min-height: 32px; padding: 0 10px; }
 .location-selector__list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; padding: 0 18px 18px; }
 .location-selector__list button { min-width: 0; }
 .location-directory-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); background: white; color: #516170; text-align: left; }
@@ -1227,6 +1230,9 @@ footer > span:first-child { display: none; }
   .location-network__hint { max-width: none; text-align: left; }
   .location-directory-tools { justify-content: flex-start; }
   .location-directory-tools .location-search { flex: 1 1 220px; }
+  .location-directory-export { align-items: stretch; flex-direction: column; }
+  .location-directory-export__actions { align-items: stretch; flex-wrap: wrap; }
+  .location-directory-export .secondary { align-self: flex-start; }
   .location-option__header { flex-direction: column; }
   .location-option__icon { order: -1; }
   .lifecycle-row { grid-template-columns: 1fr auto; gap: 9px; }

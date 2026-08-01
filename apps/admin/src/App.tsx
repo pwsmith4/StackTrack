@@ -2764,7 +2764,28 @@ function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, rout
   </section>;
 }
 
+function LocationNetworkMap({ metrics, movingCount, movingReviewCount, routeRecords, onSelect, onOpen }: { metrics: LocationMetric[]; movingCount: number; movingReviewCount: number; routeRecords: RouteRecord[]; onSelect: (locationId: string) => void; onOpen: (record: RouteRecord) => void }) {
+  const sortByWork = (left: LocationMetric, right: LocationMetric) => (right.current.length + right.arriving.length + right.leaving.length + right.needsReview) - (left.current.length + left.arriving.length + left.leaving.length + left.needsReview);
+  const currentCount = metrics.reduce((total, metric) => total + metric.current.length, 0);
+  const attentionCount = metrics.reduce((total, metric) => total + metric.needsReview + metric.flaggedEvents + metric.staleScanners, movingReviewCount);
+  const activeScanners = metrics.reduce((total, metric) => total + metric.scanners.filter((device) => device.isActive).length, 0);
+  const activeSegments = routeRecords.flatMap((record) => record.route.activeSegment ? [{ record, segment: record.route.activeSegment }] : []).sort((left, right) => Date.parse(right.segment.departedAt) - Date.parse(left.segment.departedAt));
+  const renderLocationNode = (metric: LocationMetric) => <button className="location-flow-node" key={metric.location.locationId} onClick={() => onSelect(metric.location.locationId)}>
+    <span className={`location-flow-node__icon location-flow-node__icon--${metric.location.type}`}><LocationTypeIcon location={metric.location} size={16} /></span>
+    <span className="location-flow-node__body"><strong>{metric.location.name}</strong><small>{locationTypeLabel(metric.location.type)} · {metric.current.length} here · {metric.arriving.length} received here</small></span>
+    <span className="location-flow-node__stats"><b>{metric.eventsLastDay}</b><small>24h scans</small></span>
+    <span className="location-flow-node__actions">{metric.needsReview > 0 ? <Pill tone="warn">{metric.needsReview} review</Pill> : metric.flaggedEvents > 0 ? <Pill tone="warn">{metric.flaggedEvents} flagged</Pill> : metric.staleScanners > 0 ? <Pill tone="warn">{metric.staleScanners} stale</Pill> : null}<ChevronRight size={15} /></span>
+  </button>;
+  return <section className="location-network panel">
+    <div className="location-network__header"><div><span className="eyebrow">Location network</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. Open departures show their confirmed origin only; the receiving site appears after an arrival scan." /></div><span className="location-network__hint">Select a location to focus its containers, scanners, and recent activity below. Use the directory filters to narrow this map and its export.</span></div>
+    <div className="location-network__summary"><span><b>{metrics.length}</b><small>locations in view</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>open departures</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>attention items</small></span></div>
+    <div className="location-network__nodes">{[...metrics].sort(sortByWork).map(renderLocationNode)}</div>
+    <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Open departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} with an open departure` : "No open departures in this view"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>Departed from {segment.origin?.name ?? "Origin not confirmed"}; receiving site not confirmed</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan will appear here with its confirmed origin. The receiving site is added only after an arrival scan.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} more open departures are available by filtering the location directory below.</small>}</div>
+  </section>;
+}
+
 function LocationRouteMatrix({ routeRecords, onSelect }: { routeRecords: RouteRecord[]; onSelect: (locationId: string) => void }) {
+  return null;
   const pairs = new Map<string, { origin: Location | null; destination: Location | null; active: number; received: number; superseded: number; review: number; containers: string[]; lastDeparture: string | null }>();
   for (const record of routeRecords) {
     for (const segment of record.route.segments) {
@@ -2775,7 +2796,8 @@ function LocationRouteMatrix({ routeRecords, onSelect }: { routeRecords: RouteRe
       else pair.superseded += 1;
       if (record.projection?.health === "needs_review") pair.review += 1;
       if (!pair.containers.includes(record.container.label)) pair.containers.push(record.container.label);
-      if (!pair.lastDeparture || Date.parse(segment.departedAt) > Date.parse(pair.lastDeparture)) pair.lastDeparture = segment.departedAt;
+      const lastDeparture = pair.lastDeparture;
+      if (!lastDeparture || Date.parse(segment.departedAt) > Date.parse(lastDeparture ?? "")) pair.lastDeparture = segment.departedAt;
       pairs.set(key, pair);
     }
   }
@@ -2786,6 +2808,7 @@ function LocationRouteMatrix({ routeRecords, onSelect }: { routeRecords: RouteRe
 
 function LocationLifecycleExplorer({ routeRecords, focusLocationId, onOpen }: { routeRecords: RouteRecord[]; focusLocationId: string; onOpen: (record: RouteRecord) => void }) {
   const [showAll, setShowAll] = useState(false);
+  return null;
   const journeys = routeRecords.filter((record) => record.route.segments.length > 0 && (!focusLocationId || record.route.segments.some((segment) => segment.origin?.locationId === focusLocationId || segment.destination?.locationId === focusLocationId))).sort((left, right) => (Number(right.route.inTransit) - Number(left.route.inTransit)) || (right.route.segments.length - left.route.segments.length) || Date.parse(right.route.departedAt ?? "") - Date.parse(left.route.departedAt ?? ""));
   const visible = showAll ? journeys : journeys.slice(0, 8);
   return <section className="location-option location-lifecycle panel"><div className="location-option__header"><div><span className="eyebrow">Location view option 3 · container lifecycle</span><h2>Follow every checkpoint in order</h2><p>Use this when a container has visited several sites. It shows the recorded journey as a chain, highlights the current open hop, and keeps a reroute visible rather than flattening it into one “last location.”</p></div><span className="location-option__icon"><GitBranch size={19} /></span></div>{visible.length ? <div className="lifecycle-list">{visible.map((record) => { const route = record.route; const names = routeLocationNames(route); return <button className="lifecycle-row" key={record.container.containerId} onClick={() => onOpen(record)}><span className="lifecycle-row__identity"><span className="lifecycle-row__icon"><ContainerIcon size={15} /></span><span><strong>{record.container.label}</strong><small>{record.container.type} · {route.segments.length} recorded handoff{route.segments.length === 1 ? "" : "s"}</small></span></span><span className="lifecycle-row__journey">{names.map((name, index) => <span key={`${record.container.containerId}:${name}:${index}`}><b>{name}</b>{index < names.length - 1 && <ArrowRight size={12} />}</span>)}{!names.length && <em>Locations not recorded</em>}</span><span className="lifecycle-row__status">{route.inTransit ? <Pill tone="blue">In transit</Pill> : route.unresolvedSegmentCount ? <Pill tone="warn">Receipt gap</Pill> : <Pill tone="good">Journey recorded</Pill>}<ChevronRight size={15} /></span></button>; })}</div> : <div className="location-lifecycle__empty"><Layers3 size={19} /><span><strong>No multi-hop journeys match this location.</strong><small>Once a container is received and sent again, its complete checkpoint chain will appear here.</small></span></div>}{journeys.length > 8 && <button className="location-option__more" onClick={() => setShowAll((value) => !value)}>{showAll ? "Show fewer journeys" : `Show all ${journeys.length} journeys`}</button>}</section>;
@@ -2912,6 +2935,12 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
   const [locationTypeFilter, setLocationTypeFilter] = useState<"all" | Location["type"]>("all");
   const [locationHealthFilter, setLocationHealthFilter] = useState<"all" | "attention">("all");
   const [locationSort, setLocationSort] = useState<"work" | "containers" | "activity" | "alphabetical">("work");
+  const clearLocationFilters = () => {
+    setLocationQuery("");
+    setLocationTypeFilter("all");
+    setLocationHealthFilter("all");
+    setLocationSort("work");
+  };
   if (focusedLocationId) return <LocationWorkspacePage data={data} locationId={focusedLocationId} {...(focusedLocationFilter ? { locationFilter: focusedLocationFilter } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
   const selected = (physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0])!;
   if (!selected) return <section className="panel"><EmptyState>No active operating locations are available. Add or restore a location from Settings before reviewing workflow.</EmptyState><button className="secondary" onClick={() => setPage("settings")}><Settings size={15} /> Open Settings</button></section>;
@@ -2950,7 +2979,6 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
   const locationMetrics = physicalLocations.map(metricsFor);
   const selectedMetric = locationMetrics.find((metric) => metric.location.locationId === selected.locationId)!;
   const moving = projections.filter((projection) => projection.locationId === transitId);
-  const movingReviewCount = moving.filter((projection) => projection.health === "needs_review").length;
   const locationSearch = locationQuery.trim().toLowerCase();
   const matchingMetrics = locationMetrics
     .filter((metric) => locationTypeFilter === "all" || metric.location.type === locationTypeFilter)
@@ -2962,6 +2990,28 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
       if (locationSort === "activity") return right.eventsLastDay - left.eventsLastDay;
       return (right.current.length + right.arriving.length + right.leaving.length + right.needsReview) - (left.current.length + left.arriving.length + left.leaving.length + left.needsReview);
     });
+  const matchingLocationIds = new Set(matchingMetrics.map((metric) => metric.location.locationId));
+  const visibleRouteRecords = routeRecords.filter((record) => {
+    const originId = record.route.activeSegment?.origin?.locationId;
+    return Boolean(originId && matchingLocationIds.has(originId));
+  });
+  const visibleMovingCount = visibleRouteRecords.filter((record) => Boolean(record.route.activeSegment)).length;
+  const visibleMovingReviewCount = visibleRouteRecords.filter((record) => record.projection?.health === "needs_review").length;
+  const exportFilteredLocations = () => downloadCsv("stacktrack-locations-filtered.csv", [
+    ["Location", "Location type", "Containers here", "Received here", "Open departures", "Scanners", "Enabled scanners", "Stale scanners", "Scans in last 24 hours", "Needs review"],
+    ...matchingMetrics.map((metric) => [
+      metric.location.name,
+      locationTypeLabel(metric.location.type),
+      metric.current.length,
+      metric.arriving.length,
+      metric.leaving.length,
+      metric.scanners.length,
+      metric.scanners.filter((device) => device.isActive).length,
+      metric.staleScanners,
+      metric.eventsLastDay,
+      metric.needsReview
+    ])
+  ]);
   const current = projections.filter((projection) => projection.locationId === selected.locationId);
   const arriving = current.filter((projection) => wasReceivedAtLocation(projection, selected.locationId, data));
   const leaving = moving.filter((projection) => routeFor(projection).activeSegment?.origin?.locationId === selected.locationId);
@@ -2991,9 +3041,8 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
   };
 
   return <>
-    <LocationNetworkOverview metrics={locationMetrics} movingCount={moving.length} movingReviewCount={movingReviewCount} routeRecords={routeRecords} onSelect={openLocation} onOpen={openRouteRecord} />
-    <LocationRouteMatrix routeRecords={routeRecords} onSelect={openLocation} />
-    <LocationLifecycleExplorer routeRecords={routeRecords} focusLocationId={selected.locationId} onOpen={(record) => {
+    <LocationNetworkMap metrics={matchingMetrics} movingCount={visibleMovingCount} movingReviewCount={visibleMovingReviewCount} routeRecords={visibleRouteRecords} onSelect={openLocation} onOpen={openRouteRecord} />
+    {false && <LocationLifecycleExplorer routeRecords={routeRecords} focusLocationId={selected.locationId} onOpen={(record) => {
       const projection = record.projection;
       if (projection) openContainer(projection);
       else openDetail({
@@ -3003,10 +3052,11 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
         summary: "Recorded route history for this container. No current projection is available.",
         body: <><DetailFacts items={[["Container type", record.container.type], ["Recorded handoffs", String(record.route.segments.length)], ["Journey", routeLocationNames(record.route).join(" → ") || "Locations not recorded"]]} /><h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={eventsFor(record.container.containerId)} data={data}/></>
       });
-    }} />
+    }} />}
     <section className="location-selector panel">
       <div className="location-selector__heading"><PanelTitle title="Location directory" subtitle="Search, sort, and filter every physical location before opening its operating picture." /><div className="location-directory-tools"><label className="location-search"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="Search locations" aria-label="Search locations" /></label><select value={locationTypeFilter} onChange={(event) => setLocationTypeFilter(event.target.value as typeof locationTypeFilter)} aria-label="Filter by location type"><option value="all">All location types</option><option value="store_backroom">Stores</option><option value="donation_express">Donation Xpress</option><option value="warehouse">Warehouses</option></select><select value={locationHealthFilter} onChange={(event) => setLocationHealthFilter(event.target.value as typeof locationHealthFilter)} aria-label="Filter locations needing attention"><option value="all">All locations</option><option value="attention">Needs attention</option></select><select value={locationSort} onChange={(event) => setLocationSort(event.target.value as typeof locationSort)} aria-label="Sort locations"><option value="work">Sort by active work</option><option value="containers">Sort by containers here</option><option value="activity">Sort by 24h activity</option><option value="alphabetical">Sort A–Z</option></select></div></div>
       <div className="location-directory-summary"><span>Showing <b>{matchingMetrics.length}</b> of {physicalLocations.length} locations</span><span>{matchingMetrics.reduce((total, metric) => total + metric.current.length, 0)} containers in the filtered view</span><span>{matchingMetrics.reduce((total, metric) => total + metric.needsReview, 0)} need review</span></div>
+      <div className="location-directory-export"><span>Filters apply to the map, directory, open-departure count, and export.</span><span className="location-directory-export__actions"><button type="button" className="secondary" onClick={clearLocationFilters} disabled={!locationQuery && locationTypeFilter === "all" && locationHealthFilter === "all" && locationSort === "work"}>Clear filters</button><button type="button" className="secondary" onClick={exportFilteredLocations} disabled={!matchingMetrics.length}><Download size={15} /> Export filtered CSV</button></span></div>
       <div className="location-selector__list">{matchingMetrics.map((metric) => {
         const location = metric.location;
         return <button key={location.locationId} className={`location-directory-card ${location.locationId === selected.locationId ? "active" : ""}`} onClick={() => setSelectedLocationId(location.locationId)}><span className={`location-type-icon location-type-icon--${location.type}`}><LocationTypeIcon location={location} /></span><span className="location-directory-card__body"><b>{location.name}</b><small>{locationTypeLabel(location.type)} · {metric.scanners.length} scanner{metric.scanners.length === 1 ? "" : "s"}</small><span className="location-directory-card__stats"><span><strong>{metric.current.length}</strong> here</span><span><strong>{metric.arriving.length}</strong> received</span><span><strong>{metric.leaving.length}</strong> out</span><span><strong>{metric.eventsLastDay}</strong> scans</span></span></span><span className="location-directory-card__status">{metric.needsReview > 0 ? <Pill tone="warn">{metric.needsReview} review</Pill> : metric.staleScanners > 0 ? <Pill tone="warn">{metric.staleScanners} stale</Pill> : <Pill tone="good">Operating</Pill>}<ChevronRight size={17} /></span></button>;
