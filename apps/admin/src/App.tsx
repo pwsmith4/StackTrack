@@ -3728,6 +3728,10 @@ function CorrectionRequestForm({
   const currentLocation = data.fixtures.locations.find(
     (item) => item.locationId === projection?.locationId
   );
+  const correctionLocations = data.fixtures.locations.filter((item) => {
+    if (item.type === "in_transit" || item.isActive === false) return false;
+    return session.principal.role !== "location_manager" || Boolean(session.principal.locationIds?.includes(item.locationId));
+  });
   const canRequest =
     session.principal.role === "organization_owner" ||
     session.principal.role === "operations_administrator" ||
@@ -3792,10 +3796,10 @@ function CorrectionRequestForm({
           </div>
           <div className="correction-form__grid">
             <label>
-              Correct location
+              Correct location{session.principal.role === "location_manager" ? " (assigned locations only)" : ""}
               <select value={locationId} onChange={(event) => setLocationId(event.target.value)}>
                 <option value="">No location change</option>
-                {data.fixtures.locations.filter((item) => item.type !== "in_transit").map((location) => (
+                {correctionLocations.map((location) => (
                   <option value={location.locationId} key={location.locationId}>{location.name}</option>
                 ))}
               </select>
