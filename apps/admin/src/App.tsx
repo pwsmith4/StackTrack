@@ -5,6 +5,7 @@ import {
   BarChart3,
   Boxes,
   Building2,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -27,6 +28,7 @@ import {
   MessageSquare,
   MonitorSmartphone,
   PackageCheck,
+  Plus,
   RefreshCw,
   Search,
   ScrollText,
@@ -37,6 +39,9 @@ import {
   UserRound,
   Waypoints,
   Store,
+  Target,
+  Trash2,
+  TrendingUp,
   Warehouse,
   Wifi,
   X
@@ -1085,7 +1090,252 @@ function WarehouseInventoryOverview({ data, setPage, openLocation }: { data: Ope
     <div className="warehouse-inventory__table-heading"><div><span className="eyebrow">Current warehouse inventory</span><strong>Containers by goods category</strong><p>Each container is counted once at its latest confirmed warehouse location. The small line in each cell shows the physical container mix.</p></div><span className="warehouse-inventory__scope">{warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"} · {currentTotal} containers</span></div>
     <div className="table-wrap warehouse-inventory__table-wrap"><table className="warehouse-inventory"><thead><tr><th>Warehouse</th>{goodsColumns.map((goodsType) => <th key={goodsType}>{goodsType}</th>)}<th>Total</th></tr></thead><tbody>{warehouses.map((warehouse) => { const items = locationRecords(warehouse.locationId); return <tr key={warehouse.locationId}><th scope="row"><button type="button" className="warehouse-inventory__location" onClick={() => openLocation(warehouse.locationId)}><span className="warehouse-inventory__location-icon"><Warehouse size={15} /></span><span><strong>{warehouse.name}</strong><small>Warehouse</small></span><ChevronRight size={13} /></button></th>{goodsColumns.map((goodsType) => { const goodsItems = items.filter((item) => item.goodsType === goodsType); return <td key={goodsType}>{goodsItems.length ? <button type="button" className="warehouse-inventory__cell" onClick={() => openLocation(warehouse.locationId)} title={`${goodsItems.length} ${goodsType} containers at ${warehouse.name}`}><strong>{goodsItems.length}</strong><small>{typeBreakdown(goodsItems)}</small></button> : <span className="warehouse-inventory__empty">—</span>}</td>; })}<td><button type="button" className="warehouse-inventory__cell warehouse-inventory__cell--total" onClick={() => openLocation(warehouse.locationId)}><strong>{items.length}</strong><small>All categories</small></button></td></tr>; })}</tbody><tfoot><tr><th>Warehouse total</th>{goodsColumns.map((goodsType) => <td key={goodsType}><strong>{countFor(warehouseRecords, goodsType)}</strong></td>)}<td><strong>{warehouseRecords.length}</strong></td></tr></tfoot></table></div>
     <div className="warehouse-trend"><div className="warehouse-trend__header"><div><span className="eyebrow">Donation and warehouse trend</span><strong>What changed over the last four seven-day periods</strong><p>“Donation loads” is a container marked full at a Donation Xpress site. It is a planning proxy, not a count of donated items or dollars.</p></div><div className="warehouse-trend__forecast"><span>Expected warehouse receipts</span><strong>{expectedReceipts ?? "—"}</strong><small>next 7 days · {forecastBasis}</small></div></div><div className="table-wrap"><table className="warehouse-trend__table"><thead><tr><th>Period</th><th>Donation loads</th><th>Warehouse receipts</th><th>Warehouse departures</th><th>Net receipts</th></tr></thead><tbody>{trendRows.map((row) => <tr key={row.key}><th>{row.label}{row.key === latestTrend.key && <small>Current period</small>}</th><td>{row.donationLoads}</td><td>{row.received}</td><td>{row.departed}</td><td className={row.received - row.departed >= 0 ? "positive" : "negative"}>{row.received - row.departed >= 0 ? "+" : ""}{row.received - row.departed}</td></tr>)}</tbody></table></div></div>
+    <WarehouseForecastPanel data={data} warehouses={warehouses} warehouseRecords={warehouseRecords} goodsColumns={goodsColumns} openLocation={openLocation} />
     <p className="warehouse-inventory__note">Forecasts use complete seven-day periods before the current period when available. If the pilot has no earlier period yet, the current period is shown as a provisional signal rather than a settled forecast; the expectation becomes more useful as Goodwill records additional weeks.</p>
+  </section>;
+}
+
+interface WarehouseForecastSettings {
+  horizonDays: number;
+  targetDays: number;
+  safetyStockPercent: number;
+  growthPercent: number;
+}
+
+interface WarehousePlanningEvent {
+  id: string;
+  name: string;
+  date: string;
+  durationDays: number;
+  upliftPercent: number;
+  warehouseId: string;
+  goodsType: string;
+}
+
+interface WarehouseForecastSeries {
+  label: string;
+  receipts: number;
+  departures: number;
+  donationLoads: number;
+  forecast?: boolean;
+}
+
+interface WarehouseForecastRow {
+  warehouse: Location;
+  current: number;
+  baselineReceipts: number;
+  baselineDepartures: number;
+  expectedReceipts: number;
+  expectedDepartures: number;
+  projectedInventory: number;
+  recommendedInventory: number;
+  gap: number;
+  upliftPercent: number;
+  historyWeeks: number;
+}
+
+const warehouseForecastSettingsKey = "stacktrack.warehouse.forecast.settings";
+const warehouseForecastEventsKey = "stacktrack.warehouse.forecast.events";
+
+function dateAtStart(value: string): Date {
+  const [year = 0, month = 0, day = 0] = value.split("-").map(Number);
+  return Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+    ? new Date(year, month - 1, day)
+    : new Date();
+}
+
+function dateInputValue(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(value: Date, days: number): Date {
+  return new Date(value.getTime() + days * 24 * 60 * 60 * 1_000);
+}
+
+function readWarehouseForecastStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function warehouseForecastId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `planning-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+function normalizeWarehouseForecastSettings(value: Partial<WarehouseForecastSettings> | null | undefined, fallback: WarehouseForecastSettings): WarehouseForecastSettings {
+  const horizon = Number(value?.horizonDays);
+  const target = Number(value?.targetDays);
+  const safety = Number(value?.safetyStockPercent);
+  const growth = Number(value?.growthPercent);
+  return {
+    horizonDays: [7, 14, 30].includes(horizon) ? horizon : fallback.horizonDays,
+    targetDays: Number.isFinite(target) ? Math.min(90, Math.max(1, target)) : fallback.targetDays,
+    safetyStockPercent: Number.isFinite(safety) ? Math.min(100, Math.max(0, safety)) : fallback.safetyStockPercent,
+    growthPercent: Number.isFinite(growth) ? Math.min(200, Math.max(-50, growth)) : fallback.growthPercent
+  };
+}
+
+function normalizeWarehousePlanningEvents(value: unknown): WarehousePlanningEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const item = candidate as Record<string, unknown>;
+    if (typeof item.name !== "string" || typeof item.date !== "string") return [];
+    const duration = Number(item.durationDays);
+    const uplift = Number(item.upliftPercent);
+    return [{
+      id: typeof item.id === "string" && item.id ? item.id : warehouseForecastId(),
+      name: item.name.trim().slice(0, 120),
+      date: item.date,
+      durationDays: Number.isFinite(duration) ? Math.min(90, Math.max(1, duration)) : 7,
+      upliftPercent: Number.isFinite(uplift) ? Math.min(300, Math.max(-90, uplift)) : 0,
+      warehouseId: typeof item.warehouseId === "string" ? item.warehouseId : "all",
+      goodsType: typeof item.goodsType === "string" ? item.goodsType : "all"
+    }];
+  });
+}
+
+function WarehouseForecastPanel({ data, warehouses, warehouseRecords, goodsColumns, openLocation }: { data: OperationsData; warehouses: Location[]; warehouseRecords: InventorySnapshotRecord[]; goodsColumns: string[]; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
+  const today = new Date();
+  const defaultSettings: WarehouseForecastSettings = { horizonDays: 7, targetDays: 14, safetyStockPercent: 15, growthPercent: 0 };
+  const [settings, setSettings] = useState<WarehouseForecastSettings>(() => normalizeWarehouseForecastSettings(readWarehouseForecastStorage<Partial<WarehouseForecastSettings> | null>(warehouseForecastSettingsKey, null), defaultSettings));
+  const [planningEvents, setPlanningEvents] = useState<WarehousePlanningEvent[]>(() => normalizeWarehousePlanningEvents(readWarehouseForecastStorage<unknown>(warehouseForecastEventsKey, [])));
+  const [warehouseScope, setWarehouseScope] = useState("all");
+  const [goodsScope, setGoodsScope] = useState("all");
+  const [eventName, setEventName] = useState("");
+  const [eventDate, setEventDate] = useState(dateInputValue(addDays(today, 30)));
+  const [eventDuration, setEventDuration] = useState("7");
+  const [eventUplift, setEventUplift] = useState("15");
+  const [eventWarehouse, setEventWarehouse] = useState("all");
+  const [eventGoods, setEventGoods] = useState("all");
+  const [plannerOpen, setPlannerOpen] = useState(false);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(warehouseForecastSettingsKey, JSON.stringify(settings)); } catch { /* local planning remains usable if storage is unavailable */ }
+  }, [settings]);
+  useEffect(() => {
+    try { window.localStorage.setItem(warehouseForecastEventsKey, JSON.stringify(planningEvents)); } catch { /* local planning remains usable if storage is unavailable */ }
+  }, [planningEvents]);
+
+  const eventGoodsOptions = Array.from(new Set(["all", ...goodsColumns]));
+  const referenceNow = new Date();
+  const horizonEnd = addDays(referenceNow, settings.horizonDays);
+  const historicalWeeks = 8;
+  const warehouseIds = new Set(warehouses.map((warehouse) => warehouse.locationId));
+  const eventGoodsType = (event: StoredEvent) => String(event.payload.goodsType ?? "Unclassified");
+  const matchesGoodsScope = (event: StoredEvent) => goodsScope === "all" || eventGoodsType(event) === goodsScope;
+  const matchesWarehouseScope = (locationId: string) => warehouseScope === "all" || locationId === warehouseScope;
+  const history = Array.from({ length: historicalWeeks }, (_, index) => {
+    const end = addDays(referenceNow, -index * 7);
+    const start = addDays(end, -7);
+    const events = data.events.filter((event) => {
+      const at = Date.parse(event.eventAt);
+      return at > start.getTime() && at <= end.getTime();
+    });
+    const receipts = events.filter((event) => event.eventType === "batch_in" && warehouseIds.has(event.locationId) && matchesWarehouseScope(event.locationId) && matchesGoodsScope(event)).length;
+    const departures = events.filter((event) => {
+      if (event.eventType !== "batch_out") return false;
+      const sourceId = payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data);
+      return Boolean(sourceId && warehouseIds.has(sourceId) && matchesWarehouseScope(sourceId) && matchesGoodsScope(event));
+    }).length;
+    const donationLoads = events.filter((event) => event.eventType === "load_assigned" && matchesGoodsScope(event) && data.fixtures.locations.some((location) => location.locationId === event.locationId && location.type === "donation_express")).length;
+    return { label: `${dateInputValue(start)} – ${dateInputValue(end)}`, receipts, departures, donationLoads };
+  }).reverse();
+  const meaningfulHistory = history.filter((row) => row.receipts > 0 || row.departures > 0 || row.donationLoads > 0);
+  const average = (values: number[]) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  const activePlanningEvents = planningEvents.filter((event) => {
+    const start = dateAtStart(event.date);
+    const end = addDays(start, Math.max(1, event.durationDays));
+    return end >= referenceNow && start <= horizonEnd;
+  });
+  const eventAdjustmentFor = (warehouseId: string) => activePlanningEvents
+    .filter((event) => event.warehouseId === "all" || event.warehouseId === warehouseId)
+    .filter((event) => event.goodsType === "all" || goodsScope === "all" || event.goodsType === goodsScope)
+    .reduce((sum, event) => sum + event.upliftPercent, 0);
+  const currentFor = (warehouseId: string) => warehouseRecords.filter((record) => record.locationKey === warehouseId && (goodsScope === "all" || record.goodsType === goodsScope)).length;
+  const rows: WarehouseForecastRow[] = warehouses
+    .filter((warehouse) => warehouseScope === "all" || warehouse.locationId === warehouseScope)
+    .map((warehouse) => {
+      const warehouseEvents = data.events.filter((event) => {
+        const at = Date.parse(event.eventAt);
+        return at > addDays(referenceNow, -historicalWeeks * 7).getTime() && at <= referenceNow.getTime() && matchesGoodsScope(event);
+      });
+      const receiptsByWeek = history.map((row) => row.receipts);
+      const departuresByWeek = history.map((row) => row.departures);
+      const baselineReceiptsNetwork = average(receiptsByWeek);
+      const baselineDeparturesNetwork = average(departuresByWeek);
+      const warehouseReceiptEvents = warehouseEvents.filter((event) => event.eventType === "batch_in" && event.locationId === warehouse.locationId);
+      const warehouseDepartureEvents = warehouseEvents.filter((event) => {
+        if (event.eventType !== "batch_out") return false;
+        const sourceId = payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data);
+        return sourceId === warehouse.locationId;
+      });
+      const scopedReceiptCount = warehouseEvents.filter((event) => event.eventType === "batch_in" && warehouseIds.has(event.locationId) && matchesWarehouseScope(event.locationId)).length;
+      const warehouseRatio = warehouseScope === "all" && warehouseIds.size ? Math.max(0.15, warehouseReceiptEvents.length / Math.max(1, scopedReceiptCount)) : 1;
+      const baselineReceipts = warehouseReceiptEvents.length ? warehouseReceiptEvents.length / historicalWeeks : baselineReceiptsNetwork * warehouseRatio;
+      const baselineDepartures = warehouseDepartureEvents.length ? warehouseDepartureEvents.length / historicalWeeks : baselineDeparturesNetwork * warehouseRatio;
+      const upliftPercent = eventAdjustmentFor(warehouse.locationId);
+      const multiplier = Math.max(0, 1 + settings.growthPercent / 100 + upliftPercent / 100);
+      const expectedReceipts = Math.round(baselineReceipts * multiplier * (settings.horizonDays / 7));
+      const expectedDepartures = Math.round(baselineDepartures * multiplier * (settings.horizonDays / 7));
+      const current = currentFor(warehouse.locationId);
+      const projectedInventory = current + expectedReceipts - expectedDepartures;
+      const recommendedInventory = Math.ceil(baselineReceipts * (settings.targetDays / 7) * multiplier * (1 + settings.safetyStockPercent / 100));
+      return { warehouse, current, baselineReceipts, baselineDepartures, expectedReceipts, expectedDepartures, projectedInventory, recommendedInventory, gap: recommendedInventory - projectedInventory, upliftPercent, historyWeeks: meaningfulHistory.length };
+    });
+  const network = rows.reduce((summary, row) => ({ current: summary.current + row.current, expectedReceipts: summary.expectedReceipts + row.expectedReceipts, expectedDepartures: summary.expectedDepartures + row.expectedDepartures, projectedInventory: summary.projectedInventory + row.projectedInventory, recommendedInventory: summary.recommendedInventory + row.recommendedInventory, gap: summary.gap + row.gap }), { current: 0, expectedReceipts: 0, expectedDepartures: 0, projectedInventory: 0, recommendedInventory: 0, gap: 0 });
+  const expectedDonationLoads = Math.round(average(history.map((row) => row.donationLoads)) * (settings.horizonDays / 7) * Math.max(0, 1 + settings.growthPercent / 100));
+  const series: WarehouseForecastSeries[] = history.map((row): WarehouseForecastSeries => ({ ...row })).concat([{ label: `Next ${settings.horizonDays} days`, receipts: rows.reduce((sum, row) => sum + row.expectedReceipts, 0), departures: rows.reduce((sum, row) => sum + row.expectedDepartures, 0), donationLoads: expectedDonationLoads, forecast: true }]);
+  const chartMax = Math.max(1, ...series.map((row) => Math.max(row.receipts, row.departures, row.donationLoads)));
+  const forecastConfidence = meaningfulHistory.length >= 8 ? "High" : meaningfulHistory.length >= 4 ? "Medium" : meaningfulHistory.length ? "Early estimate" : "Not enough history";
+  const forecastBasis = meaningfulHistory.length ? `${meaningfulHistory.length} active historical week${meaningfulHistory.length === 1 ? "" : "s"}, adjusted for growth, safety stock, and planned events` : "No historical warehouse flow is available yet; enter planning assumptions and collect scans before relying on this forecast";
+  const addPlanningEvent = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!eventName.trim() || !eventDate) return;
+    setPlanningEvents((current) => [...current, { id: warehouseForecastId(), name: eventName.trim().slice(0, 120), date: eventDate, durationDays: Math.min(90, Math.max(1, Number(eventDuration) || 1)), upliftPercent: Math.min(300, Math.max(-90, Number(eventUplift) || 0)), warehouseId: eventWarehouse, goodsType: eventGoods }].sort((left, right) => left.date.localeCompare(right.date)));
+    setEventName("");
+    setPlannerOpen(false);
+  };
+  const addPreset = (name: string, month: number, day: number, uplift: number) => {
+    const year = today.getMonth() + 1 > month || (today.getMonth() + 1 === month && today.getDate() >= day) ? today.getFullYear() + 1 : today.getFullYear();
+    setEventName(name); setEventDate(dateInputValue(new Date(year, month - 1, day))); setEventUplift(String(uplift)); setEventDuration("7"); setEventWarehouse("all"); setEventGoods("all"); setPlannerOpen(true);
+  };
+  const exportForecast = () => downloadCsv("stacktrack-warehouse-forecast.csv", [
+    ["WAREHOUSE INVENTORY FORECAST"],
+    ["Forecast horizon (days)", settings.horizonDays],
+    ["Target days of cover", settings.targetDays],
+    ["Safety stock (%)", settings.safetyStockPercent],
+    ["Growth adjustment (%)", settings.growthPercent],
+    ["Forecast basis", forecastBasis],
+    [],
+    ["Warehouse", "Current containers", "Expected receipts", "Expected departures", "Projected inventory", "Recommended inventory", "Capacity gap", "Event uplift (%)"],
+    ...rows.map((row) => [row.warehouse.name, row.current, row.expectedReceipts, row.expectedDepartures, row.projectedInventory, row.recommendedInventory, row.gap, row.upliftPercent]),
+    [],
+    ["Planning events", "Date", "Duration days", "Uplift (%)", "Warehouse", "Goods category"],
+    ...planningEvents.map((event) => [event.name, event.date, event.durationDays, event.upliftPercent, event.warehouseId === "all" ? "All warehouses" : warehouses.find((warehouse) => warehouse.locationId === event.warehouseId)?.name ?? event.warehouseId, event.goodsType === "all" ? "All categories" : event.goodsType])
+  ]);
+  return <section className="panel warehouse-forecast-panel">
+    <div className="warehouse-forecast__header"><div><span className="eyebrow">Planning forecast</span><h2>Warehouse capacity outlook</h2><p>Estimate upcoming receipts and recommended on-hand containers using scan history, safety stock, growth, and planned holiday or promotion adjustments.</p></div><div className="warehouse-forecast__actions"><button type="button" className="secondary" onClick={() => setPlannerOpen((value) => !value)}><CalendarDays size={15} /> {plannerOpen ? "Close event planner" : "Plan a holiday or event"}</button><button type="button" className="secondary" onClick={exportForecast} disabled={!rows.length}><Download size={15} /> Export forecast</button></div></div>
+    <div className="warehouse-forecast__assumption-note"><Target size={16} /><span><strong>This is a planning estimate, not an official inventory correction.</strong><small>Forecast inputs are saved in this browser only. Scanner observations remain the source of truth and are never changed by a forecast.</small></span><Pill tone={forecastConfidence === "High" ? "good" : forecastConfidence === "Medium" ? "blue" : "warn"}>{forecastConfidence} confidence</Pill></div>
+    <div className="warehouse-forecast__controls"><label><span>Warehouse</span><select value={warehouseScope} onChange={(event) => setWarehouseScope(event.target.value)}><option value="all">All warehouses</option>{warehouses.map((warehouse) => <option key={warehouse.locationId} value={warehouse.locationId}>{warehouse.name}</option>)}</select></label><label><span>Goods category</span><select value={goodsScope} onChange={(event) => setGoodsScope(event.target.value)}><option value="all">All categories</option>{goodsColumns.map((goodsType) => <option key={goodsType} value={goodsType}>{goodsType}</option>)}</select></label><label><span>Forecast horizon</span><select value={settings.horizonDays} onChange={(event) => setSettings((current) => ({ ...current, horizonDays: Number(event.target.value) }))}><option value={7}>Next 7 days</option><option value={14}>Next 14 days</option><option value={30}>Next 30 days</option></select></label><label><span>Target days of cover</span><input type="number" min="1" max="90" value={settings.targetDays} onChange={(event) => setSettings((current) => ({ ...current, targetDays: Math.min(90, Math.max(1, Number(event.target.value) || 1)) }))} /></label><label><span>Safety stock %</span><input type="number" min="0" max="100" value={settings.safetyStockPercent} onChange={(event) => setSettings((current) => ({ ...current, safetyStockPercent: Math.min(100, Math.max(0, Number(event.target.value) || 0)) }))} /></label><label><span>Growth adjustment %</span><input type="number" min="-50" max="200" value={settings.growthPercent} onChange={(event) => setSettings((current) => ({ ...current, growthPercent: Math.min(200, Math.max(-50, Number(event.target.value) || 0)) }))} /></label></div>
+    <div className="warehouse-forecast__summary"><div><span><Warehouse size={15} />Current on hand</span><strong>{network.current}</strong><small>Containers matching the selected scope</small></div><div><span><TrendingUp size={15} />Expected receipts</span><strong>{network.expectedReceipts}</strong><small>Next {settings.horizonDays} days</small></div><div><span><Boxes size={15} />Recommended on hand</span><strong>{network.recommendedInventory}</strong><small>{settings.targetDays} days of cover plus safety stock</small></div><div className={network.gap > 0 ? "warehouse-forecast__summary-card--attention" : ""}><span><Target size={15} />Planning gap</span><strong>{network.gap > 0 ? `+${network.gap}` : network.gap}</strong><small>{network.gap > 0 ? "Additional containers to plan for" : "Projected inventory meets the target"}</small></div></div>
+    <div className="warehouse-forecast__body">
+      <div className="warehouse-forecast__table-wrap table-wrap"><table className="warehouse-forecast__table"><thead><tr><th>Warehouse</th><th>Current</th><th>Expected receipts</th><th>Expected departures</th><th>Projected on hand</th><th>Recommended</th><th>Gap</th></tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.warehouse.locationId}><th><button type="button" className="warehouse-forecast__warehouse-link" onClick={() => openLocation(row.warehouse.locationId)}><strong>{row.warehouse.name}</strong><small>Open location workspace</small></button><small className="warehouse-forecast__warehouse-basis">{row.upliftPercent ? `${row.upliftPercent}% event uplift` : "No event adjustment"}</small></th><td>{row.current}</td><td>{row.expectedReceipts}<small>{Math.round(row.baselineReceipts * 10) / 10}/week baseline</small></td><td>{row.expectedDepartures}</td><td>{row.projectedInventory}</td><td>{row.recommendedInventory}</td><td className={row.gap > 0 ? "warehouse-forecast__gap--attention" : "warehouse-forecast__gap--ready"}>{row.gap > 0 ? `+${row.gap}` : row.gap}<small>{row.gap > 0 ? "Plan capacity" : "Within target"}</small></td></tr>) : <tr><td colSpan={7}><div className="warehouse-forecast__empty">Add warehouses and accepted scans to produce a forecast.</div></td></tr>}</tbody></table></div>
+      <div className="warehouse-forecast__chart"><div className="warehouse-forecast__chart-heading"><div><span className="eyebrow">Flow history</span><strong>Receipts, departures, and donation loads</strong></div><small>{forecastBasis}{warehouseScope !== "all" ? " · donation loads remain network-wide source activity" : ""}</small></div><div className="warehouse-forecast__chart-list">{series.map((item) => <div className={item.forecast ? "warehouse-forecast__bar-row warehouse-forecast__bar-row--forecast" : "warehouse-forecast__bar-row"} key={item.label}><span>{item.label}</span><div><i title={`Receipts: ${item.receipts}`} style={{ width: `${Math.round((item.receipts / chartMax) * 100)}%` }} /><b title={`Departures: ${item.departures}`} style={{ width: `${Math.round((item.departures / chartMax) * 100)}%` }} /><em title={`Donation loads: ${item.donationLoads}`} style={{ width: `${Math.round((item.donationLoads / chartMax) * 100)}%` }} /></div><strong>{item.receipts} / {item.departures} / {item.donationLoads}</strong></div>)}</div><div className="warehouse-forecast__legend"><span><i className="warehouse-forecast__legend-receipts" />Receipts</span><span><i className="warehouse-forecast__legend-departures" />Departures</span><span><i className="warehouse-forecast__legend-donations" />Donation loads</span></div></div>
+    </div>
+    {plannerOpen && <form className="warehouse-forecast__planner" onSubmit={addPlanningEvent}><div><span className="eyebrow">Holiday and event planner</span><h3>Add a demand adjustment</h3><p>Use an uplift only when Goodwill expects more or fewer container movements than the scan history suggests.</p><div className="warehouse-forecast__presets"><button type="button" onClick={() => addPreset("Holiday giving season", 12, 1, 20)}>Holiday giving season</button><button type="button" onClick={() => addPreset("Christmas peak", 12, 25, 25)}>Christmas peak</button><button type="button" onClick={() => addPreset("Back-to-school drive", 8, 15, 15)}>Back-to-school</button></div></div><div className="warehouse-forecast__planner-grid"><label>Event name<input required value={eventName} onChange={(event) => setEventName(event.target.value)} placeholder="Thanksgiving donation drive" /></label><label>Start date<input required type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} /></label><label>Duration (days)<input type="number" min="1" max="90" value={eventDuration} onChange={(event) => setEventDuration(event.target.value)} /></label><label>Expected change %<input type="number" min="-90" max="300" value={eventUplift} onChange={(event) => setEventUplift(event.target.value)} /></label><label>Warehouse<select value={eventWarehouse} onChange={(event) => setEventWarehouse(event.target.value)}><option value="all">All warehouses</option>{warehouses.map((warehouse) => <option key={warehouse.locationId} value={warehouse.locationId}>{warehouse.name}</option>)}</select></label><label>Goods category<select value={eventGoods} onChange={(event) => setEventGoods(event.target.value)}>{eventGoodsOptions.map((goodsType) => <option key={goodsType} value={goodsType}>{goodsType === "all" ? "All categories" : goodsType}</option>)}</select></label><div className="warehouse-forecast__planner-actions"><button type="button" className="secondary" onClick={() => setPlannerOpen(false)}>Cancel</button><button type="submit" className="primary"><Plus size={15} /> Add event adjustment</button></div></div></form>}
+    <div className="warehouse-forecast__events"><div><span className="eyebrow">Active planning inputs</span><strong>{planningEvents.length ? `${planningEvents.length} event${planningEvents.length === 1 ? "" : "s"} saved` : "No holiday adjustments saved"}</strong><p>These are scenario inputs for planning. They do not alter scan history, projections, or official counts.</p></div>{planningEvents.length ? <div className="warehouse-forecast__event-list">{planningEvents.map((event) => <article key={event.id}><span className="warehouse-forecast__event-icon"><CalendarDays size={15} /></span><span><strong>{event.name}</strong><small>{event.date} · {event.durationDays} days · {event.upliftPercent >= 0 ? "+" : ""}{event.upliftPercent}% · {event.warehouseId === "all" ? "All warehouses" : warehouses.find((warehouse) => warehouse.locationId === event.warehouseId)?.name ?? "Selected warehouse"}{event.goodsType === "all" ? "" : ` · ${event.goodsType}`}</small></span><button type="button" onClick={() => setPlanningEvents((current) => current.filter((item) => item.id !== event.id))} aria-label={`Remove ${event.name}`}><Trash2 size={14} /></button></article>)}</div> : <div className="warehouse-forecast__events-empty">Add a holiday or promotion to make the forecast scenario-specific.</div>}</div>
+    <p className="warehouse-forecast__note">Forecast math: historical weekly receipts are adjusted for the selected growth and event uplift, then multiplied by the planning horizon. Recommended on-hand inventory uses the target days of cover plus safety stock. Actual scan data remains authoritative.</p>
   </section>;
 }
 

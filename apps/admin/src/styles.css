@@ -242,6 +242,86 @@ main { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .warehouse-trend__table td.positive { color: var(--green-700, #257455); font-weight: 800; }
 .warehouse-trend__table td.negative { color: #866a32; font-weight: 800; }
 .warehouse-inventory__note { margin: 0; padding: 11px 19px 15px; color: #7f9099; font-size: 8.5px; line-height: 1.45; }
+.warehouse-forecast-panel { margin: 18px 19px 0; overflow: hidden; border: 1px solid #d7e5eb; background: #fff; }
+.warehouse-forecast__header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; padding: 16px 16px 14px; border-bottom: 1px solid #e2edf1; background: #f8fcfd; }
+.warehouse-forecast__header h2 { margin: 4px 0 0; color: var(--ink); font: 800 16px/1.2 Manrope, sans-serif; }
+.warehouse-forecast__header p { max-width: 690px; margin: 5px 0 0; color: #6f838d; font-size: 9px; line-height: 1.45; }
+.warehouse-forecast__actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.warehouse-forecast__actions button { white-space: nowrap; }
+.warehouse-forecast__assumption-note { display: flex; align-items: center; gap: 9px; margin: 12px 16px 0; padding: 9px 10px; border-left: 3px solid var(--cyan); background: #eef9fc; color: #315969; }
+.warehouse-forecast__assumption-note > svg { color: var(--blue-800); flex: none; }
+.warehouse-forecast__assumption-note span { display: grid; min-width: 0; gap: 2px; }
+.warehouse-forecast__assumption-note strong { font-size: 9px; }
+.warehouse-forecast__assumption-note small { color: #6e8792; font-size: 8px; line-height: 1.3; }
+.warehouse-forecast__assumption-note .pill { margin-left: auto; flex: none; }
+.warehouse-forecast__controls { display: grid; grid-template-columns: repeat(6, minmax(105px, 1fr)); gap: 9px; padding: 13px 16px; }
+.warehouse-forecast__controls label, .warehouse-forecast__planner-grid label { display: grid; gap: 4px; color: #667d89; font-size: 8px; font-weight: 800; }
+.warehouse-forecast__controls select, .warehouse-forecast__controls input, .warehouse-forecast__planner-grid input, .warehouse-forecast__planner-grid select { width: 100%; min-height: 32px; box-sizing: border-box; padding: 0 8px; border: 1px solid #c9d9e0; border-radius: 3px; color: #304858; background: #fff; font: inherit; font-size: 9px; }
+.warehouse-forecast__summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; padding: 0 16px 13px; }
+.warehouse-forecast__summary > div { min-width: 0; padding: 10px 11px; border: 1px solid #dce8ed; background: #fff; }
+.warehouse-forecast__summary > div.warehouse-forecast__summary-card--attention { border-color: #efd8ad; background: #fffaf0; }
+.warehouse-forecast__summary span { display: flex; align-items: center; gap: 5px; color: #667d89; font-size: 8px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.warehouse-forecast__summary span svg { color: var(--blue-800); flex: none; }
+.warehouse-forecast__summary strong { display: block; margin-top: 5px; color: var(--ink); font: 800 18px/1.1 Manrope, sans-serif; }
+.warehouse-forecast__summary small { display: block; margin-top: 4px; color: #7a8d96; font-size: 8px; line-height: 1.3; }
+.warehouse-forecast__body { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr); gap: 12px; padding: 0 16px 15px; }
+.warehouse-forecast__table-wrap { min-width: 0; overflow-x: auto; }
+.warehouse-forecast__table { width: 100%; min-width: 620px; border-collapse: collapse; }
+.warehouse-forecast__table th, .warehouse-forecast__table td { padding: 8px 8px; border-bottom: 1px solid #e5edf0; color: #3d5866; font-size: 8.5px; text-align: right; white-space: nowrap; }
+.warehouse-forecast__table thead th { color: #667d89; background: #f5f9fa; font-size: 7.5px; letter-spacing: .04em; text-transform: uppercase; }
+.warehouse-forecast__table th:first-child, .warehouse-forecast__table td:first-child { text-align: left; }
+.warehouse-forecast__table tbody th { color: #304858; font-weight: 800; }
+.warehouse-forecast__table tbody th small, .warehouse-forecast__table td small { display: block; margin-top: 3px; color: #8798a1; font-size: 7.5px; font-weight: 500; }
+.warehouse-forecast__warehouse-link { display: grid; gap: 2px; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
+.warehouse-forecast__warehouse-link strong { color: var(--blue-800); font-size: 8.5px; }
+.warehouse-forecast__warehouse-link small { margin: 0; color: #6d8a96; font-size: 7px; }
+.warehouse-forecast__warehouse-link:hover strong { text-decoration: underline; }
+.warehouse-forecast__warehouse-basis { margin-top: 4px !important; }
+.warehouse-forecast__empty { padding: 18px 10px; color: #7c9099; font-size: 8.5px; text-align: center; }
+.warehouse-forecast__gap--attention { color: #876628 !important; font-weight: 800; }
+.warehouse-forecast__gap--ready { color: #277257 !important; font-weight: 800; }
+.warehouse-forecast__chart { min-width: 0; padding: 11px 12px; border: 1px solid #dce8ed; background: #fbfdfe; }
+.warehouse-forecast__chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.warehouse-forecast__chart-heading strong { display: block; margin-top: 3px; color: var(--ink); font-size: 10px; }
+.warehouse-forecast__chart-heading small { max-width: 135px; color: #84949d; font-size: 7.5px; line-height: 1.3; text-align: right; }
+.warehouse-forecast__chart-list { display: grid; gap: 7px; margin-top: 13px; }
+.warehouse-forecast__bar-row { display: grid; grid-template-columns: 76px minmax(0, 1fr) 45px; align-items: center; gap: 7px; color: #718793; font-size: 7px; }
+.warehouse-forecast__bar-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-forecast__bar-row > div { display: grid; gap: 2px; }
+.warehouse-forecast__bar-row i, .warehouse-forecast__bar-row b, .warehouse-forecast__bar-row em { display: block; height: 4px; border-radius: 3px; min-width: 1px; }
+.warehouse-forecast__bar-row i { background: #149fcb; }
+.warehouse-forecast__bar-row b { background: #a5bdc8; }
+.warehouse-forecast__bar-row em { background: #8a9f38; }
+.warehouse-forecast__bar-row--forecast { padding: 4px 5px; border: 1px dashed #72bfd4; background: #eef9fc; }
+.warehouse-forecast__bar-row strong { color: #536d79; font-size: 7px; text-align: right; }
+.warehouse-forecast__legend { display: flex; gap: 11px; margin-top: 12px; color: #718793; font-size: 7.5px; }
+.warehouse-forecast__legend span { display: inline-flex; align-items: center; gap: 4px; }
+.warehouse-forecast__legend i { width: 8px; height: 4px; display: inline-block; border-radius: 2px; }
+.warehouse-forecast__legend-receipts { background: #149fcb; }
+.warehouse-forecast__legend-departures { background: #a5bdc8; }
+.warehouse-forecast__legend-donations { background: #8a9f38; }
+.warehouse-forecast__planner { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 1.5fr); gap: 18px; margin: 0 16px 14px; padding: 13px; border: 1px solid #cfe5ec; background: #f2fafc; }
+.warehouse-forecast__planner h3 { margin: 4px 0 0; color: var(--ink); font: 800 13px/1.2 Manrope, sans-serif; }
+.warehouse-forecast__planner p { margin: 5px 0 0; color: #6e858f; font-size: 8.5px; line-height: 1.4; }
+.warehouse-forecast__presets { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.warehouse-forecast__presets button { padding: 5px 7px; border: 1px solid #b8dce6; border-radius: 3px; color: var(--blue-800); background: #fff; cursor: pointer; font-size: 7.5px; font-weight: 800; }
+.warehouse-forecast__planner-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-content: start; }
+.warehouse-forecast__planner-actions { display: flex; justify-content: flex-end; gap: 7px; grid-column: 1 / -1; }
+.warehouse-forecast__events { display: grid; grid-template-columns: minmax(180px, .55fr) minmax(0, 1.45fr); gap: 15px; margin: 0 16px 14px; padding: 12px; border-top: 1px solid #e3edf0; }
+.warehouse-forecast__events > div:first-child { min-width: 0; }
+.warehouse-forecast__events strong { display: block; margin-top: 4px; color: var(--ink); font-size: 10px; }
+.warehouse-forecast__events p { margin: 4px 0 0; color: #7a8d96; font-size: 8px; line-height: 1.35; }
+.warehouse-forecast__event-list { display: grid; gap: 6px; }
+.warehouse-forecast__event-list article { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 7px 8px; border: 1px solid #dce8ed; background: #fbfdfe; }
+.warehouse-forecast__event-list article > span:nth-child(2) { min-width: 0; }
+.warehouse-forecast__event-list article strong { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-forecast__event-list article small { display: block; margin-top: 2px; overflow: hidden; color: #7a8d96; font-size: 7.5px; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-forecast__event-icon { width: 24px; height: 24px; display: grid; place-items: center; flex: none; color: var(--blue-800); background: #e8f5fa; }
+.warehouse-forecast__event-list article button { display: grid; place-items: center; flex: none; margin-left: auto; padding: 4px; border: 0; color: #748a95; background: transparent; cursor: pointer; }
+.warehouse-forecast__events-empty { align-self: center; padding: 9px; border: 1px dashed #cbdde3; color: #7c9099; background: #fbfdfe; font-size: 8px; }
+.warehouse-forecast__note { margin: 0; padding: 0 16px 14px; color: #7f9099; font-size: 8px; line-height: 1.45; }
+@media (max-width: 900px) { .warehouse-forecast__controls { grid-template-columns: repeat(3, minmax(120px, 1fr)); } .warehouse-forecast__body { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .warehouse-forecast__header, .warehouse-forecast__events, .warehouse-forecast__planner { grid-template-columns: 1fr; flex-direction: column; align-items: stretch; } .warehouse-forecast__actions { flex-wrap: wrap; } .warehouse-forecast__controls, .warehouse-forecast__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .warehouse-forecast__planner-grid { grid-template-columns: 1fr; } .warehouse-forecast__events { display: grid; } }
 .inventory-matrix__modes { display: inline-flex; border: 1px solid #cbd9e0; background: white; }
 .inventory-matrix__modes button { display: inline-flex; align-items: center; gap: 5px; min-height: 34px; padding: 0 9px; border: 0; color: #607582; background: white; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .inventory-matrix__modes button + button { border-left: 1px solid #dce6ea; }
