@@ -381,6 +381,17 @@ function Pill({ tone, children }: { tone: PillTone; children: ReactNode }) {
   return <span className={`pill pill--${tone}`}>{children}</span>;
 }
 
+function RoleScopeNotice({ principal, pageLabel }: { principal: AdminPrincipal; pageLabel: string }) {
+  if (!isScopedPrincipal(principal)) return null;
+  const count = principal.locationIds?.length ?? 0;
+  const readOnly = principal.role === "read_only_reviewer";
+  return <div className="role-scope-notice" role="status">
+    <span className="role-scope-notice__icon"><MapPin size={16} /></span>
+    <span className="role-scope-notice__copy"><strong>{readOnly ? "Read-only assigned-location view" : "Assigned locations only"}</strong><small>{pageLabel} shows data from {count} assigned location{count === 1 ? "" : "s"}. Corporate records and other locations remain hidden.</small></span>
+    <Pill tone="blue">{readOnly ? "View only" : "Scoped view"}</Pill>
+  </div>;
+}
+
 const pageSizeOptions = [12, 25, 50, 100];
 
 function PaginationControls({
@@ -1080,8 +1091,9 @@ function SignInDialog({ fullPage = false, onClose: _onClose, onSuccess }: { full
       <div className="sign-in-dialog__story-footer"><img src={stacktrackLogo} alt="StackTrack" /><span>Reusable asset operations</span></div>
     </div>
     <div className="sign-in-dialog__form-panel">
-      <div className="sign-in-dialog__form-heading"><div className="sign-in-dialog__icon"><ShieldCheck size={23}/></div><span className="eyebrow">SECURE ADMIN ACCESS</span><h2 id="sign-in-title">Sign in to manage operations.</h2><p id="sign-in-description">Use your approved administrator account. Operational data remains private until the StackTrack service verifies your access.</p></div>
+      <div className="sign-in-dialog__form-heading"><div className="sign-in-dialog__icon"><ShieldCheck size={23}/></div><span className="eyebrow">GOODWILL OPERATIONS ACCESS</span><h2 id="sign-in-title">Sign in to the operations console.</h2><p id="sign-in-description">Use your approved Goodwill account. Container and scanner data stays private until StackTrack verifies your access.</p></div>
       <div className="sign-in-dialog__trust"><span><CheckCircle2 size={14}/> Server-verified access</span><span><ShieldCheck size={14}/> Audit-ready changes</span></div>
+      <div className="sign-in-dialog__audience"><MapPin size={15}/><span><strong>Built for corporate teams and local site staff</strong><small>Your role determines which locations, records, and actions are available after sign-in.</small></span></div>
       <form onSubmit={(event) => void submit(event)}><label>Username<input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<span className="sign-in-dialog__password-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-pressed={showPassword}>{showPassword ? "Hide" : "Show"}</button></span></label>{error && <div className="sign-in-error" role="alert">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form>
       <div className="sign-in-dialog__privacy"><ShieldCheck size={14}/><span>Access expires automatically. Sign out when you leave a shared workstation.</span></div>
     </div>
@@ -1123,12 +1135,12 @@ function PageContent({
   if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} session={session!} />;
   if (page === "service") return <ServicePlanPage data={data} openLocation={openLocation} />;
   if (page === "forecast") return <WarehouseForecastPage data={data} openLocation={openLocation} />;
-  if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} />;
+  if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} session={session!} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
   if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} {...(locationFilter ? { focusedLocationFilter: locationFilter } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
-  if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} />;
+  if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} session={session!} />;
   if (page === "audit") return <AuditTrailPage data={data} session={session!} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} setQuery={setQuery} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
@@ -1136,7 +1148,7 @@ function PageContent({
 }
 
 function InventoryPage({ data, setPage, openLocation, session }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void; session: AdminSession }) {
-  return <div className="inventory-page"><DashboardInventoryMatrix data={data} setPage={setPage} openLocation={openLocation} scoped={isScopedPrincipal(session.principal)} /></div>;
+  return <div className="inventory-page"><RoleScopeNotice principal={session.principal} pageLabel="Inventory" /><DashboardInventoryMatrix data={data} setPage={setPage} openLocation={openLocation} scoped={isScopedPrincipal(session.principal)} /></div>;
 }
 
 function buildInventorySnapshotRecords(data: OperationsData): InventorySnapshotRecord[] {
@@ -2854,7 +2866,7 @@ function containerHealthLabel(value: ContainerHealth) {
   return ({ clean: "Clean", warning: "Warning", needs_review: "Needs review", corrected: "Corrected", no_history: "No history" } as Record<ContainerHealth, string>)[value];
 }
 
-function ContainersPage({ data, query, openDetail, openLocation, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void }) {
+function ContainersPage({ data, query, openDetail, openLocation, setPage, session }: { data: OperationsData; query: string; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void; session: AdminSession }) {
   const [draft, setDraft] = useState<ContainerFilters>(emptyContainerFilters);
   const [applied, setApplied] = useState<ContainerFilters>(emptyContainerFilters);
   const [pageIndex, setPageIndex] = useState(0);
@@ -2977,6 +2989,8 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
     ...filteredRows.map((row) => [row.container.label, containerTypeLabel(row.container.type), loadStateLabel(row.projection?.loadState), row.locationLabel, row.lastObservedAt ?? "", containerHealthLabel(row.health), String(row.messageCount), row.latestMessage ?? ""])
   ]);
   return (
+    <>
+    <RoleScopeNotice principal={session.principal} pageLabel="Containers" />
     <section className="panel containers-panel">
       <div className="container-filter-panel"><div className="container-filter-panel__header"><div><span className="eyebrow">Detailed container filters</span><h2>Find the exact assets to review</h2><p>Each filter updates immediately.</p></div><div className="container-filter-panel__actions"><button className="secondary" onClick={exportRows} disabled={!filteredRows.length}><Download size={15} /> Export filtered CSV</button><span>{filteredRows.length} matching</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button></div></div><div className="container-filter-grid">
         <SingleFilterSelect label="Current state" options={[{ value: "loaded", label: "Loaded" }, { value: "empty", label: "Empty" }, { value: "unknown", label: "Not observed" }]} value={draft.states[0] ?? ""} onChange={(value) => setSingleContainerFilter("states", value)} emptyLabel="All states" />
@@ -2994,6 +3008,7 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
       <div className="table-wrap"><table className="container-table"><thead><tr><th>Container label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>Messages</th><th>History health</th></tr></thead><tbody>{visibleRows.map((row) => <tr className="clickable-row" role="button" tabIndex={0} aria-label={`Open details for ${row.container.label}`} key={row.container.containerId} onClick={() => showContainer(row.container)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showContainer(row.container); } }}><td><strong className="asset-label" title="Unique container label">{row.container.label}</strong></td><td className="capitalize">{containerTypeLabel(row.container.type)}</td><td><Pill tone={row.projection?.loadState === "loaded" ? "blue" : row.projection?.loadState === "empty" ? "good" : "muted"}>{loadStateLabel(row.projection?.loadState)}</Pill></td><td><ContainerRouteCell route={row.route} /></td><td>{relativeTime(row.lastObservedAt)}</td><td>{row.messageCount ? <span className="container-message-count"><MessageSquare size={13} /> {row.messageCount}</span> : <span className="container-message-none">None</span>}</td><td>{row.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : row.health === "corrected" ? <Pill tone="blue">Corrected</Pill> : row.health === "clean" ? <Pill tone="good">Clean</Pill> : row.health === "warning" ? <Pill tone="warn">Warning</Pill> : <Pill tone="muted">No history</Pill>}</td></tr>)}</tbody></table>{filteredRows.length === 0 && <EmptyState>No containers match the current filters. Clear a filter or broaden the global search.</EmptyState>}</div>
       <PaginationControls pageIndex={pageIndex} pageCount={pageCount} pageSize={pageSize} total={filteredRows.length} ariaLabel="Container pagination" onPageChange={setPageIndex} onPageSizeChange={(nextSize) => { setPageSize(nextSize); setPageIndex(0); }} />
     </section>
+    </>
   );
 }
 
@@ -3240,8 +3255,9 @@ function LocationLifecycleExplorer({ routeRecords, focusLocationId, onOpen }: { 
 }
 
 function LocationWorkspacePage({ data, locationId, locationFilter, openLocation, openDetail, setPage, session }: { data: OperationsData; locationId: string; locationFilter?: LocationInventoryFilter; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession | null }) {
-  const location = data.fixtures.locations.find((item) => item.locationId === locationId && item.type !== "in_transit" && item.isActive !== false && !isUnknownLocation(item));
   const principal = session?.principal;
+  const scoped = Boolean(principal && isScopedPrincipal(principal));
+  const location = data.fixtures.locations.find((item) => item.locationId === locationId && item.type !== "in_transit" && item.isActive !== false && !isUnknownLocation(item) && (!scoped || principal?.locationIds?.includes(item.locationId)));
   const canManageScanners = Boolean(principal && ["organization_owner", "operations_administrator", "location_manager"].includes(principal.role));
   const canRequestCorrections = Boolean(principal && ["organization_owner", "operations_administrator", "location_manager"].includes(principal.role));
   if (!location) {
@@ -3340,6 +3356,7 @@ function LocationWorkspacePage({ data, locationId, locationFilter, openLocation,
   const inventoryCountLabel = (bucket: LocationInventoryBucket) => `${inventoryByBucket[bucket].length} ${bucket === "current" ? "here" : bucket === "arriving" ? "confirmed receipts" : "open departures"}`;
   const typeLabel = locationTypeLabel(location.type);
   return <div className="location-focused-page">
+    {session && <RoleScopeNotice principal={session.principal} pageLabel="This location workspace" />}
     <section className="location-inventory panel"><div className="location-inventory__header"><div><span className="eyebrow">Location inventory</span><h3>Filter the containers associated with this site</h3><p>Select a count or filter to see the exact bins, carts, or gaylords behind it. The selected view is preserved in the URL so a filtered location link can be shared.</p></div><div className="location-inventory__header-count"><strong>{visibleInventory.length}</strong><span>{inventoryBucketLabel(selectedBucket)}</span></div></div><div className="location-inventory__tabs" role="tablist" aria-label="Location inventory view"><button type="button" className={selectedBucket === "current" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "current" })}>At this location <b>{inventoryCountLabel("current")}</b></button><button type="button" className={selectedBucket === "arriving" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "arriving" })}>Received here <b>{inventoryCountLabel("arriving")}</b></button><button type="button" className={selectedBucket === "leaving" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "leaving" })}>Leaving <b>{inventoryCountLabel("leaving")}</b></button></div><div className="location-inventory__filters"><label><span>Container type</span><select value={locationFilter?.containerType ?? ""} onChange={(event) => updateInventoryFilter({ containerType: (event.target.value || undefined) as LocationInventoryFilter["containerType"] })}><option value="">All types</option>{inventoryTypeOptions.map((value) => <option value={value} key={value}>{containerTypeLabel(value)}</option>)}</select></label><label><span>Goods category</span><select value={locationFilter?.goodsType ?? ""} onChange={(event) => updateInventoryFilter({ goodsType: event.target.value || undefined })}><option value="">All categories</option>{inventoryGoodsOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></label><label><span>Current state</span><select value={locationFilter?.loadState ?? ""} onChange={(event) => updateInventoryFilter({ loadState: (event.target.value || undefined) as LocationInventoryFilter["loadState"] })}><option value="">Any state</option><option value="loaded">Loaded</option><option value="empty">Empty</option><option value="unknown">Unknown</option></select></label><div className="location-inventory__filter-summary"><strong>{visibleInventory.length} matching</strong><span>{inventoryFilterSummary.join(" · ")}</span></div><button type="button" className="secondary" onClick={clearInventoryFilters} disabled={!locationFilter || Object.keys(locationFilter).length === 0}>Clear filters</button></div><div className="location-inventory__breakdown">{inventoryTypeOptions.map((type) => { const count = visibleInventory.filter((record) => record.container.type === type).length; return <button type="button" key={type} className={locationFilter?.containerType === type ? "active" : ""} onClick={() => updateInventoryFilter({ containerType: locationFilter?.containerType === type ? undefined : type })}><strong>{count}</strong><span>{containerTypeLabel(type)}s</span><small>Show only these containers</small></button>; })}</div><div className="location-inventory__list">{visibleInventory.length ? visibleInventory.map((record) => <button type="button" className="location-inventory__row" key={record.container.containerId} onClick={() => record.projection && openContainer(record.projection)} disabled={!record.projection}><span className="location-inventory__row-icon"><ContainerIcon size={15} /></span><span className="location-inventory__row-main"><strong>{record.container.label}</strong><small>{containerTypeLabel(record.container.type)} · {record.goodsType} · {loadStateLabel(record.projection?.loadState)}</small></span><span className="location-inventory__row-movement">{movementLabelFor(record)}</span><span className="location-inventory__row-time">{record.projection ? relativeTime(record.projection.lastObservedAt) : "No observation"}</span><ChevronRight size={14} /></button>) : <div className="location-focused-empty">No containers match these filters in this workflow view.</div>}</div></section>
     <div className="location-focused-toolbar"><button className="secondary" onClick={() => setPage("locations")}><ArrowRight size={15} className="location-focused-toolbar__back" /> All locations</button><span className="location-focused-toolbar__crumb"><MapPin size={14} /> {typeLabel} workspace</span><button className="secondary" onClick={() => void window.scrollTo({ top: 0, behavior: "smooth" })}><RefreshCw size={15} /> Refresh view</button></div>
     <section className="location-focused-hero panel"><div className="location-focused-hero__identity"><span className={`location-title-icon location-title-icon--${location.type}`}><LocationTypeIcon location={location} size={23} /></span><div><span className="eyebrow">Focused operating location</span><h2>{location.name}</h2><p>{typeLabel} · {scanners.length} assigned scanner{scanners.length === 1 ? "" : "s"} · {scansLastDay} accepted scan{scansLastDay === 1 ? "" : "s"} in the last 24 hours</p><div className="location-focused-hero__tags"><Pill tone={openReviews.length ? "warn" : "good"}>{openReviews.length ? `${openReviews.length} review${openReviews.length === 1 ? "" : "s"} open` : "No open reviews"}</Pill><Pill tone={staleScanners.length ? "warn" : "good"}>{staleScanners.length ? `${staleScanners.length} stale scanner${staleScanners.length === 1 ? "" : "s"}` : "Scanner reports fresh"}</Pill></div></div></div><div className="location-focused-hero__actions"><button className={canManageScanners ? "primary" : "secondary"} onClick={() => setPage("devices")}><Smartphone size={15} /> {canManageScanners ? "Manage scanners" : "View scanners"}</button><button className="secondary" onClick={() => setPage("activity")}><Activity size={15} /> Local activity</button>{canRequestCorrections && <button className="secondary" onClick={() => setPage("corrections")}><FilePenLine size={15} /> Request correction</button>}</div></section>
@@ -3351,7 +3368,9 @@ function LocationWorkspacePage({ data, locationId, locationFilter, openLocation,
 }
 
 function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLocation, openDetail, setPage, session }: { data: OperationsData; focusedLocationId?: string; focusedLocationFilter?: LocationInventoryFilter; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession | null }) {
-  const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
+  const scoped = Boolean(session && isScopedPrincipal(session.principal));
+  const allowedLocationIds = scoped ? new Set(session?.principal.locationIds ?? []) : null;
+  const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location) && (!allowedLocationIds || allowedLocationIds.has(location.locationId)));
   const [selectedLocationId, setSelectedLocationIdState] = useState(physicalLocations[0]?.locationId ?? "");
   const setSelectedLocationId = (nextLocationId: string) => {
     setSelectedLocationIdState(nextLocationId);
@@ -3467,6 +3486,7 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
   };
 
   return <>
+    {session && <RoleScopeNotice principal={session.principal} pageLabel="Locations" />}
     <LocationNetworkMap metrics={matchingMetrics} movingCount={visibleMovingCount} movingReviewCount={visibleMovingReviewCount} routeRecords={visibleRouteRecords} onSelect={openLocation} onOpen={openRouteRecord} />
     {false && <LocationLifecycleExplorer routeRecords={routeRecords} focusLocationId={selected.locationId} onOpen={(record) => {
       const projection = record.projection;
@@ -4096,7 +4116,7 @@ function activityMinutes(value: string) {
   return Number.isFinite(hours) && Number.isFinite(minutes) ? hours! * 60 + minutes! : null;
 }
 
-function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; setPage: (page: Page) => void }) {
+function ActivityPage({ data, query, openDetail, setPage, session }: { data: OperationsData; query: string; openDetail: OpenDetail; setPage: (page: Page) => void; session: AdminSession }) {
   const [eventFilters, setEventFilters] = useState<StoredEvent["eventType"][]>([]);
   const [locationFilters, setLocationFilters] = useState<string[]>([]);
   const [deviceFilters, setDeviceFilters] = useState<string[]>([]);
@@ -4194,7 +4214,7 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
   const clearFilters = () => { setEventFilters([]); setLocationFilters([]); setDeviceFilters([]); setWindowFilter("all"); setFromDate(""); setFromTime(""); setToDate(""); setToTime(""); };
   const hasFilters = Boolean(searchTerm || locationFilters.length || deviceFilters.length || windowFilter !== "all" || eventFilters.length || fromDate || fromTime || toDate || toTime);
   const filtersInvalid = Boolean(dateRangeError);
-  return <section className="panel activity-page">
+  return <><RoleScopeNotice principal={session.principal} pageLabel="Activity" /><section className="panel activity-page">
     <div className="activity-purpose"><div><span className="eyebrow">Operational feed</span><strong>Physical observations from scanners</strong><p>Use Activity to trace where a container was scanned and how the movement unfolded. For administrator changes, sign-ins, device controls, and approvals, use Audit trail.</p></div><button className="secondary" onClick={() => setPage("audit")}><ScrollText size={15} /> Open audit trail</button></div>
     <div className="activity-filter-panel">
       <div className="activity-filter-panel__header"><div><span className="eyebrow">Filter observations</span><h2>Choose exactly what to review</h2><p>Choose one action, location, or scanner at a time. Every selection applies immediately; clear a field to return to all results.</p></div><div className="activity-filter-panel__actions"><span className="date-chip">{events.length} shown</span><button className="secondary" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button><span className="filter-live-note">Live filters</span></div></div>
@@ -4239,7 +4259,7 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
          })}><div className={`timeline__rail ${adjacentSameContainer ? "timeline__rail--linked" : ""}`}><span>{index + 1}</span>{adjacentSameContainer && <i aria-hidden="true" />}</div><div className="timeline__card"><div className="timeline__card-heading"><span><span className={`timeline__event-pill timeline__event-pill--${event.eventType}`}>{eventLabel(event.eventType)}</span>{event.accuracyFlags.length > 0 && <span className="timeline__warning">Needs review</span>}{relationship && <span className={`timeline__relationship ${relationshipClass}`}><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"}</h3><p className="timeline__narrative">{eventNarrative(event, data)}</p>{eventMessage(event) && <p className="timeline__message"><MessageSquare size={11} />Message for operations: {eventMessage(event)}</p>}<p className="timeline__meta"><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />Route: {routeText}</span>}<span>received {relativeTime(event.receivedAt)}</span>{event.accuracyFlags.length > 0 && <span>{event.accuracyFlags.length} data-quality warning{event.accuracyFlags.length === 1 ? "" : "s"}</span>}</p></div></article>;
      })}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
     {events.length > 100 && <p className="activity-limit-note">Showing the newest 100 matching observations. Use the filters to narrow the feed further.</p>}
-  </section>;
+  </section></>;
 }
 
 function LegacyActivityPage({ data, query, openDetail }: { data: OperationsData; query: string; openDetail: OpenDetail }) {
@@ -4283,9 +4303,12 @@ function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRe
   const [statusFilter, setStatusFilter] = useState<DeviceStatusFilter>("all");
   const [versionFilter, setVersionFilter] = useState("all");
   const [sortOrder, setSortOrder] = useState<DeviceSort>("attention");
-  const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false);
+  const scoped = Boolean(session && isScopedPrincipal(session.principal));
+  const allowedLocationIds = scoped ? new Set(session?.principal.locationIds ?? []) : null;
+  const visibleDevices = data.fixtures.devices.filter((device) => !allowedLocationIds || allowedLocationIds.has(device.assignedLocationId ?? ""));
+  const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && (!allowedLocationIds || allowedLocationIds.has(location.locationId)));
   const allLocations = data.fixtures.locations
-    .filter((location) => location.type !== "in_transit")
+    .filter((location) => location.type !== "in_transit" && (!allowedLocationIds || allowedLocationIds.has(location.locationId)))
     .sort((left, right) => left.name.localeCompare(right.name));
   const locationName = (locationId: string | null | undefined) => data.fixtures.locations.find((location) => location.locationId === locationId)?.name ?? "Unknown location";
   const isStale = (device: Device) => {
@@ -4294,9 +4317,9 @@ function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRe
     return !Number.isFinite(reportedAt) || Date.now() - reportedAt > 24 * 60 * 60 * 1000;
   };
   const needsAttention = (device: Device) => !device.isActive || isStale(device) || !device.reportedAppVersion;
-  const versions = Array.from(new Set(data.fixtures.devices.map((device) => device.reportedAppVersion).filter((version): version is string => Boolean(version)))).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const versions = Array.from(new Set(visibleDevices.map((device) => device.reportedAppVersion).filter((version): version is string => Boolean(version)))).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
   const searchTerm = query.trim().toLowerCase();
-  const filteredDevices = data.fixtures.devices.filter((device) => {
+  const filteredDevices = visibleDevices.filter((device) => {
     const assignedLocation = locationName(device.assignedLocationId);
     const previousLocations = data.fixtures.deviceAssignments
       .filter((entry) => entry.deviceId === device.deviceId)
@@ -4336,8 +4359,8 @@ function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRe
     return left.label.localeCompare(right.label) || leftLocation.localeCompare(rightLocation);
   });
   const matchingDevices = sortDevices(filteredDevices);
-  const staleCount = data.fixtures.devices.filter(isStale).length;
-  const disabledCount = data.fixtures.devices.filter((device) => !device.isActive).length;
+  const staleCount = visibleDevices.filter(isStale).length;
+  const disabledCount = visibleDevices.filter((device) => !device.isActive).length;
   const hasFilters = Boolean(searchTerm) || locationFilter !== "all" || statusFilter !== "all" || versionFilter !== "all" || sortOrder !== "attention";
   const clearFilters = () => { setQuery(""); setLocationFilter("all"); setStatusFilter("all"); setVersionFilter("all"); setSortOrder("attention"); };
   const save = async (device: Device, update: { label?: string; assignedLocationId?: string; isActive?: boolean; assignmentReason?: string }) => {
@@ -4353,6 +4376,7 @@ function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRe
     finally { setBusyId(null); }
   };
   return <>
+     {session && <RoleScopeNotice principal={session.principal} pageLabel="Scanners" />}
      {!session && <div className="access-lock"><ShieldCheck size={20}/><span><strong>Sign in to change scanners.</strong> You can inspect device records now; changes are locked until a verified Organization Owner or Operations Administrator signs in.</span><button className="secondary" onClick={onRequestSignIn}>Sign in</button></div>}
      {notice && <div className={`device-notice ${notice.tone === "error" ? "device-notice--error" : ""}`}>{notice.text}</div>}
      <section className="device-filter-panel" aria-label="Filter and sort scanners">
@@ -4363,7 +4387,7 @@ function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRe
          <label><span>Installed version</span><select value={versionFilter} onChange={(event) => setVersionFilter(event.target.value)}><option value="all">All versions</option><option value="not_reported">Version not reported</option>{versions.map((version) => <option key={version} value={version}>{version}</option>)}</select></label>
          <label><span>Sort scanners by</span><select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as DeviceSort)}><option value="attention">Attention first</option><option value="status">Status (enabled first)</option><option value="location">Location A–Z</option><option value="last_reported">Last report (newest)</option><option value="scanner_id">Scanner ID</option><option value="name">Scanner name A–Z</option><option value="observations">Most observations</option></select></label>
        </div>
-       <div className="device-filter-panel__summary"><strong>Showing {matchingDevices.length} of {data.fixtures.devices.length} scanners</strong><span>{data.fixtures.devices.length - disabledCount} enabled</span><span>{disabledCount} disabled</span><span>{staleCount} need a fresh report</span>{searchTerm && <span>Search: “{query.trim()}”</span>}</div>
+       <div className="device-filter-panel__summary"><strong>Showing {matchingDevices.length} of {visibleDevices.length} scanners</strong><span>{visibleDevices.length - disabledCount} enabled</span><span>{disabledCount} disabled</span><span>{staleCount} need a fresh report</span>{searchTerm && <span>Search: “{query.trim()}”</span>}</div>
      </section>
      {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator", "location_manager"].includes(session.principal.role))} canMoveAcrossLocations={session?.principal.role === "organization_owner"} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState><span>No scanners match the current search and filters.</span><button className="secondary" onClick={clearFilters}>Clear filters</button></EmptyState>}
    </>;

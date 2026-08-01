@@ -2044,3 +2044,25 @@ footer > span:first-child { display: none; }
 @media (max-width: 1000px) { .service-plan__filter-grid { grid-template-columns: repeat(3, minmax(135px, 1fr)); } }
 @media (max-width: 700px) { .service-plan__filter-grid { grid-template-columns: repeat(2, minmax(135px, 1fr)); } .service-plan__location-group th > button:first-child { width: 100%; align-items: flex-start; flex-direction: column; } .service-plan__location-group-summary { padding-left: 20px; } .service-plan__group-open { position: static; margin: 0 10px 8px 20px; } }
 @media (max-width: 560px) { .service-plan__filter-grid { grid-template-columns: 1fr; } .service-plan__queue-toolbar { align-items: flex-start; flex-wrap: wrap; } .service-plan__queue-toolbar > span { width: 100%; } }
+
+/* Make the role boundary visible at the point of work. The API remains the
+   security boundary; this keeps a local manager from wondering whether an
+   empty list is a data problem or an intentional scope restriction. */
+.role-scope-notice { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 11px 13px; border: 1px solid #c9e8ef; border-left: 3px solid var(--cyan); background: #f0fbfd; color: #476b78; }
+.role-scope-notice__icon { width: 28px; height: 28px; display: grid; place-items: center; flex: none; border: 1px solid #c7e6ed; background: #e3f6fa; color: var(--blue-800); }
+.role-scope-notice__copy { display: grid; min-width: 0; gap: 2px; flex: 1; }
+.role-scope-notice__copy strong { color: #194d63; font-size: 10px; }
+.role-scope-notice__copy small { color: #68838e; font-size: 9px; line-height: 1.4; }
+.role-scope-notice .pill { flex: none; }
+.sign-in-dialog__audience { display: flex; align-items: flex-start; gap: 9px; max-width: 410px; margin-top: 15px; padding: 11px 12px; border: 1px solid #d9edf2; border-left: 3px solid #4fc0dc; background: #f4fbfd; color: #3b6877; }
+.sign-in-dialog__audience > svg { flex: none; margin-top: 1px; color: #0c79aa; }
+.sign-in-dialog__audience span { display: grid; gap: 3px; }
+.sign-in-dialog__audience strong { color: #23596d; font-size: 10px; }
+.sign-in-dialog__audience small { margin: 0; color: #718b95; font-size: 9px; line-height: 1.45; }
+.container-table th, .container-table td { font-size: 10px; }
+.container-table thead th { font-size: 8px; letter-spacing: .07em; }
+.inventory-matrix thead th { font-size: 9px; letter-spacing: .05em; }
+.inventory-matrix__location strong { font-size: 11px; }
+.inventory-matrix__location small, .inventory-matrix__cell small { font-size: 8.5px; }
+.service-plan__table thead th { font-size: 8.5px; letter-spacing: .05em; }
+@media (max-width: 650px) { .role-scope-notice { align-items: flex-start; } .role-scope-notice .pill { margin-left: auto; } .role-scope-notice__copy small { font-size: 8.5px; } }
