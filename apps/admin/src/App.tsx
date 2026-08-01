@@ -1074,6 +1074,7 @@ function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setP
 }
 
 type InventoryMatrixMode = "container" | "goods";
+type InventoryLocationScope = "network" | "donation_express" | "store_backroom" | "warehouse";
 
 interface InventorySnapshotRecord {
   container: Container;
@@ -1099,6 +1100,8 @@ const inventoryContainerTypes = ["bin", "cart", "gaylord"] as const;
 
 function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void }) {
   const [mode, setMode] = useState<InventoryMatrixMode>("container");
+  const [locationScope, setLocationScope] = useState<InventoryLocationScope>("network");
+  const [selectedContainerTypes, setSelectedContainerTypes] = useState<string[]>([]);
   const unknownLocation = data.fixtures.locations.find((location) => isUnknownLocation(location)) ?? null;
   const unknownKey = "__unknown_inventory_location__";
   const locationById = new Map(data.fixtures.locations.map((location) => [location.locationId, location]));
@@ -1111,7 +1114,7 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
       latestLoadByContainer.set(event.containerId, event);
       if (event.loadCodeId) loadByCode.set(event.loadCodeId, event);
     });
-  const records = data.fixtures.containers.map<InventorySnapshotRecord>((container) => {
+  const allRecords = data.fixtures.containers.map<InventorySnapshotRecord>((container) => {
     const projection = data.projections[container.containerId];
     const loadEvent = projection?.activeLoadCodeId ? loadByCode.get(projection.activeLoadCodeId) ?? latestLoadByContainer.get(container.containerId) : latestLoadByContainer.get(container.containerId);
     const location = projection?.locationId ? locationById.get(projection.locationId) ?? null : null;
@@ -1127,10 +1130,16 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
       classification: String(loadEvent?.payload.secondaryValue ?? "Not specified")
     };
   });
+  const selectedTypeSet = new Set(selectedContainerTypes);
+  const records = allRecords.filter((record) => {
+    const typeMatches = selectedTypeSet.size === 0 || selectedTypeSet.has(record.container.type);
+    const scopeMatches = locationScope === "network" || record.locationKey === unknownKey || record.location?.type === locationScope;
+    return typeMatches && scopeMatches;
+  });
   const recordsByLocation = new Map<string, InventorySnapshotRecord[]>();
   records.forEach((record) => recordsByLocation.set(record.locationKey, [...(recordsByLocation.get(record.locationKey) ?? []), record]));
   const locationRows: InventoryMatrixRow[] = data.fixtures.locations
-    .filter((location) => !isUnknownLocation(location))
+    .filter((location) => !isUnknownLocation(location) && (locationScope === "network" || location.type === locationScope))
     .sort((left, right) => {
       const leftTransit = left.type === "in_transit" ? 1 : 0;
       const rightTransit = right.type === "in_transit" ? 1 : 0;
@@ -1144,7 +1153,9 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
     ...records.map((record) => record.goodsType).filter((goodsType) => goodsType !== "Unclassified")
   ]));
   if (records.some((record) => record.goodsType === "Unclassified")) goodsColumns.push("Unclassified");
-  const columns = mode === "container" ? inventoryContainerTypes.map((value) => ({ value, label: containerTypeLabel(value) })) : goodsColumns.map((value) => ({ value, label: value }));
+  const columns = mode === "container"
+    ? inventoryContainerTypes.filter((value) => selectedTypeSet.size === 0 || selectedTypeSet.has(value)).map((value) => ({ value, label: containerTypeLabel(value) }))
+    : goodsColumns.map((value) => ({ value, label: value }));
   const transitRow = locationRows.find((row) => row.location?.type === "in_transit");
   const unknownRow = locationRows.find((row) => row.isUnknown);
   const physicalCount = records.length - (transitRow?.records.length ?? 0) - (unknownRow?.records.length ?? 0);
@@ -1159,7 +1170,9 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
   const cellDetail = (items: InventorySnapshotRecord[]) => mode === "container"
     ? Array.from(new Set(items.map((item) => item.goodsType))).map((goodsType) => `${goodsType} ${items.filter((item) => item.goodsType === goodsType).length}`).join(" · ")
     : Array.from(new Set(items.map((item) => containerTypeLabel(item.container.type)))).map((type) => `${type} ${items.filter((item) => containerTypeLabel(item.container.type) === type).length}`).join(" · ");
-  const exportInventory = () => downloadCsv("stacktrack-company-inventory.csv", [
+  const scopeLabel = locationScope === "network" ? "All locations" : locationScope === "donation_express" ? "Donation Xpress" : locationScope === "store_backroom" ? "Stores" : "Warehouses";
+  const typeLabel = selectedContainerTypes.length ? selectedContainerTypes.map((value) => containerTypeLabel(value)).join(", ") : "All container types";
+  const exportInventory = () => downloadCsv(`stacktrack-company-inventory-${locationScope}.csv`, [
     ["Location", "Location type", "Container label", "Container UUID", "Container type", "Goods category", "Classification", "Current state", "History health", "Last observed"],
     ...[...records].sort((left, right) => left.locationName.localeCompare(right.locationName) || left.container.label.localeCompare(right.container.label)).map((record) => [
       record.locationName,
@@ -1174,10 +1187,15 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
       record.projection?.lastObservedAt ?? ""
     ])
   ]);
+  const clearInventoryFilters = () => {
+    setLocationScope("network");
+    setSelectedContainerTypes([]);
+  };
   return <section className="panel inventory-matrix-panel">
     <PanelTitle title="Company-wide inventory" subtitle="Current container inventory by location and category. Each container is counted once using its latest accepted projection." action="View all containers" onClick={() => setPage("containers")} />
     <div className="inventory-matrix__toolbar"><div><span className="eyebrow">Network inventory snapshot</span><p>Use container type for physical capacity planning, or goods category to mirror the inventory report used by Goodwill operations.</p></div><div className="inventory-matrix__actions"><div className="inventory-matrix__modes" role="group" aria-label="Inventory breakdown"><button type="button" className={mode === "container" ? "active" : ""} onClick={() => setMode("container")}><ContainerIcon size={14} /> Container type</button><button type="button" className={mode === "goods" ? "active" : ""} onClick={() => setMode("goods")}><Boxes size={14} /> Goods category</button></div><button type="button" className="secondary" onClick={exportInventory} disabled={!records.length}><Download size={15} /> Excel-ready CSV</button></div></div>
-     <div className="inventory-matrix__summary"><div><span><ContainerIcon size={15} />Tracked containers</span><strong>{records.length}</strong><small>All registered assets</small></div><div><span><MapPin size={15} />At operating locations</span><strong>{physicalCount}</strong><small>Confirmed physical placement</small></div><div><span><Truck size={15} />In transit</span><strong>{transitRow?.records.length ?? 0}</strong><small>Destination receipt pending</small></div><div><span><CircleHelp size={15} />Unknown / unassigned</span><strong>{unknownRow?.records.length ?? 0}</strong><small>{unknownRow?.records.length ? "Needs location follow-up" : "No current location gaps"}</small></div></div>
+    <div className="inventory-matrix__filters"><label><span>Location scope</span><select value={locationScope} onChange={(event) => setLocationScope(event.target.value as InventoryLocationScope)}><option value="network">All locations</option><option value="donation_express">Donation Xpress</option><option value="store_backroom">Stores</option><option value="warehouse">Warehouses</option></select></label><AuditMultiSelect label="Container types" options={inventoryContainerTypes.map((value) => ({ value, label: containerTypeLabel(value) }))} selected={selectedContainerTypes} onToggle={(value) => setSelectedContainerTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setSelectedContainerTypes([])} emptyLabel="All container types" /><div className="inventory-matrix__filter-summary"><strong>{scopeLabel}</strong><span>{typeLabel}</span><small>{records.length} container{records.length === 1 ? "" : "s"} included</small></div><button type="button" className="inventory-matrix__clear" onClick={clearInventoryFilters} disabled={locationScope === "network" && selectedContainerTypes.length === 0}>Clear filters</button></div>
+     <div className="inventory-matrix__summary"><div><span><ContainerIcon size={15} />Tracked containers</span><strong>{records.length}</strong><small>{scopeLabel} · {typeLabel}</small></div><div><span><MapPin size={15} />At operating locations</span><strong>{physicalCount}</strong><small>Confirmed physical placement</small></div><div><span><Truck size={15} />In transit</span><strong>{transitRow?.records.length ?? 0}</strong><small>Destination receipt pending</small></div><div><span><CircleHelp size={15} />Unknown / unassigned</span><strong>{unknownRow?.records.length ?? 0}</strong><small>{unknownRow?.records.length ? "Needs location follow-up" : "No current location gaps"}</small></div></div>
      <div className="table-wrap inventory-matrix__table-wrap"><table className="inventory-matrix"><thead><tr><th>Location</th>{columns.map((column) => <th key={column.value}>{column.label}</th>)}<th>Total</th></tr></thead><tbody>{locationRows.map((row) => <tr key={row.key}><th scope="row"><button type="button" className="inventory-matrix__location" onClick={() => openRow(row)}><span className={`inventory-matrix__location-icon ${row.isUnknown ? "inventory-matrix__location-icon--unknown" : row.location ? `inventory-matrix__location-icon--${row.location.type}` : "inventory-matrix__location-icon--unknown"}`}>{row.location && !row.isUnknown ? <LocationTypeIcon location={row.location} size={15} /> : <CircleHelp size={15} />}</span><span><strong>{row.locationName}</strong><small>{row.locationType}{row.location?.isActive === false ? " · Inactive" : ""}</small></span><ChevronRight size={13} /></button></th>{columns.map((column) => { const items = recordsForColumn(row, column.value); return <td key={column.value}>{items.length ? <button type="button" className="inventory-matrix__cell" onClick={() => openRow(row)} title={`${items.length} ${column.label.toLowerCase()} at ${row.locationName}. ${statusSummary(items)}.`}><strong>{items.length}</strong><small>{statusSummary(items)}</small><em>{cellDetail(items)}</em></button> : <span className="inventory-matrix__empty">—</span>}</td>; })}<td><button type="button" className="inventory-matrix__cell inventory-matrix__cell--total" onClick={() => openRow(row)} title={`${row.records.length} containers at ${row.locationName}.`}><strong>{row.records.length}</strong><small>{statusSummary(row.records) || "No current inventory"}</small></button></td></tr>)}</tbody><tfoot><tr><th>Network total</th>{columns.map((column) => <td key={column.value}><strong>{records.filter((record) => mode === "container" ? record.container.type === column.value : record.goodsType === column.value).length}</strong></td>)}<td><strong>{records.length}</strong></td></tr></tfoot></table></div>
     <p className="inventory-matrix__note">Counts reflect the latest accepted scan for each container. “Unknown / unassigned” keeps gaps visible instead of silently dropping them. The export includes one row per container so Excel users can filter or build a pivot table.</p>
   </section>;

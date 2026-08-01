@@ -170,6 +170,17 @@ main { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .inventory-matrix__toolbar > div:first-child { min-width: 0; }
 .inventory-matrix__toolbar p { max-width: 720px; margin: 4px 0 0; color: #788995; font-size: 9.5px; line-height: 1.45; }
 .inventory-matrix__actions { display: flex; align-items: center; gap: 9px; flex: none; }
+.inventory-matrix__filters { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(190px, 1fr) minmax(220px, 1.35fr) auto; align-items: end; gap: 10px; padding: 12px 19px; border-bottom: 1px solid #e8ecef; background: #f8fbfc; }
+.inventory-matrix__filters > label { display: grid; gap: 5px; min-width: 0; color: #687681; font-size: 8.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.inventory-matrix__filters > label select { min-height: 38px; box-sizing: border-box; padding: 0 10px; border: 1px solid #bdc9d2; border-radius: 4px; color: var(--ink); background: #fff; font: inherit; font-size: 11px; font-weight: 600; letter-spacing: normal; text-transform: none; }
+.inventory-matrix__filters .audit-multi-select > summary { min-height: 38px; }
+.inventory-matrix__filter-summary { display: grid; gap: 3px; min-height: 38px; box-sizing: border-box; align-content: center; padding: 0 10px; border-left: 3px solid var(--cyan); background: #eaf7fb; }
+.inventory-matrix__filter-summary strong { overflow: hidden; color: var(--blue-800); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.inventory-matrix__filter-summary span { overflow: hidden; color: #5d7581; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.inventory-matrix__filter-summary small { color: #7d909a; font-size: 8px; }
+.inventory-matrix__clear { min-height: 38px; padding: 0 10px; border: 1px solid #c7d5dc; border-radius: 4px; color: #59707d; background: #fff; cursor: pointer; font: inherit; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.inventory-matrix__clear:hover:not(:disabled) { border-color: #8fbaca; color: var(--blue-800); background: #f0fafc; }
+.inventory-matrix__clear:disabled { opacity: .45; cursor: default; }
 .inventory-matrix__modes { display: inline-flex; border: 1px solid #cbd9e0; background: white; }
 .inventory-matrix__modes button { display: inline-flex; align-items: center; gap: 5px; min-height: 34px; padding: 0 9px; border: 0; color: #607582; background: white; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .inventory-matrix__modes button + button { border-left: 1px solid #dce6ea; }
@@ -1258,8 +1269,8 @@ footer > span:first-child { display: none; }
 @media (max-width: 1100px) { .container-filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 780px) { .container-filter-panel__header { align-items: stretch; flex-direction: column; } .container-filter-panel__actions { justify-content: space-between; } .container-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .container-filter-grid { grid-template-columns: 1fr; } .container-filter-panel__actions { align-items: stretch; flex-wrap: wrap; } .container-filter-panel__actions > span { width: 100%; } .container-filter-panel__actions button { flex: 1; justify-content: center; } .container-message-list article > div { flex-direction: column; gap: 4px; } }
-@media (max-width: 900px) { .inventory-matrix__toolbar { align-items: stretch; flex-direction: column; } .inventory-matrix__actions { justify-content: space-between; } }
-@media (max-width: 650px) { .inventory-matrix__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-inline: 12px; } .inventory-matrix__toolbar { padding-inline: 12px; } .inventory-matrix__actions { align-items: stretch; flex-direction: column; } .inventory-matrix__modes { width: 100%; } .inventory-matrix__modes button { flex: 1; justify-content: center; } .inventory-matrix__actions > .secondary { justify-content: center; } .inventory-matrix__table-wrap { padding-inline: 12px; } .inventory-matrix__note { padding-inline: 12px; } }
+@media (max-width: 900px) { .inventory-matrix__toolbar { align-items: stretch; flex-direction: column; } .inventory-matrix__actions { justify-content: space-between; } .inventory-matrix__filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .inventory-matrix__filter-summary { min-width: 0; } .inventory-matrix__clear { justify-self: start; } }
+@media (max-width: 650px) { .inventory-matrix__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-inline: 12px; } .inventory-matrix__toolbar { padding-inline: 12px; } .inventory-matrix__filters { grid-template-columns: 1fr; padding-inline: 12px; } .inventory-matrix__actions { align-items: stretch; flex-direction: column; } .inventory-matrix__modes { width: 100%; } .inventory-matrix__modes button { flex: 1; justify-content: center; } .inventory-matrix__actions > .secondary { justify-content: center; } .inventory-matrix__table-wrap { padding-inline: 12px; } .inventory-matrix__note { padding-inline: 12px; } }
 
 /* Dedicated location workspaces. The network directory remains the corporate
    landing page; this hierarchy gives a manager a calm, local operating view. */
