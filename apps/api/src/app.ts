@@ -46,6 +46,8 @@ type AuditQuery = {
   search?: string;
   locationId?: string;
   deviceId?: string;
+  selectedLocationIds?: string;
+  selectedDeviceIds?: string;
   actorUserId?: string;
   actionPrefixes?: string;
   targetTypes?: string;
@@ -272,6 +274,10 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
           return reply.code(400).send({ error: "InvalidAuditFilter", message: `${field} must be a UUID.` });
         }
       }
+      const validUuidList = (value: string | undefined) => value === undefined || value === "" || (value.split(",").length <= 100 && value.split(",").every((item) => requestContextSchema.shape.deviceId.safeParse(item).success));
+      if (!validUuidList(query.selectedLocationIds) || !validUuidList(query.selectedDeviceIds)) {
+        return reply.code(400).send({ error: "InvalidAuditFilter", message: "Selected locations and scanners must be valid UUIDs." });
+      }
       if (query.search !== undefined && query.search.length > 120) {
         return reply.code(400).send({ error: "InvalidAuditFilter", message: "Search text is limited to 120 characters." });
       }
@@ -308,6 +314,8 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         ...(query.search?.trim() ? { search: query.search.trim() } : {}),
         ...(query.locationId ? { locationId: query.locationId } : {}),
         ...(query.deviceId ? { deviceId: query.deviceId } : {}),
+        ...(query.selectedLocationIds?.trim() ? { selectedLocationIds: query.selectedLocationIds.split(",") } : {}),
+        ...(query.selectedDeviceIds?.trim() ? { selectedDeviceIds: query.selectedDeviceIds.split(",") } : {}),
         ...(query.actorUserId ? { actorUserId: query.actorUserId } : {}),
         ...(query.actionPrefixes?.trim() ? { actionPrefixes: query.actionPrefixes.split(",") } : {}),
         ...(query.targetTypes?.trim() ? { targetTypes: query.targetTypes.split(",") } : {}),

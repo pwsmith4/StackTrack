@@ -554,6 +554,52 @@ describe("StackTrack API foundation", () => {
     }));
   });
 
+  it("passes selected locations and scanners through the governed audit search", async () => {
+    const searchAuditEntries = vi.fn().mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(ownerPrincipal), searchAuditEntries } as unknown as PostgresAdminAccess
+    });
+    const locationOne = "66666666-6666-4666-8666-666666666666";
+    const locationTwo = "77777777-7777-4777-8777-777777777777";
+    const scannerOne = "22222222-2222-4222-8222-222222222222";
+    const scannerTwo = "33333333-3333-4333-8333-333333333333";
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/local/admin/audit-log?selectedLocationIds=${locationOne},${locationTwo}&selectedDeviceIds=${scannerOne},${scannerTwo}`,
+      headers: { authorization: `Bearer ${"e".repeat(32)}` }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(searchAuditEntries).toHaveBeenCalledWith(expect.objectContaining({
+      selectedLocationIds: [locationOne, locationTwo],
+      selectedDeviceIds: [scannerOne, scannerTwo]
+    }));
+  });
+
+  it("rejects oversized or malformed selected audit filter lists", async () => {
+    const searchAuditEntries = vi.fn().mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(ownerPrincipal), searchAuditEntries } as unknown as PostgresAdminAccess
+    });
+    const invalid = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/admin/audit-log?selectedLocationIds=not-a-uuid",
+      headers: { authorization: `Bearer ${"e".repeat(32)}` }
+    });
+    const tooMany = Array.from({ length: 101 }, () => "66666666-6666-4666-8666-666666666666").join(",");
+    const oversized = await app.inject({
+      method: "GET",
+      url: `/api/v1/local/admin/audit-log?selectedDeviceIds=${tooMany}`,
+      headers: { authorization: `Bearer ${"e".repeat(32)}` }
+    });
+
+    expect(invalid.statusCode).toBe(400);
+    expect(oversized.statusCode).toBe(400);
+    expect(searchAuditEntries).not.toHaveBeenCalled();
+  });
+
   it("only emits CORS access headers for approved StackTrack browser origins", async () => {
     app = await createApp({ localMode: true });
     const request = {

@@ -62,6 +62,9 @@ export interface AuditFilters {
   readonly search?: string;
   readonly locationId?: string;
   readonly deviceId?: string;
+  /** User-selected location/device filters. Scoped locationIds remains an internal access constraint. */
+  readonly selectedLocationIds?: readonly string[];
+  readonly selectedDeviceIds?: readonly string[];
   readonly actorUserId?: string;
   readonly actionPrefixes?: readonly string[];
   readonly targetTypes?: readonly string[];
@@ -283,6 +286,8 @@ export class PostgresAdminAccess {
     if (filters.search?.trim()) add("concat_ws(' ', a.action, a.target_type, a.target_id, u.display_name, u.username, target_device.device_label, target_container.container_label, audit_location.location_name, a.details::text) ILIKE '%' || $VALUE || '%'", filters.search.trim().slice(0, 120));
     if (filters.locationId) add("EXISTS (SELECT 1 FROM locations filter_location WHERE filter_location.tenant_id=a.tenant_id AND filter_location.location_id=$VALUE::uuid AND (a.target_id=filter_location.location_id OR a.details->>'locationId'=filter_location.location_id::text OR a.details->>'assignedLocationId'=filter_location.location_id::text OR a.details->>'previousLocationId'=filter_location.location_id::text OR a.details->'after'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'after'->>'assigned_location_id'=filter_location.location_id::text OR a.details->'before'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'before'->>'assigned_location_id'=filter_location.location_id::text))", filters.locationId);
     if (filters.deviceId) add("(a.target_id=$VALUE::uuid OR a.details->>'deviceId'=$VALUE::text)", filters.deviceId);
+    if (filters.selectedLocationIds?.length) add(`EXISTS (SELECT 1 FROM locations filter_location WHERE filter_location.tenant_id=a.tenant_id AND filter_location.location_id = ANY($VALUE::uuid[]) AND (a.target_id=filter_location.location_id OR a.details->>'locationId'=filter_location.location_id::text OR a.details->>'assignedLocationId'=filter_location.location_id::text OR a.details->>'previousLocationId'=filter_location.location_id::text OR a.details->'after'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'after'->>'assigned_location_id'=filter_location.location_id::text OR a.details->'before'->>'assignedLocationId'=filter_location.location_id::text OR a.details->'before'->>'assigned_location_id'=filter_location.location_id::text))`, filters.selectedLocationIds.slice(0, 100));
+    if (filters.selectedDeviceIds?.length) add("(a.target_id = ANY($VALUE::uuid[]) OR a.details->>'deviceId' = ANY($VALUE::text[]))", filters.selectedDeviceIds.slice(0, 100));
     if (filters.actorUserId) add("a.actor_id=$VALUE::uuid", filters.actorUserId);
     if (filters.actionPrefixes?.length) add("a.action LIKE ANY($VALUE::text[])", filters.actionPrefixes.slice(0, 12).map((prefix) => `${prefix.trim().slice(0, 64)}%`));
     else if (filters.actionPrefix) add("a.action LIKE $VALUE || '%'", filters.actionPrefix.trim().slice(0, 64));

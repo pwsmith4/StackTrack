@@ -24,7 +24,7 @@
 .admin-account__reset small { grid-column: 1 / -1; color: #a44639; font-size: 9px; }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: #f5f7fa; }
+body { margin: 0; min-width: 0; min-height: 100vh; background: #f5f7fa; overflow-x: hidden; }
 button, input { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
