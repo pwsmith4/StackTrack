@@ -45,6 +45,7 @@ const DEVICE_ID = "30000000-0000-4000-8000-000000000001";
 const INSTALLATION_ID = "31000000-0000-4000-8000-000000000001";
 const SCANNER_ID = "00001";
 const LOCATION_ID = "20000000-0000-4000-8000-000000000002";
+const TRANSIT_LOCATION_ID = "20000000-0000-4000-8000-000000000004";
 const QUEUE_KEY = "stacktrack.local.queue.v2";
 const SEQUENCE_KEY = "stacktrack.local.sequence.v2";
 
@@ -81,7 +82,6 @@ interface LocalObservation {
   status: QueueStatus;
   locationName?: string;
   originName?: string;
-  destinationName?: string;
   loadCode?: string;
   message?: string;
   event?: Record<string, unknown>;
@@ -93,7 +93,6 @@ interface WorkflowState {
   action: ActionType | null;
   goodsType: string;
   secondaryValue: string;
-  destinationId: string;
   notes: string;
   loadCode: string | null;
 }
@@ -104,7 +103,6 @@ const initialWorkflow: WorkflowState = {
   action: null,
   goodsType: "Soft",
   secondaryValue: "Raw",
-  destinationId: "20000000-0000-4000-8000-000000000003",
   notes: "",
   loadCode: null
 };
@@ -124,14 +122,10 @@ function displayLoadCode(loadCodeId: string) {
   return `ST-${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}-${uniqueSuffix}`;
 }
 
-function actionSummary(action: ActionType, locationName?: string, destinationName?: string) {
+function actionSummary(action: ActionType, locationName?: string) {
   const location = locationName ? ` at ${locationName}` : " here";
   if (action === "load_assigned") return `Container marked full${location}`;
-  if (action === "batch_out") {
-    return destinationName
-      ? `Container sent from ${locationName ?? "this location"} to ${destinationName}`
-      : "Container sent to the selected location";
-  }
+  if (action === "batch_out") return `Container departed from ${locationName ?? "this location"}; receiving site not yet confirmed`;
   if (action === "batch_in") return `Container received${location}`;
   return `Container marked empty${location}`;
 }
@@ -399,7 +393,7 @@ function AppContent() {
     const payload = workflow.action === "load_assigned"
       ? { displayLoadCode: loadCode, goodsType: workflow.goodsType, secondaryValue: workflow.secondaryValue, notes: workflow.notes }
       : workflow.action === "batch_out"
-        ? { destinationLocationId: workflow.destinationId, notes: workflow.notes }
+        ? { sourceLocationId: assignedLocationId, notes: workflow.notes }
         : { notes: workflow.notes };
     const event = {
       eventId,
@@ -408,7 +402,7 @@ function AppContent() {
       containerId: workflow.container.containerId,
       ...(loadCodeId ? { loadCodeId } : {}),
       locationId: workflow.action === "batch_out"
-        ? "20000000-0000-4000-8000-000000000004"
+        ? fixtures?.locations.find((location) => location.type === "in_transit")?.locationId ?? TRANSIT_LOCATION_ID
         : assignedLocationId,
       eventType: workflow.action,
       eventAt,
@@ -440,9 +434,6 @@ function AppContent() {
         setOnline(false);
       }
     }
-    const destinationName = workflow.action === "batch_out"
-      ? fixtures?.locations.find((location) => location.locationId === workflow.destinationId)?.name
-      : undefined;
     const next: LocalObservation = {
       localId: eventId,
       label: workflow.container.label,
@@ -451,7 +442,6 @@ function AppContent() {
       status,
       locationName: deviceLocationName,
       ...(workflow.action === "batch_out" ? { originName: deviceLocationName } : {}),
-      ...(destinationName ? { destinationName } : {}),
       ...(loadCode ? { loadCode } : {}),
       message,
       event
@@ -528,7 +518,7 @@ function AppContent() {
               {step === "action" && workflow.container && <ActionStep container={workflow.container} onChoose={chooseAction} />}
               {step === "details" && fixtures && <DetailsStep workflow={workflow} setWorkflow={setWorkflow} fixtures={fixtures} assignedLocationId={assignedLocationId} onContinue={() => setStep("confirm")} />}
               {step === "confirm" && workflow.container && workflow.action && <ConfirmStep workflow={workflow} fixtures={fixtures} submitting={submitting} deviceLocationName={deviceLocationName} onSubmit={() => void submitObservation()} />}
-              {step === "success" && workflow.container && workflow.action && <SuccessStep workflow={workflow} deviceLocationName={deviceLocationName} {...(fixtures?.locations.find((location) => location.locationId === workflow.destinationId)?.name ? { destinationName: fixtures.locations.find((location) => location.locationId === workflow.destinationId)?.name } : {})} submissionStatus={lastSubmission.status} submissionMessage={lastSubmission.message} onDone={closeWorkflow} onAnother={() => { closeWorkflow(); setTimeout(beginScan, 150); }} />}
+              {step === "success" && workflow.container && workflow.action && <SuccessStep workflow={workflow} deviceLocationName={deviceLocationName} submissionStatus={lastSubmission.status} submissionMessage={lastSubmission.message} onDone={closeWorkflow} onAnother={() => { closeWorkflow(); setTimeout(beginScan, 150); }} />}
             </ScrollView>
           </SafeAreaView>
         </SafeAreaProvider>
@@ -580,17 +570,12 @@ function HomeScreen({ online, pending, recent, locations, onScan, onViewActivity
 function ObservationRow({ item, locations, fallbackLocation, last }: { item: LocalObservation; locations?: Fixtures["locations"] | undefined; fallbackLocation?: string; last: boolean }) {
   const icon: IconName = item.eventType === "load_assigned" ? "archive-outline" : item.eventType === "batch_out" ? "arrow-forward-circle-outline" : item.eventType === "batch_in" ? "arrow-down-circle-outline" : "checkmark-circle-outline";
   const locationName = item.locationName ?? item.originName ?? fallbackLocation;
-  const payload = item.event?.payload;
-  const destinationId = payload && typeof payload === "object" && typeof (payload as { destinationLocationId?: unknown }).destinationLocationId === "string"
-    ? (payload as { destinationLocationId: string }).destinationLocationId
-    : undefined;
-  const destinationName = item.destinationName ?? locations?.find((location) => location.locationId === destinationId)?.name;
   return (
     <View style={[styles.observation, last && styles.observationLast]}>
       <View style={styles.observationIcon}><Icon name={icon} size={20} /></View>
       <View style={styles.observationCopy}>
         <Text style={styles.observationTitle}>{item.label}</Text>
-        <Text style={styles.observationNarrative}>{actionSummary(item.eventType, locationName, destinationName)}</Text>
+        <Text style={styles.observationNarrative}>{actionSummary(item.eventType, locationName)}</Text>
         <Text style={styles.observationTime}>{new Date(item.eventAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}{item.loadCode ? ` - Load ${item.loadCode}` : ""}</Text>
         <Text numberOfLines={2} style={styles.observationMessage}>{queueMessage(item.status)}</Text>
       </View>
@@ -602,7 +587,7 @@ function ObservationRow({ item, locations, fallbackLocation, last }: { item: Loc
 function ActivityScreen({ observations, locations, deviceLocationName }: { observations: LocalObservation[]; locations?: Fixtures["locations"] | undefined; deviceLocationName: string }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
-      <Text style={styles.pageEyebrow}>DEVICE HISTORY</Text><Text style={styles.pageTitle}>Your activity</Text><Text style={styles.pageDescription}>Actions recorded on this scanner. Each move shows where the container left and where it is going.</Text>
+      <Text style={styles.pageEyebrow}>DEVICE HISTORY</Text><Text style={styles.pageTitle}>Your activity</Text><Text style={styles.pageDescription}>Actions recorded on this scanner. Departures show where a container left; the receiving site confirms the next location when it scans the arrival.</Text>
       <View style={styles.activitySummary}><View style={styles.summaryItem}><Text style={styles.summaryValue}>{observations.length}</Text><Text style={styles.summaryLabel}>RECORDED</Text></View><View style={styles.summaryItem}><Text style={styles.summaryValue}>{observations.filter((item) => item.status === "synced").length}</Text><Text style={styles.summaryLabel}>SYNCED</Text></View><View style={styles.summaryItem}><Text style={styles.summaryValue}>{observations.filter((item) => item.status === "pending").length}</Text><Text style={styles.summaryLabel}>WAITING</Text></View></View>
       <View style={styles.recentCard}>{observations.length ? observations.map((item, index) => <ObservationRow key={item.localId} item={item} locations={locations} fallbackLocation={deviceLocationName} last={index === observations.length - 1} />) : <View style={styles.emptyRecent}><Icon name="time-outline" size={28} color={colors.muted} /><Text style={styles.emptyRecentTitle}>No activity on this device</Text></View>}</View>
     </ScrollView>
@@ -681,7 +666,7 @@ function ScanStep({ workflow, setWorkflow, onContinue }: { workflow: WorkflowSta
 function ActionStep({ container, onChoose }: { container: ContainerReference; onChoose: (action: ActionType) => void }) {
   const actions: { action: ActionType; icon: IconName; title: string; text: string; accent: string }[] = [
     { action: "load_assigned", icon: "archive-outline", title: "Mark container full", text: "Start a load and generate its load code.", accent: colors.blue },
-    { action: "batch_out", icon: "arrow-forward-circle-outline", title: "Send container out", text: "Record that the container is leaving this location.", accent: colors.cyan },
+    { action: "batch_out", icon: "arrow-forward-circle-outline", title: "Record container departure", text: "Record that the container is leaving this location. The receiving site is not selected here.", accent: colors.cyan },
     { action: "batch_in", icon: "arrow-down-circle-outline", title: "Record arrival here", text: "Confirm that the container arrived at this location.", accent: colors.green },
     { action: "emptied", icon: "checkmark-circle-outline", title: "Mark container empty", text: "Close the active load at this location.", accent: colors.orange }
   ];
@@ -701,17 +686,32 @@ function ActionStep({ container, onChoose }: { container: ContainerReference; on
 
 function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onContinue }: { workflow: WorkflowState; setWorkflow: (value: (current: WorkflowState) => WorkflowState) => void; fixtures: Fixtures; assignedLocationId: string; onContinue: () => void }) {
   const selectedGoods = fixtures.goodsTypes.find((item) => item.name === workflow.goodsType) ?? fixtures.goodsTypes[0];
+  const isDeparture = workflow.action === "batch_out";
+  const detailTitle = workflow.action === "load_assigned"
+    ? "Describe the load"
+    : workflow.action === "batch_out"
+      ? "Record the departure"
+      : workflow.action === "batch_in"
+        ? "Confirm the arrival"
+        : "Confirm the container is empty";
+  const detailText = workflow.action === "load_assigned"
+    ? "Choose the goods category before you mark the container full."
+    : workflow.action === "batch_out"
+      ? "This scanner records where the container left. It does not ask for a receiving site because the local team cannot know it; the receiving site is confirmed when the container arrives."
+      : workflow.action === "batch_in"
+        ? "Confirm that the container arrived at this location. This scan is what establishes the receiving site."
+        : "Confirm that the container is empty at this location.";
   return (
     <View style={styles.step}>
-      <Text style={styles.stepEyebrow}>STEP 3 OF 4</Text><Text style={styles.stepTitle}>{workflow.action === "load_assigned" ? "Describe the load" : "Choose where it is going"}</Text><Text style={styles.stepText}>{workflow.action === "load_assigned" ? "Choose the goods category before you mark the container full." : "Select the location this container is leaving for."}</Text>
+      <Text style={styles.stepEyebrow}>STEP 3 OF 4</Text><Text style={styles.stepTitle}>{detailTitle}</Text><Text style={styles.stepText}>{detailText}</Text>
       {workflow.action === "load_assigned" ? (
         <>
           <Text style={styles.fieldLabel}>GOODS TYPE</Text><View style={styles.choiceWrap}>{fixtures.goodsTypes.map((item) => <Pressable key={item.name} onPress={() => setWorkflow((current) => ({ ...current, goodsType: item.name, secondaryValue: item.options[0] ?? "" }))} style={[styles.choice, workflow.goodsType === item.name && styles.choiceActive]}><Text style={[styles.choiceText, workflow.goodsType === item.name && styles.choiceTextActive]}>{item.name}</Text></Pressable>)}</View>
           <Text style={styles.fieldLabel}>{selectedGoods?.secondaryLabel.toUpperCase()}</Text><View style={styles.choiceWrap}>{selectedGoods?.options.map((item) => <Pressable key={item} onPress={() => setWorkflow((current) => ({ ...current, secondaryValue: item }))} style={[styles.choice, workflow.secondaryValue === item && styles.choiceActive]}><Text style={[styles.choiceText, workflow.secondaryValue === item && styles.choiceTextActive]}>{item}</Text></Pressable>)}</View>
         </>
-      ) : (
-        <View>{fixtures.locations.filter((item) => item.locationId !== assignedLocationId && item.type !== "in_transit" && item.isActive !== false && item.name.trim().toLowerCase() !== "unknown location").map((location) => <Pressable key={location.locationId} onPress={() => setWorkflow((current) => ({ ...current, destinationId: location.locationId }))} style={[styles.destination, workflow.destinationId === location.locationId && styles.destinationActive]}><View style={styles.destinationIcon}><Icon name="business-outline" /></View><View style={styles.destinationCopy}><Text style={styles.destinationTitle}>{location.name}</Text><Text style={styles.destinationText}>{locationTypeLabel(location.type)}</Text></View><Icon name={workflow.destinationId === location.locationId ? "radio-button-on" : "radio-button-off"} color={workflow.destinationId === location.locationId ? colors.blue : colors.muted} /></Pressable>)}</View>
-      )}
+      ) : isDeparture ? (
+        <View style={styles.departureNotice}><View style={styles.departureNoticeIcon}><Icon name="arrow-forward-circle-outline" size={24} color={colors.blue} /></View><View style={styles.departureNoticeCopy}><Text style={styles.departureNoticeTitle}>Leaving {fixtures.locations.find((item) => item.locationId === assignedLocationId)?.name ?? "this location"}</Text><Text style={styles.departureNoticeText}>No receiving site is selected at departure. The next receiving scan will establish where this container arrived.</Text></View></View>
+      ) : null}
       <Text style={styles.fieldLabel}>MESSAGE FOR OPERATIONS (OPTIONAL)</Text><TextInput value={workflow.notes} onChangeText={(notes) => setWorkflow((current) => ({ ...current, notes }))} placeholder="Example: lid damaged, moved to dock 3, or paperwork attached" placeholderTextColor="#98A2AB" style={[styles.labelInput, styles.noteInput]} multiline />
       <PrimaryButton onPress={onContinue} icon="arrow-forward">REVIEW OBSERVATION</PrimaryButton>
     </View>
@@ -719,16 +719,15 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
 }
 
 function ConfirmStep({ workflow, fixtures, submitting, deviceLocationName, onSubmit }: { workflow: WorkflowState; fixtures: Fixtures | null; submitting: boolean; deviceLocationName: string; onSubmit: () => void }) {
-  const destination = fixtures?.locations.find((item) => item.locationId === workflow.destinationId)?.name;
   return (
     <View style={styles.step}>
-      <Text style={styles.stepEyebrow}>STEP 4 OF 4</Text><Text style={styles.stepTitle}>Confirm before saving</Text><Text style={styles.stepText}>Check the container, action, and destination. You can go back if anything needs to change.</Text>
+      <Text style={styles.stepEyebrow}>STEP 4 OF 4</Text><Text style={styles.stepTitle}>Confirm before saving</Text><Text style={styles.stepText}>Check the container, action, and scan location. You can go back if anything needs to change.</Text>
       <View style={styles.confirmCard}>
         <ConfirmRow label="Container" value={workflow.container?.label ?? ""} />
-        <ConfirmRow label="Action" value={actionSummary(workflow.action!, deviceLocationName, destination)} />
+        <ConfirmRow label="Action" value={actionSummary(workflow.action!, deviceLocationName)} />
         <ConfirmRow label="Scanned at" value={deviceLocationName} />
         {workflow.action === "load_assigned" && <><ConfirmRow label="Goods" value={workflow.goodsType} /><ConfirmRow label="Quality" value={workflow.secondaryValue} /></>}
-        {workflow.action === "batch_out" && <ConfirmRow label="Going to" value={destination ?? "Not selected"} />}
+        {workflow.action === "batch_out" && <ConfirmRow label="Receiving site" value="Confirmed when the next location scans arrival" />}
         {workflow.notes && <ConfirmRow label="Message for operations" value={workflow.notes} />}
         <ConfirmRow label="Device time" value={new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} last />
       </View>
@@ -742,14 +741,14 @@ function ConfirmRow({ label, value, last = false }: { label: string; value: stri
   return <View style={[styles.confirmRow, last && styles.confirmRowLast]}><Text style={styles.confirmLabel}>{label}</Text><Text style={styles.confirmValue}>{value}</Text></View>;
 }
 
-function SuccessStep({ workflow, deviceLocationName, destinationName, submissionStatus, submissionMessage, onDone, onAnother }: { workflow: WorkflowState; deviceLocationName: string; destinationName?: string | undefined; submissionStatus: QueueStatus; submissionMessage: string; onDone: () => void; onAnother: () => void }) {
+function SuccessStep({ workflow, deviceLocationName, submissionStatus, submissionMessage, onDone, onAnother }: { workflow: WorkflowState; deviceLocationName: string; submissionStatus: QueueStatus; submissionMessage: string; onDone: () => void; onAnother: () => void }) {
   const isSynced = submissionStatus === "synced";
   const needsReview = submissionStatus === "review";
   return (
     <View style={[styles.step, styles.successStep]}>
       <View style={[styles.successIcon, needsReview && styles.successIconReview]}><Icon name={needsReview ? "alert" : "checkmark"} size={45} color="white" /></View>
       <Text style={styles.successEyebrow}>{isSynced ? "SAVED & SYNCED" : needsReview ? "SAVED FOR REVIEW" : "SAVED ON DEVICE"}</Text><Text style={styles.successTitle}>{workflow.container?.label} recorded.</Text>
-      <Text style={styles.successText}>{actionSummary(workflow.action!, deviceLocationName, destinationName)}. {submissionMessage}</Text>
+      <Text style={styles.successText}>{actionSummary(workflow.action!, deviceLocationName)}. {submissionMessage}</Text>
       {workflow.loadCode && <View style={styles.loadCodeBox}><Text style={styles.loadCodeLabel}>GENERATED LOAD CODE</Text><Text style={styles.loadCodeValue}>{workflow.loadCode}</Text><Text style={styles.loadCodeHelp}>Use this code in the production system.</Text></View>}
       <PrimaryButton onPress={onDone}>DONE</PrimaryButton>
       <Pressable onPress={onAnother} style={styles.anotherButton}><Icon name="scan-outline" size={18} /><Text>SCAN ANOTHER CONTAINER</Text></Pressable>
@@ -910,12 +909,11 @@ const styles = StyleSheet.create({
   choiceActive: { backgroundColor: colors.blue, borderColor: colors.blue },
   choiceText: { color: colors.ink, fontSize: 10, fontWeight: "700" },
   choiceTextActive: { color: "white" },
-  destination: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, padding: 13, marginBottom: 9 },
-  destinationActive: { borderColor: colors.blue, backgroundColor: "#F7FBFE" },
-  destinationIcon: { width: 38, height: 38, backgroundColor: colors.paleBlue, alignItems: "center", justifyContent: "center", marginRight: 10 },
-  destinationCopy: { flex: 1 },
-  destinationTitle: { color: colors.ink, fontSize: 11, fontWeight: "700" },
-  destinationText: { color: colors.muted, fontSize: 8, textTransform: "capitalize", marginTop: 3 },
+  departureNotice: { flexDirection: "row", alignItems: "flex-start", backgroundColor: colors.paleBlue, borderLeftWidth: 3, borderLeftColor: colors.cyan, padding: 14, marginBottom: 6, gap: 11 },
+  departureNoticeIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
+  departureNoticeCopy: { flex: 1 },
+  departureNoticeTitle: { color: colors.ink, fontSize: 11, fontWeight: "800" },
+  departureNoticeText: { color: colors.muted, fontSize: 9, lineHeight: 14, marginTop: 4 },
   confirmCard: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 15, marginBottom: 14 },
   confirmRow: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: "#E8ECEF", gap: 20 },
   confirmRowLast: { borderBottomWidth: 0 },

@@ -8,6 +8,7 @@ These assumptions make it safe to build before Goodwill-specific discovery is co
 2. The tracked asset in the source specification is a reusable container identified by a unique barcode or QR label.
 3. Core events are `load_assigned`, `batch_out`, `batch_in`, and `emptied`.
 4. Load codes may originate in another system. StackTrack stores both its internal UUID and a future external reference without assuming the external format.
+5. A location employee records only the departure origin or the receiving location they can physically verify. The receiving site is unknown until a later `batch_in` scan; StackTrack never treats a planned truck destination as official evidence.
 
 ## Accuracy policy
 

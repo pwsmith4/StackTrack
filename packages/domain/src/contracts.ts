@@ -43,6 +43,18 @@ export const eventSubmissionSchema = z
     }
 
     if (
+      value.eventType === "batch_out" &&
+      Object.prototype.hasOwnProperty.call(value.payload, "destinationLocationId")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payload", "destinationLocationId"],
+        message:
+          "A departure cannot include a receiving site. Record the arrival at the location that receives the container."
+      });
+    }
+
+    if (
       (value.deviceClockOffsetSeconds === undefined) !==
       (value.clockVerifiedAt === undefined)
     ) {

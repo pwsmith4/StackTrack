@@ -622,6 +622,8 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .container-table th:nth-child(4) { text-align: left; }
 .container-table td:nth-child(4) { vertical-align: middle; }
 .container-route-cell > small { overflow: hidden; color: #7a8790; font-size: 8.5px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.container-route-cell--active > small:not(.container-route-cell__truth) { display: none; }
+.container-route-cell__truth { color: #087ca6; font-weight: 700; }
 .container-location-cell { display: flex; align-items: center; gap: 9px; min-width: 190px; }
 .container-location-cell__icon { width: 29px; height: 29px; display: grid; place-items: center; flex: none; color: var(--blue-800); background: #eaf4f9; border: 1px solid #d7e9f1; }
 .container-location-cell > div { min-width: 0; display: grid; gap: 3px; }

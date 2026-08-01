@@ -288,7 +288,7 @@ export async function seedPostgres(
           "batch_out",
           baseAge + 2,
           loadNumber,
-          { sourceLocationId: locationId(source), destinationLocationId: locationId(3) },
+          { sourceLocationId: locationId(source) },
           sourceDevice
         );
       }
@@ -299,7 +299,7 @@ export async function seedPostgres(
           "batch_in",
           baseAge + 1,
           loadNumber,
-          { sourceLocationId: locationId(source) },
+          {},
           3
         );
       }
@@ -332,12 +332,12 @@ export async function seedPostgres(
     const multiHopContainer = 4;
     const multiHopSteps = [
       { location: 1, type: "load_assigned" as const, age: 60, load: nextLoad++, payload: { displayLoadCode: `ST-MULTI-${String(nextLoad - 1).padStart(3, "0")}`, goodsType: "Soft", secondaryValue: "Raw" }, device: 3 },
-      { location: 4, type: "batch_out" as const, age: 59, load: nextLoad - 1, payload: { sourceLocationId: locationId(1), destinationLocationId: locationId(3) }, device: 3 },
-      { location: 3, type: "batch_in" as const, age: 58, load: nextLoad - 1, payload: { sourceLocationId: locationId(1) }, device: 2 },
-      { location: 4, type: "batch_out" as const, age: 57, load: nextLoad - 1, payload: { sourceLocationId: locationId(3), destinationLocationId: locationId(9) }, device: 2 },
-      { location: 9, type: "batch_in" as const, age: 56, load: nextLoad - 1, payload: { sourceLocationId: locationId(3) }, device: 8 },
-      { location: 4, type: "batch_out" as const, age: 55, load: nextLoad - 1, payload: { sourceLocationId: locationId(9), destinationLocationId: locationId(2) }, device: 8 },
-      { location: 2, type: "batch_in" as const, age: 54, load: nextLoad - 1, payload: { sourceLocationId: locationId(9) }, device: 1 }
+      { location: 4, type: "batch_out" as const, age: 59, load: nextLoad - 1, payload: { sourceLocationId: locationId(1) }, device: 3 },
+      { location: 3, type: "batch_in" as const, age: 58, load: nextLoad - 1, payload: {}, device: 2 },
+      { location: 4, type: "batch_out" as const, age: 57, load: nextLoad - 1, payload: { sourceLocationId: locationId(3) }, device: 2 },
+      { location: 9, type: "batch_in" as const, age: 56, load: nextLoad - 1, payload: {}, device: 8 },
+      { location: 4, type: "batch_out" as const, age: 55, load: nextLoad - 1, payload: { sourceLocationId: locationId(9) }, device: 8 },
+      { location: 2, type: "batch_in" as const, age: 54, load: nextLoad - 1, payload: {}, device: 1 }
     ];
     for (const step of multiHopSteps) {
       await submit(multiHopContainer, step.location, step.type, step.age, step.load, step.payload, step.device);
