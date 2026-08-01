@@ -91,6 +91,7 @@ import stacktrackLogo from "./assets/stacktrack-logo-tight.png";
 type Page =
   | "dashboard"
   | "inventory"
+  | "service"
   | "containers"
   | "loads"
   | "locations"
@@ -196,6 +197,11 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
     title: "Company-wide inventory",
     description: "Review the current container footprint by location, container type, and goods category."
   },
+  service: {
+    eyebrow: "Dispatch planning",
+    title: "Daily service plan",
+    description: "Prioritize full-crate pickups and empty-crate deliveries from each location’s operating targets."
+  },
   containers: {
     eyebrow: "Reusable assets",
     title: "Containers",
@@ -251,6 +257,7 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
 const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
   { page: "dashboard", label: "Overview", icon: LayoutDashboard },
   { page: "inventory", label: "Inventory", icon: Layers3 },
+  { page: "service", label: "Service plan", icon: Truck },
   { page: "containers", label: "Containers", icon: ContainerIcon },
   { page: "loads", label: "Load codes", icon: PackageCheck },
   { page: "locations", label: "Locations", icon: MapPin },
@@ -955,6 +962,7 @@ function PageContent({
 }) {
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} openLocation={openLocation} />;
   if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} />;
+  if (page === "service") return <ServicePlanPage data={data} openLocation={openLocation} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
   if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} {...(locationFilter ? { focusedLocationFilter: locationFilter } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} session={session} />;
@@ -1337,6 +1345,228 @@ function WarehouseForecastPanel({ data, warehouses, warehouseRecords, goodsColum
     <div className="warehouse-forecast__events"><div><span className="eyebrow">Active planning inputs</span><strong>{planningEvents.length ? `${planningEvents.length} event${planningEvents.length === 1 ? "" : "s"} saved` : "No holiday adjustments saved"}</strong><p>These are scenario inputs for planning. They do not alter scan history, projections, or official counts.</p></div>{planningEvents.length ? <div className="warehouse-forecast__event-list">{planningEvents.map((event) => <article key={event.id}><span className="warehouse-forecast__event-icon"><CalendarDays size={15} /></span><span><strong>{event.name}</strong><small>{event.date} · {event.durationDays} days · {event.upliftPercent >= 0 ? "+" : ""}{event.upliftPercent}% · {event.warehouseId === "all" ? "All warehouses" : warehouses.find((warehouse) => warehouse.locationId === event.warehouseId)?.name ?? "Selected warehouse"}{event.goodsType === "all" ? "" : ` · ${event.goodsType}`}</small></span><button type="button" onClick={() => setPlanningEvents((current) => current.filter((item) => item.id !== event.id))} aria-label={`Remove ${event.name}`}><Trash2 size={14} /></button></article>)}</div> : <div className="warehouse-forecast__events-empty">Add a holiday or promotion to make the forecast scenario-specific.</div>}</div>
     <p className="warehouse-forecast__note">Forecast math: historical weekly receipts are adjusted for the selected growth and event uplift, then multiplied by the planning horizon. Recommended on-hand inventory uses the target days of cover plus safety stock. Actual scan data remains authoritative.</p>
   </section>;
+}
+
+type ServiceContainerType = (typeof serviceContainerTypes)[number];
+type ServicePriority = "critical" | "high" | "watch" | "on_target";
+type ServicePriorityFilter = "all" | "action" | "pickup" | "delivery" | "watch" | "on_target";
+type ServicePlanMode = "queue" | "targets";
+
+interface ServiceTargetValues {
+  minimumOnHand: number;
+  maximumOnHand: number;
+  minimumEmpty: number;
+  maximumFull: number;
+}
+
+interface ServiceTargetOverride extends ServiceTargetValues {
+  locationId: string;
+  goodsType: string;
+  containerType: ServiceContainerType;
+}
+
+interface ServicePlanRow {
+  key: string;
+  location: Location;
+  goodsType: string;
+  containerType: ServiceContainerType;
+  full: number;
+  empty: number;
+  unknown: number;
+  total: number;
+  target: ServiceTargetValues;
+  pickupQty: number;
+  deliveryQty: number;
+  priority: ServicePriority;
+  priorityScore: number;
+  action: string;
+  reason: string;
+}
+
+const serviceContainerTypes = ["bin", "cart", "gaylord"] as const;
+const serviceTargetsStorageKey = "stacktrack.service-plan.targets";
+
+function serviceTargetKey(locationId: string, goodsType: string, containerType: ServiceContainerType) {
+  return `${locationId}|${goodsType}|${containerType}`;
+}
+
+function serviceDefaultTarget(location: Location, containerType: ServiceContainerType): ServiceTargetValues {
+  if (location.type === "warehouse") return { minimumOnHand: 0, maximumOnHand: 999, minimumEmpty: 0, maximumFull: 999 };
+  const base = containerType === "bin"
+    ? location.type === "donation_express" ? { minimumOnHand: 8, maximumOnHand: 24, minimumEmpty: 4, maximumFull: 12 } : { minimumOnHand: 6, maximumOnHand: 18, minimumEmpty: 3, maximumFull: 8 }
+    : containerType === "cart"
+      ? location.type === "donation_express" ? { minimumOnHand: 4, maximumOnHand: 12, minimumEmpty: 2, maximumFull: 6 } : { minimumOnHand: 3, maximumOnHand: 10, minimumEmpty: 2, maximumFull: 5 }
+      : location.type === "donation_express" ? { minimumOnHand: 3, maximumOnHand: 10, minimumEmpty: 2, maximumFull: 5 } : { minimumOnHand: 2, maximumOnHand: 8, minimumEmpty: 1, maximumFull: 4 };
+  return base;
+}
+
+function normalizeServiceTarget(value: Partial<ServiceTargetValues> | null | undefined, fallback: ServiceTargetValues): ServiceTargetValues {
+  const numberOr = (candidate: unknown, defaultValue: number) => Number.isFinite(Number(candidate)) ? Math.min(999, Math.max(0, Number(candidate))) : defaultValue;
+  const minimumOnHand = numberOr(value?.minimumOnHand, fallback.minimumOnHand);
+  const maximumOnHand = Math.max(minimumOnHand, numberOr(value?.maximumOnHand, fallback.maximumOnHand));
+  const minimumEmpty = numberOr(value?.minimumEmpty, fallback.minimumEmpty);
+  const maximumFull = Math.max(minimumEmpty, numberOr(value?.maximumFull, fallback.maximumFull));
+  return { minimumOnHand, maximumOnHand, minimumEmpty, maximumFull };
+}
+
+function readServiceTargetOverrides(value: unknown): Record<string, ServiceTargetOverride> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, ServiceTargetOverride>>((result, [key, candidate]) => {
+    if (!candidate || typeof candidate !== "object") return result;
+    const item = candidate as Partial<ServiceTargetOverride>;
+    if (typeof item.locationId !== "string" || typeof item.goodsType !== "string" || !serviceContainerTypes.includes(item.containerType as ServiceContainerType)) return result;
+    const fallback = serviceDefaultTarget({ type: "store_backroom" } as Location, item.containerType as ServiceContainerType);
+    result[key] = { locationId: item.locationId, goodsType: item.goodsType, containerType: item.containerType as ServiceContainerType, ...normalizeServiceTarget(item, fallback) };
+    return result;
+  }, {});
+}
+
+function servicePriorityLabel(priority: ServicePriority) {
+  return { critical: "Critical", high: "Priority", watch: "Verify data", on_target: "On target" }[priority];
+}
+
+function servicePriorityTone(priority: ServicePriority): PillTone {
+  return priority === "critical" ? "warn" : priority === "high" ? "blue" : priority === "watch" ? "muted" : "good";
+}
+
+function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
+  const records = buildInventorySnapshotRecords(data);
+  const locations = data.fixtures.locations.filter((location) => location.isActive !== false && location.type !== "in_transit" && !isUnknownLocation(location));
+  const locationById = new Map(locations.map((location) => [location.locationId, location]));
+  const goodsTypes = Array.from(new Set([
+    ...data.fixtures.goodsTypes.map((goodsType) => goodsType.name),
+    ...records.map((record) => record.goodsType)
+  ])).filter(Boolean);
+  const availableGoodsTypes = goodsTypes.length ? goodsTypes : ["Unclassified"];
+  const [serviceDate, setServiceDate] = useState(dateInputValue(new Date()));
+  const [mode, setMode] = useState<ServicePlanMode>("queue");
+  const [locationFilter, setLocationFilter] = useState("all");
+  const [goodsFilter, setGoodsFilter] = useState("all");
+  const [containerFilter, setContainerFilter] = useState<"all" | ServiceContainerType>("all");
+  const [priorityFilter, setPriorityFilter] = useState<ServicePriorityFilter>("action");
+  const [targetOverrides, setTargetOverrides] = useState<Record<string, ServiceTargetOverride>>(() => readServiceTargetOverrides(readWarehouseForecastStorage<unknown>(serviceTargetsStorageKey, {})));
+  const [targetLocation, setTargetLocation] = useState(locations[0]?.locationId ?? "");
+  const [targetGoods, setTargetGoods] = useState(availableGoodsTypes[0] ?? "Unclassified");
+  const [targetContainer, setTargetContainer] = useState<ServiceContainerType>("bin");
+
+  useEffect(() => {
+    try { window.localStorage.setItem(serviceTargetsStorageKey, JSON.stringify(targetOverrides)); } catch { /* Target setup remains usable if this browser blocks storage. */ }
+  }, [targetOverrides]);
+
+  const targetFor = (location: Location, goodsType: string, containerType: ServiceContainerType): ServiceTargetValues => {
+    const key = serviceTargetKey(location.locationId, goodsType, containerType);
+    return normalizeServiceTarget(targetOverrides[key], serviceDefaultTarget(location, containerType));
+  };
+  const combos = new Map<string, { locationId: string; goodsType: string; containerType: ServiceContainerType }>();
+  records.forEach((record) => {
+    if (!locationById.has(record.locationKey) || !serviceContainerTypes.includes(record.container.type as ServiceContainerType)) return;
+    const containerType = record.container.type as ServiceContainerType;
+    const key = serviceTargetKey(record.locationKey, record.goodsType, containerType);
+    combos.set(key, { locationId: record.locationKey, goodsType: record.goodsType, containerType });
+  });
+  Object.values(targetOverrides).forEach((target) => {
+    if (locationById.has(target.locationId)) combos.set(serviceTargetKey(target.locationId, target.goodsType, target.containerType), { locationId: target.locationId, goodsType: target.goodsType, containerType: target.containerType });
+  });
+
+  const rows: ServicePlanRow[] = Array.from(combos.values()).map(({ locationId, goodsType, containerType }) => {
+    const location = locationById.get(locationId)!;
+    const matching = records.filter((record) => record.locationKey === locationId && record.goodsType === goodsType && record.container.type === containerType);
+    const full = matching.filter((record) => record.projection?.loadState === "loaded").length;
+    const empty = matching.filter((record) => record.projection?.loadState === "empty").length;
+    const unknown = matching.length - full - empty;
+    const total = matching.length;
+    const target = targetFor(location, goodsType, containerType);
+    const pickupQty = Math.min(full, Math.max(0, full - target.maximumFull, total - target.maximumOnHand));
+    const deliveryQty = Math.max(0, target.minimumEmpty - empty, target.minimumOnHand - total);
+    const priority: ServicePriority = deliveryQty > 0 && (empty === 0 || total < Math.max(1, target.minimumOnHand / 2))
+      ? "critical"
+      : deliveryQty > 0 || pickupQty > 0
+        ? "high"
+        : unknown > 0
+          ? "watch"
+          : "on_target";
+    const priorityScore = priority === "critical" ? 4 : priority === "high" ? 3 : priority === "watch" ? 2 : 1;
+    const action = pickupQty > 0 && deliveryQty > 0 ? "Pickup + deliver" : pickupQty > 0 ? "Pickup full crates" : deliveryQty > 0 ? "Deliver empty crates" : unknown > 0 ? "Verify count" : "No action";
+    const reason = pickupQty > 0 && deliveryQty > 0
+      ? `Has ${pickupQty} full ${containerTypeLabel(containerType).toLowerCase()}${pickupQty === 1 ? "" : "s"} ready, but needs ${deliveryQty} empty to stay above its operating minimum.`
+      : pickupQty > 0
+        ? `${full} full crates are at or above the pickup threshold of ${target.maximumFull}.`
+        : deliveryQty > 0
+          ? `Only ${empty} empty crates are available; the configured minimum is ${target.minimumEmpty}.`
+          : unknown > 0
+            ? `${unknown} crate${unknown === 1 ? "" : "s"} has no confirmed full/empty state. Verify before dispatching.`
+            : "Current full, empty, and total counts are within the configured limits.";
+    return { key: serviceTargetKey(locationId, goodsType, containerType), location, goodsType, containerType, full, empty, unknown, total, target, pickupQty, deliveryQty, priority, priorityScore, action, reason };
+  }).sort((left, right) => right.priorityScore - left.priorityScore || left.location.name.localeCompare(right.location.name) || left.goodsType.localeCompare(right.goodsType) || left.containerType.localeCompare(right.containerType));
+
+  const filteredRows = rows.filter((row) => {
+    if (locationFilter !== "all" && row.location.locationId !== locationFilter) return false;
+    if (goodsFilter !== "all" && row.goodsType !== goodsFilter) return false;
+    if (containerFilter !== "all" && row.containerType !== containerFilter) return false;
+    return true;
+  });
+  const priorityMatches = (row: ServicePlanRow) => priorityFilter === "all"
+    || (priorityFilter === "action" && (row.pickupQty > 0 || row.deliveryQty > 0))
+    || (priorityFilter === "pickup" && row.pickupQty > 0)
+    || (priorityFilter === "delivery" && row.deliveryQty > 0)
+    || (priorityFilter === "watch" && row.priority === "watch")
+    || (priorityFilter === "on_target" && row.priority === "on_target");
+  const visibleRows = mode === "queue" ? filteredRows.filter(priorityMatches) : filteredRows;
+  const actionRows = rows.filter((row) => row.pickupQty > 0 || row.deliveryQty > 0);
+  const pickupRows = actionRows.filter((row) => row.pickupQty > 0);
+  const deliveryRows = actionRows.filter((row) => row.deliveryQty > 0);
+  const criticalRows = actionRows.filter((row) => row.priority === "critical");
+  const unknownRows = rows.filter((row) => row.unknown > 0);
+  const pickupStops = new Set(pickupRows.map((row) => row.location.locationId)).size;
+  const deliveryStops = new Set(deliveryRows.map((row) => row.location.locationId)).size;
+  const pickupTotal = pickupRows.reduce((total, row) => total + row.pickupQty, 0);
+  const deliveryTotal = deliveryRows.reduce((total, row) => total + row.deliveryQty, 0);
+
+  const updateTarget = (row: ServicePlanRow, field: keyof ServiceTargetValues, value: string) => {
+    const numericValue = Math.min(999, Math.max(0, Number(value) || 0));
+    setTargetOverrides((current) => {
+      const base = current[row.key] ?? row.target;
+      const next = normalizeServiceTarget({ ...base, [field]: numericValue }, row.target);
+      return { ...current, [row.key]: { ...next, locationId: row.location.locationId, goodsType: row.goodsType, containerType: row.containerType } };
+    });
+  };
+  const resetTarget = (row: ServicePlanRow) => setTargetOverrides((current) => {
+    const next = { ...current };
+    delete next[row.key];
+    return next;
+  });
+  const addTarget = (event: React.FormEvent) => {
+    event.preventDefault();
+    const location = locationById.get(targetLocation);
+    if (!location || !targetGoods) return;
+    const key = serviceTargetKey(targetLocation, targetGoods, targetContainer);
+    setTargetOverrides((current) => current[key] ? current : { ...current, [key]: { ...serviceDefaultTarget(location, targetContainer), locationId: targetLocation, goodsType: targetGoods, containerType: targetContainer } });
+    setMode("targets");
+    setLocationFilter(targetLocation);
+    setGoodsFilter(targetGoods);
+    setContainerFilter(targetContainer);
+  };
+  const exportServicePlan = () => downloadCsv(`stacktrack-service-plan-${serviceDate}.csv`, [
+    ["STACKTRACK DAILY SERVICE PLAN"],
+    ["Service date", serviceDate],
+    ["Snapshot basis", "Latest accepted scanner projection; targets are local planning settings until API-backed configuration is available."],
+    [],
+    ["Location", "Location type", "Goods category", "Container type", "Full on hand", "Empty on hand", "Unknown state", "Total on hand", "Minimum on hand", "Maximum on hand", "Minimum empty", "Maximum full", "Action", "Priority", "Pickup quantity", "Delivery quantity", "Reason"],
+    ...visibleRows.map((row) => [row.location.name, locationTypeLabel(row.location.type), row.goodsType, containerTypeLabel(row.containerType), row.full, row.empty, row.unknown, row.total, row.target.minimumOnHand, row.target.maximumOnHand, row.target.minimumEmpty, row.target.maximumFull, row.action, servicePriorityLabel(row.priority), row.pickupQty, row.deliveryQty, row.reason])
+  ]);
+
+  return <div className="service-plan-page">
+    <section className="panel service-plan__intro">
+      <div className="service-plan__intro-head"><div><span className="eyebrow">Transportation dispatch</span><h2>Daily pickup and delivery priorities</h2><p>Turn each location’s crate targets into a ranked service queue. Full crates above the pickup limit are ready to collect; empty-crate shortages are delivery priorities.</p></div><div className="service-plan__date"><label><span>Service date</span><input type="date" value={serviceDate} onChange={(event) => setServiceDate(event.target.value)} /></label><button type="button" className="secondary" onClick={exportServicePlan} disabled={!visibleRows.length}><Download size={15} /> Export current plan</button></div></div>
+      <div className="service-plan__truth"><Target size={17} /><span><strong>Planning layer, not a correction</strong><small>Counts come from the latest accepted scanner projections. The service date labels the report; scheduled route and arrival data will be needed before future dates can be simulated. Target changes are saved in this browser for the pilot and never rewrite scan history.</small></span><Pill tone="blue">Review before dispatch</Pill></div>
+    </section>
+    <section className="panel service-plan__filters"><div className="service-plan__section-heading"><div><span className="eyebrow">Report scope</span><strong>Choose the locations and crate mix</strong><p>Use the queue to find work for today, or open Target setup to tune each location’s operating limits.</p></div><button type="button" className="secondary" onClick={() => { setLocationFilter("all"); setGoodsFilter("all"); setContainerFilter("all"); setPriorityFilter("action"); }}>Clear filters</button></div><div className="service-plan__filter-grid"><label><span>Location</span><select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="all">All locations</option>{locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label><span>Goods category</span><select value={goodsFilter} onChange={(event) => setGoodsFilter(event.target.value)}><option value="all">All categories</option>{availableGoodsTypes.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Crate type</span><select value={containerFilter} onChange={(event) => setContainerFilter(event.target.value as "all" | ServiceContainerType)}><option value="all">All crate types</option>{serviceContainerTypes.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><label><span>Queue status</span><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as ServicePriorityFilter)}><option value="action">Needs service</option><option value="all">All target rows</option><option value="critical">Critical only</option><option value="pickup">Pickup ready</option><option value="delivery">Delivery needed</option><option value="watch">Verify data</option><option value="on_target">On target</option></select></label></div></section>
+    <section className="service-plan__summary"><article><span><Truck size={16} />Pickup stops</span><strong>{pickupStops}</strong><small>{pickupTotal} full crate{pickupTotal === 1 ? "" : "s"} ready to collect</small></article><article><span><PackageCheck size={16} />Delivery stops</span><strong>{deliveryStops}</strong><small>{deliveryTotal} empty crate{deliveryTotal === 1 ? "" : "s"} needed</small></article><article><span><AlertTriangle size={16} />Critical shortages</span><strong>{criticalRows.length}</strong><small>Locations with no safe empty-crate buffer</small></article><article><span><CircleHelp size={16} />Data to verify</span><strong>{unknownRows.length}</strong><small>Target rows with an unknown crate state</small></article></section>
+    <section className="panel service-plan__workspace"><div className="service-plan__workspace-head"><div><span className="eyebrow">Dispatch worklist</span><h2>{mode === "queue" ? "What transportation should review first" : "Location target setup"}</h2><p>{mode === "queue" ? `${visibleRows.length} matching target row${visibleRows.length === 1 ? "" : "s"} · sorted by shortage and pickup urgency.` : "Set the operating limits that create pickup and delivery recommendations. Start with the targets Goodwill already uses on paper."}</p></div><div className="service-plan__mode-tabs" role="tablist" aria-label="Service plan view"><button type="button" className={mode === "queue" ? "active" : ""} onClick={() => setMode("queue")}>Dispatch queue</button><button type="button" className={mode === "targets" ? "active" : ""} onClick={() => setMode("targets")}>Target setup</button></div></div>
+      {mode === "queue" ? <div className="table-wrap service-plan__table-wrap"><table className="service-plan__table"><thead><tr><th>Priority</th><th>Location</th><th>Goods / crate</th><th>On hand</th><th>Configured trigger</th><th>Recommended move</th><th></th></tr></thead><tbody>{visibleRows.length ? visibleRows.map((row) => <tr key={row.key}><td><Pill tone={servicePriorityTone(row.priority)}>{servicePriorityLabel(row.priority)}</Pill></td><th><strong>{row.location.name}</strong><small>{locationTypeLabel(row.location.type)}</small></th><td><strong>{row.goodsType}</strong><small>{containerTypeLabel(row.containerType)}</small></td><td><strong>{row.full} full · {row.empty} empty</strong><small>{row.unknown ? `${row.unknown} state unknown · ` : ""}{row.total} total on hand</small></td><td><strong>{row.target.minimumEmpty} empty min · {row.target.maximumFull} full max</strong><small>{row.target.minimumOnHand}–{row.target.maximumOnHand} total on hand</small></td><td><strong>{row.action}</strong><small>{row.reason}</small>{(row.pickupQty > 0 || row.deliveryQty > 0) && <div className="service-plan__move-chips">{row.pickupQty > 0 && <span className="service-plan__move-chip service-plan__move-chip--pickup">Pick up {row.pickupQty}</span>}{row.deliveryQty > 0 && <span className="service-plan__move-chip service-plan__move-chip--delivery">Deliver {row.deliveryQty}</span>}</div>}</td><td><button type="button" className="secondary service-plan__view-button" onClick={() => openLocation(row.location.locationId, { goodsType: row.goodsType, containerType: row.containerType, bucket: "current" })}>View containers</button></td></tr>) : <tr><td colSpan={7}><div className="service-plan__empty"><CheckCircle2 size={22} /><strong>No service work matches these filters.</strong><span>Every visible target is on target, or the current scanner snapshot has not produced a matching row yet.</span></div></td></tr>}</tbody></table></div> : <div className="service-plan__targets"><form className="service-plan__add-target" onSubmit={addTarget}><div><span className="eyebrow">Add a target row</span><strong>Plan another location / goods / crate combination</strong><small>Use this when a location needs a rule before it has produced a scan.</small></div><label><span>Location</span><select value={targetLocation} onChange={(event) => setTargetLocation(event.target.value)}>{locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label><span>Goods category</span><select value={targetGoods} onChange={(event) => setTargetGoods(event.target.value)}>{availableGoodsTypes.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Crate type</span><select value={targetContainer} onChange={(event) => setTargetContainer(event.target.value as ServiceContainerType)}>{serviceContainerTypes.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><button type="submit" className="primary"><Plus size={15} /> Add target</button></form><div className="table-wrap service-plan__target-table-wrap"><table className="service-plan__table service-plan__target-table"><thead><tr><th>Location</th><th>Goods</th><th>Crate</th><th>Minimum on hand</th><th>Maximum on hand</th><th>Minimum empty</th><th>Maximum full</th><th></th></tr></thead><tbody>{visibleRows.length ? visibleRows.map((row) => <tr key={row.key}><th><strong>{row.location.name}</strong><small>{locationTypeLabel(row.location.type)}</small></th><td>{row.goodsType}</td><td>{containerTypeLabel(row.containerType)}</td>{(["minimumOnHand", "maximumOnHand", "minimumEmpty", "maximumFull"] as const).map((field) => <td key={field}><input aria-label={`${field} for ${row.location.name} ${row.goodsType} ${containerTypeLabel(row.containerType)}`} type="number" min="0" max="999" value={row.target[field]} onChange={(event) => updateTarget(row, field, event.target.value)} /></td>)}<td><button type="button" className="service-plan__reset" onClick={() => resetTarget(row)} disabled={!targetOverrides[row.key]}>{targetOverrides[row.key] ? "Reset default" : "Default"}</button></td></tr>) : <tr><td colSpan={8}><div className="service-plan__empty"><Target size={22} /><strong>No target rows match these filters.</strong><span>Add a target above or broaden the location, goods, and crate filters.</span></div></td></tr>}</tbody></table></div></div>}
+      <p className="service-plan__note">The initial defaults are placeholders to make the workflow visible. Goodwill should confirm actual minimums, pickup thresholds, truck capacity, route timing, and whether full crates can be swapped for empties on the same stop before this becomes an automated dispatch instruction.</p>
+    </section>
+  </div>;
 }
 
 function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
