@@ -24,6 +24,7 @@ import {
   Link2,
   MapPin,
   Menu,
+  MessageSquare,
   MonitorSmartphone,
   PackageCheck,
   RefreshCw,
@@ -490,7 +491,10 @@ function humanizeDetailKey(key: string) {
     displayLoadCode: "Load code",
     goodsType: "Goods category",
     secondaryValue: "Classification",
-    destinationLocationId: "Destination"
+    destinationLocationId: "Destination",
+    notes: "Message for operations",
+    message: "Message for operations",
+    operatorMessage: "Message for operations"
   };
   if (aliases[key]) return aliases[key];
   return key
@@ -571,11 +575,18 @@ function eventPayloadFacts(event: StoredEvent, data: OperationsData): [string, R
     .map(([key, value]) => [humanizeDetailKey(key), humanizeDetailValue(key, value, data)] as [string, ReactNode]);
 }
 
+function eventMessage(event: StoredEvent): string | null {
+  const candidates = [event.payload.notes, event.payload.message, event.payload.operatorMessage];
+  const message = candidates.find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return message?.trim() ?? null;
+}
+
 function EventEvidence({ events, data }: { events: StoredEvent[]; data: OperationsData }) {
   return <div className="detail-events">{events.length ? events.map((event) => <article key={event.eventId}>
     <div><span className="detail-event__label"><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{event.accuracyFlags.length ? <span className="detail-event__warning-count">{event.accuracyFlags.length} warning{event.accuracyFlags.length === 1 ? "" : "s"}</span> : <span className="detail-event__verified"><CheckCircle2 size={12} /> no warnings</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div>
     <strong>{eventNarrative(event, data)}</strong>
     <span className="detail-event__id">{event.eventId} <CopyValueButton value={event.eventId} label="Copy" /></span>
+    {eventMessage(event) && <div className="detail-event__message"><MessageSquare size={14} /><span><b>Message for operations</b><em>{eventMessage(event)}</em></span></div>}
     <small>{event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagDetail).join(" · ") : "No data-quality warnings were recorded."}</small>
     <details className="detail-event__more"><summary>View scan details</summary><DetailFacts items={[["Device", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Scanner record number", String(event.deviceSequence)], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Effective", new Date(event.effectiveAt).toLocaleString()]]}/>{eventPayloadFacts(event, data).length > 0 ? <><span className="readable-details__label">Scan information</span><DetailFacts items={eventPayloadFacts(event, data)} /></> : <p className="detail-empty-note">No additional scan information was recorded.</p>}</details>
   </article>) : <EmptyState>No observations have been recorded for this item.</EmptyState>}</div>;
@@ -1230,7 +1241,7 @@ function ContainerRouteSummary({ containerId, data, onOpenLocation }: { containe
   </div>;
 }
 
-function ContainersPage({ data, query, openDetail, openLocation, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void }) {
+function LegacyContainersPage({ data, query, openDetail, openLocation, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void }) {
   const [filter, setFilter] = useState<"all" | "loaded" | "empty" | "unknown">("all");
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -1321,6 +1332,197 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
   );
 }
 
+type ContainerTimeWindow = "all" | "today" | "7d" | "30d";
+type ContainerSort = "newest" | "oldest" | "label" | "location" | "health";
+type ContainerMovement = "stationary" | "in_transit" | "not_observed";
+type ContainerHealth = "clean" | "warning" | "needs_review" | "corrected" | "no_history";
+type ContainerMessageFilter = "with_message" | "without_message";
+
+interface ContainerFilters {
+  states: Projection["loadState"][];
+  types: Container["type"][];
+  locations: string[];
+  movement: ContainerMovement[];
+  health: ContainerHealth[];
+  messages: ContainerMessageFilter[];
+  timeWindow: ContainerTimeWindow;
+  from: string;
+  to: string;
+  sort: ContainerSort;
+}
+
+const emptyContainerFilters: ContainerFilters = {
+  states: [], types: [], locations: [], movement: [], health: [], messages: [], timeWindow: "all", from: "", to: "", sort: "newest"
+};
+
+interface ContainerFilterRow {
+  container: Container;
+  projection: Projection | null | undefined;
+  route: ContainerRouteContext;
+  movement: ContainerMovement;
+  health: ContainerHealth;
+  locationIds: string[];
+  locationLabel: string;
+  lastObservedAt: string | null;
+  latestMessage: string | null;
+  messageCount: number;
+  events: StoredEvent[];
+}
+
+function eventSortTimestamp(event: StoredEvent) {
+  const effective = Date.parse(event.effectiveAt);
+  if (!Number.isNaN(effective)) return effective;
+  const observed = Date.parse(event.eventAt);
+  return Number.isNaN(observed) ? Date.parse(event.receivedAt) : observed;
+}
+
+function containerHealthKey(projection: Projection | null | undefined): ContainerHealth {
+  if (!projection) return "no_history";
+  if (projection.administrativeCorrection) return "corrected";
+  return projection.health;
+}
+
+function containerHealthLabel(value: ContainerHealth) {
+  return ({ clean: "Clean", warning: "Warning", needs_review: "Needs review", corrected: "Corrected", no_history: "No history" } as Record<ContainerHealth, string>)[value];
+}
+
+function ContainersPage({ data, query, openDetail, openLocation, setPage }: { data: OperationsData; query: string; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void }) {
+  const [draft, setDraft] = useState<ContainerFilters>(emptyContainerFilters);
+  const [applied, setApplied] = useState<ContainerFilters>(emptyContainerFilters);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  useEffect(() => setPageIndex(0), [query, applied]);
+
+  const locationName = (id: string | null | undefined) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Not yet observed";
+  const allRows = useMemo<ContainerFilterRow[]>(() => data.fixtures.containers.map((container) => {
+    const projection = data.projections[container.containerId];
+    const route = getContainerRouteContext(container.containerId, data);
+    const events = data.events.filter((event) => event.containerId === container.containerId).sort((left, right) => eventSortTimestamp(left) - eventSortTimestamp(right));
+    const messages = events.map(eventMessage).filter((message): message is string => Boolean(message));
+    const lastObservedAt = projection?.lastObservedAt ?? events.at(-1)?.effectiveAt ?? null;
+    const movement: ContainerMovement = !projection ? "not_observed" : route.inTransit ? "in_transit" : "stationary";
+    const locationIds = Array.from(new Set([
+      projection?.locationId,
+      route.currentLocation?.locationId,
+      route.origin?.locationId,
+      route.destination?.locationId,
+      ...events.map((event) => event.locationId),
+      ...events.flatMap((event) => [payloadLocationId(event, "sourceLocationId"), payloadLocationId(event, "destinationLocationId")])
+    ].filter((value): value is string => Boolean(value))));
+    const locationLabel = route.inTransit
+      ? `${route.origin?.name ?? "Origin pending"} → ${route.destination?.name ?? "Destination pending"}`
+      : route.currentLocation?.name ?? "Not yet observed";
+    return { container, projection, route, movement, health: containerHealthKey(projection), locationIds, locationLabel, lastObservedAt, latestMessage: messages.at(-1) ?? null, messageCount: messages.length, events };
+  }), [data]);
+
+  const locationOptions = data.fixtures.locations
+    .slice()
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((location) => ({ value: location.locationId, label: `${location.type === "in_transit" ? "In transit" : location.name}${location.isActive === false ? " (inactive)" : ""}` }));
+  const searchTerm = query.trim().toLowerCase();
+  const startOfDate = (value: string) => { const timestamp = Date.parse(`${value}T00:00:00`); return Number.isNaN(timestamp) ? null : timestamp; };
+  const endOfDate = (value: string) => { const timestamp = Date.parse(`${value}T23:59:59.999`); return Number.isNaN(timestamp) ? null : timestamp; };
+  const quickStart = applied.timeWindow === "today" ? Date.now() - 24 * 60 * 60 * 1000 : applied.timeWindow === "7d" ? Date.now() - 7 * 24 * 60 * 60 * 1000 : applied.timeWindow === "30d" ? Date.now() - 30 * 24 * 60 * 60 * 1000 : null;
+  const fromTimestamp = startOfDate(applied.from);
+  const toTimestamp = endOfDate(applied.to);
+  const draftDateError = draft.from && draft.to && (startOfDate(draft.from) ?? 0) > (endOfDate(draft.to) ?? 0) ? "The start date must be on or before the end date." : null;
+  const hasDateRestriction = quickStart !== null || fromTimestamp !== null || toTimestamp !== null;
+  const matchesDate = (row: ContainerFilterRow) => {
+    if (!hasDateRestriction) return true;
+    if (!row.lastObservedAt) return false;
+    const timestamp = Date.parse(row.lastObservedAt);
+    if (Number.isNaN(timestamp)) return false;
+    return (quickStart === null || timestamp >= quickStart) && (fromTimestamp === null || timestamp >= fromTimestamp) && (toTimestamp === null || timestamp <= toTimestamp);
+  };
+  const filteredRows = allRows.filter((row) => {
+    const searchable = [row.container.label, row.container.containerId, row.container.type, row.locationLabel, row.latestMessage ?? "", ...row.events.map((event) => eventNarrative(event, data))].join(" ").toLowerCase();
+    return (!searchTerm || searchable.includes(searchTerm))
+      && (!applied.states.length || applied.states.includes(row.projection?.loadState ?? "unknown"))
+      && (!applied.types.length || applied.types.includes(row.container.type))
+      && (!applied.locations.length || applied.locations.some((locationId) => row.locationIds.includes(locationId)))
+      && (!applied.movement.length || applied.movement.includes(row.movement))
+      && (!applied.health.length || applied.health.includes(row.health))
+      && (!applied.messages.length || applied.messages.includes(row.latestMessage ? "with_message" : "without_message"))
+      && matchesDate(row);
+  }).sort((left, right) => {
+    if (applied.sort === "label") return left.container.label.localeCompare(right.container.label);
+    if (applied.sort === "location") return left.locationLabel.localeCompare(right.locationLabel) || left.container.label.localeCompare(right.container.label);
+    if (applied.sort === "health") return containerHealthLabel(left.health).localeCompare(containerHealthLabel(right.health)) || left.container.label.localeCompare(right.container.label);
+    const leftTime = left.lastObservedAt ? Date.parse(left.lastObservedAt) : null;
+    const rightTime = right.lastObservedAt ? Date.parse(right.lastObservedAt) : null;
+    if (leftTime === null && rightTime === null) return left.container.label.localeCompare(right.container.label);
+    if (leftTime === null) return 1;
+    if (rightTime === null) return -1;
+    return applied.sort === "oldest" ? leftTime - rightTime : rightTime - leftTime;
+  });
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const visibleRows = filteredRows.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize);
+  const activeFilterCount = draft.states.length + draft.types.length + draft.locations.length + draft.movement.length + draft.health.length + draft.messages.length + (draft.timeWindow !== "all" ? 1 : 0) + (draft.from ? 1 : 0) + (draft.to ? 1 : 0);
+  const clearFilters = () => { setDraft(emptyContainerFilters); setApplied(emptyContainerFilters); setPageIndex(0); };
+  const toggleFilter = (key: "states" | "types" | "locations" | "movement" | "health" | "messages", value: string) => setDraft((current) => {
+    const values = current[key] as string[];
+    return { ...current, [key]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] } as ContainerFilters;
+  });
+
+  const showContainer = (container: Container) => {
+    const projection = data.projections[container.containerId];
+    const route = getContainerRouteContext(container.containerId, data);
+    const events = data.events.filter((event) => event.containerId === container.containerId).sort((left, right) => eventSortTimestamp(right) - eventSortTimestamp(left));
+    const messageEvents = events.filter((event) => eventMessage(event));
+    openDetail({
+      eyebrow: `${containerTypeLabel(container.type)} record`,
+      title: container.label,
+      icon: <ContainerIcon size={18} />,
+      status: projection?.health === "needs_review" ? { label: "Needs review", tone: "warn" } : { label: projection?.loadState === "loaded" ? "Loaded" : projection?.loadState === "empty" ? "Empty" : "Not observed", tone: projection?.loadState === "loaded" ? "blue" : projection?.loadState === "empty" ? "good" : "muted" },
+      summary: "Current container state, recorded movement, scanner messages, and the complete observation history.",
+      recordId: container.containerId,
+      recordIdLabel: "Container UUID",
+      actions: projection?.health === "needs_review" ? <button className="secondary" onClick={() => setPage("exceptions")}><AlertTriangle size={15} /> Open review queue</button> : undefined,
+      body: <><DetailFacts items={[
+        ["Current state", loadStateLabel(projection?.loadState)],
+        ["Movement status", route.inTransit ? "In transit" : projection ? "Stationary / location confirmed" : "Not observed"],
+        ["Route", route.inTransit ? `${route.origin?.name ?? "Origin pending"} → ${route.destination?.name ?? "Destination pending"}` : route.segments.length ? `${route.segments.length} handoff${route.segments.length === 1 ? "" : "s"} recorded` : "No active movement"],
+        ["Last known location", route.inTransit ? `In transit · last confirmed ${route.lastConfirmedLocation?.name ?? "not recorded"}` : locationName(projection?.locationId)],
+        ["History health", projectionHealthLabel(projection?.health)],
+        ["Messages", messageEvents.length ? `${messageEvents.length} message${messageEvents.length === 1 ? "" : "s"} from scanners` : "No scanner messages"],
+        ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"]
+      ]}/><ContainerRouteSummary containerId={container.containerId} data={data} onOpenLocation={openLocation}/>{messageEvents.length > 0 && <section className="container-message-panel"><div className="container-message-panel__heading"><MessageSquare size={17} /><div><h3>Messages from scanners</h3><p>Notes entered on the mobile app are kept with the observation so operations can see the context.</p></div></div><div className="container-message-list">{messageEvents.map((event) => <article key={event.eventId}><div><strong>{eventNarrative(event, data)}</strong><time>{new Date(event.eventAt).toLocaleString()}</time></div><p>{eventMessage(event)}</p><small>{scannerNumber(event.deviceId)} · {data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}</small></article>)}</div></section>}{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={events} data={data}/></>
+    });
+  };
+  const movementRows = filteredRows.filter((row) => row.movement === "in_transit");
+  const movementGroups = Array.from(new Map(movementRows.map((row) => {
+    const key = `${row.route.origin?.locationId ?? "unknown"}:${row.route.destination?.locationId ?? "unknown"}`;
+    return [key, { key, origin: row.route.origin, destination: row.route.destination, rows: [] as ContainerFilterRow[] }] as const;
+  })).values()).map((group) => {
+    const rows = movementRows.filter((row) => (row.route.origin?.locationId ?? "unknown") === (group.origin?.locationId ?? "unknown") && (row.route.destination?.locationId ?? "unknown") === (group.destination?.locationId ?? "unknown"));
+    return { ...group, rows, count: rows.length, labels: rows.slice(0, 3).map((row) => row.container.label) };
+  });
+  const exportRows = () => downloadCsv("stacktrack-containers.csv", [
+    ["Label", "Type", "State", "Position or route", "Last observed", "History health", "Messages", "Latest message"],
+    ...filteredRows.map((row) => [row.container.label, containerTypeLabel(row.container.type), loadStateLabel(row.projection?.loadState), row.locationLabel, row.lastObservedAt ?? "", containerHealthLabel(row.health), String(row.messageCount), row.latestMessage ?? ""])
+  ]);
+  return (
+    <section className="panel containers-panel">
+      <div className="container-filter-panel"><div className="container-filter-panel__header"><div><span className="eyebrow">Detailed container filters</span><h2>Find the exact assets to review</h2><p>Combine any number of filters. The location filter includes current, origin, and destination locations so multi-hop journeys remain findable.</p></div><div className="container-filter-panel__actions"><span>{filteredRows.length} matching</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button><button className="primary" onClick={() => { setApplied(draft); setPageIndex(0); }} disabled={Boolean(draftDateError)}>Apply filters</button></div></div><div className="container-filter-grid">
+        <AuditMultiSelect label="Current state" options={[{ value: "loaded", label: "Loaded" }, { value: "empty", label: "Empty" }, { value: "unknown", label: "Not observed" }]} selected={draft.states} onToggle={(value) => toggleFilter("states", value)} onClear={() => setDraft((current) => ({ ...current, states: [] }))} emptyLabel="All states" />
+        <AuditMultiSelect label="Container type" options={[{ value: "bin", label: "Bin" }, { value: "cart", label: "Cart" }, { value: "gaylord", label: "Gaylord" }]} selected={draft.types} onToggle={(value) => toggleFilter("types", value)} onClear={() => setDraft((current) => ({ ...current, types: [] }))} emptyLabel="All types" />
+        <AuditMultiSelect label="Locations involved" options={locationOptions} selected={draft.locations} onToggle={(value) => toggleFilter("locations", value)} onClear={() => setDraft((current) => ({ ...current, locations: [] }))} emptyLabel="All locations" />
+        <AuditMultiSelect label="Movement" options={[{ value: "stationary", label: "At confirmed location" }, { value: "in_transit", label: "In transit" }, { value: "not_observed", label: "Not observed" }]} selected={draft.movement} onToggle={(value) => toggleFilter("movement", value)} onClear={() => setDraft((current) => ({ ...current, movement: [] }))} emptyLabel="All movement" />
+        <AuditMultiSelect label="History health" options={[{ value: "clean", label: "Clean" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }, { value: "corrected", label: "Corrected" }, { value: "no_history", label: "No history" }]} selected={draft.health} onToggle={(value) => toggleFilter("health", value)} onClear={() => setDraft((current) => ({ ...current, health: [] }))} emptyLabel="All health" />
+        <AuditMultiSelect label="Scanner messages" options={[{ value: "with_message", label: "Has a message" }, { value: "without_message", label: "No message" }]} selected={draft.messages} onToggle={(value) => toggleFilter("messages", value)} onClear={() => setDraft((current) => ({ ...current, messages: [] }))} emptyLabel="Any message status" />
+        <label>Time window<select value={draft.timeWindow} onChange={(event) => setDraft((current) => ({ ...current, timeWindow: event.target.value as ContainerTimeWindow }))}><option value="all">Any time</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
+        <label>Sort results<select value={draft.sort} onChange={(event) => setDraft((current) => ({ ...current, sort: event.target.value as ContainerSort }))}><option value="newest">Most recently observed</option><option value="oldest">Least recently observed</option><option value="label">Container label A–Z</option><option value="location">Location A–Z</option><option value="health">Health status</option></select></label>
+        <label>From date<input type="date" value={draft.from} onChange={(event) => setDraft((current) => ({ ...current, from: event.target.value }))} /></label>
+        <label>To date<input type="date" value={draft.to} onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))} /></label>
+      </div>{draftDateError && <p className="container-filter-error">{draftDateError}</p>}<p className="container-filter-help">The global search above also searches labels, UUIDs, locations, movement descriptions, and scanner messages. Date filters use the latest accepted observation for each container.</p></div>
+      <div className="toolbar"><div className="container-toolbar-actions"><span className="container-table-note"><CircleHelp size={13} /> Labels are unique; technical ID is available in Details.</span><span className="container-table-note"><MessageSquare size={13} /> Message counts include notes entered on scanners.</span></div><button className="secondary" onClick={exportRows}><Download size={16} /> Export filtered CSV</button></div>
+      {movementRows.length > 0 && <div className="container-movement-summary"><div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each route shows the last confirmed origin and planned destination. The movement closes when the destination receipt is scanned.</p></div></div><div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.rows[0]!.container)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={`${group.origin?.name ?? "Origin pending"} to ${group.destination?.name ?? "Destination pending"}`}>{group.origin?.name ?? "Origin pending"} <ArrowRight size={12} /> {group.destination?.name ?? "Destination pending"}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional route{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div></div>}
+      <div className="table-wrap"><table className="container-table"><thead><tr><th>Container label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>Messages</th><th>History health</th></tr></thead><tbody>{visibleRows.map((row) => <tr className="clickable-row" role="button" tabIndex={0} aria-label={`Open details for ${row.container.label}`} key={row.container.containerId} onClick={() => showContainer(row.container)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showContainer(row.container); } }}><td><strong className="asset-label" title="Unique container label">{row.container.label}</strong>{row.latestMessage && <small className="container-label-note"><MessageSquare size={12} /> Message recorded</small>}</td><td className="capitalize">{containerTypeLabel(row.container.type)}</td><td><Pill tone={row.projection?.loadState === "loaded" ? "blue" : row.projection?.loadState === "empty" ? "good" : "muted"}>{loadStateLabel(row.projection?.loadState)}</Pill></td><td><ContainerRouteCell route={row.route} /></td><td>{relativeTime(row.lastObservedAt)}</td><td>{row.messageCount ? <span className="container-message-count"><MessageSquare size={13} /> {row.messageCount}</span> : <span className="container-message-none">None</span>}</td><td>{row.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : row.health === "corrected" ? <Pill tone="blue">Corrected</Pill> : row.health === "clean" ? <Pill tone="good">Clean</Pill> : row.health === "warning" ? <Pill tone="warn">Warning</Pill> : <Pill tone="muted">No history</Pill>}</td></tr>)}</tbody></table>{filteredRows.length === 0 && <EmptyState>No containers match the current filters. Clear a filter or broaden the global search.</EmptyState>}</div>
+      <PaginationControls pageIndex={pageIndex} pageCount={pageCount} pageSize={pageSize} total={filteredRows.length} ariaLabel="Container pagination" onPageChange={setPageIndex} onPageSizeChange={(nextSize) => { setPageSize(nextSize); setPageIndex(0); }} />
+    </section>
+  );
+}
+
 type LoadTimeWindow = "all" | "today" | "7d" | "30d";
 type LoadSort = "newest" | "oldest" | "location" | "code";
 interface LoadFilters {
@@ -1390,6 +1592,7 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
       locationName(event.locationId) ?? "",
       String(event.payload.goodsType ?? ""),
       String(event.payload.secondaryValue ?? ""),
+      eventMessage(event) ?? "",
       event.eventAt
     ])
   ]);
@@ -2423,8 +2626,8 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
         recordId: event.eventId,
         recordIdLabel: "Event UUID",
         title: `${container?.label ?? "Unknown container"} · ${eventLabel(event.eventType)}`,
-         body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Handoff", routeText ?? "Not a location handoff"], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
-        })}><div className={`timeline__rail ${adjacentSameContainer ? "timeline__rail--linked" : ""}`}><span>{index + 1}</span>{adjacentSameContainer && <i aria-hidden="true" />}</div><div className="timeline__card"><div className="timeline__card-heading"><span><span className={`timeline__event-pill timeline__event-pill--${event.eventType}`}>{eventLabel(event.eventType)}</span>{event.accuracyFlags.length > 0 && <span className="timeline__warning">Needs review</span>}{relationship && <span className={`timeline__relationship ${relationshipClass}`}><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"}</h3><p className="timeline__narrative">{eventNarrative(event, data)}</p><p className="timeline__meta"><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />Route: {routeText}</span>}<span>received {relativeTime(event.receivedAt)}</span>{event.accuracyFlags.length > 0 && <span>{event.accuracyFlags.length} data-quality warning{event.accuracyFlags.length === 1 ? "" : "s"}</span>}</p></div></article>;
+         body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Handoff", routeText ?? "Not a location handoff"], ["Message for operations", eventMessage(event) ?? "No message recorded"], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
+         })}><div className={`timeline__rail ${adjacentSameContainer ? "timeline__rail--linked" : ""}`}><span>{index + 1}</span>{adjacentSameContainer && <i aria-hidden="true" />}</div><div className="timeline__card"><div className="timeline__card-heading"><span><span className={`timeline__event-pill timeline__event-pill--${event.eventType}`}>{eventLabel(event.eventType)}</span>{event.accuracyFlags.length > 0 && <span className="timeline__warning">Needs review</span>}{relationship && <span className={`timeline__relationship ${relationshipClass}`}><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"}</h3><p className="timeline__narrative">{eventNarrative(event, data)}</p>{eventMessage(event) && <p className="timeline__message"><MessageSquare size={11} />Message for operations: {eventMessage(event)}</p>}<p className="timeline__meta"><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />Route: {routeText}</span>}<span>received {relativeTime(event.receivedAt)}</span>{event.accuracyFlags.length > 0 && <span>{event.accuracyFlags.length} data-quality warning{event.accuracyFlags.length === 1 ? "" : "s"}</span>}</p></div></article>;
      })}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
     {events.length > 100 && <p className="activity-limit-note">Showing the newest 100 matching observations. Use the filters to narrow the feed further.</p>}
   </section>;

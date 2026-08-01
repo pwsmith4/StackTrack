@@ -712,7 +712,7 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
       ) : (
         <View>{fixtures.locations.filter((item) => item.locationId !== assignedLocationId && item.type !== "in_transit" && item.isActive !== false && item.name.trim().toLowerCase() !== "unknown location").map((location) => <Pressable key={location.locationId} onPress={() => setWorkflow((current) => ({ ...current, destinationId: location.locationId }))} style={[styles.destination, workflow.destinationId === location.locationId && styles.destinationActive]}><View style={styles.destinationIcon}><Icon name="business-outline" /></View><View style={styles.destinationCopy}><Text style={styles.destinationTitle}>{location.name}</Text><Text style={styles.destinationText}>{locationTypeLabel(location.type)}</Text></View><Icon name={workflow.destinationId === location.locationId ? "radio-button-on" : "radio-button-off"} color={workflow.destinationId === location.locationId ? colors.blue : colors.muted} /></Pressable>)}</View>
       )}
-      <Text style={styles.fieldLabel}>OPTIONAL NOTE</Text><TextInput value={workflow.notes} onChangeText={(notes) => setWorkflow((current) => ({ ...current, notes }))} placeholder="Add context for a manager" placeholderTextColor="#98A2AB" style={[styles.labelInput, styles.noteInput]} multiline />
+      <Text style={styles.fieldLabel}>MESSAGE FOR OPERATIONS (OPTIONAL)</Text><TextInput value={workflow.notes} onChangeText={(notes) => setWorkflow((current) => ({ ...current, notes }))} placeholder="Example: lid damaged, moved to dock 3, or paperwork attached" placeholderTextColor="#98A2AB" style={[styles.labelInput, styles.noteInput]} multiline />
       <PrimaryButton onPress={onContinue} icon="arrow-forward">REVIEW OBSERVATION</PrimaryButton>
     </View>
   );
@@ -729,7 +729,7 @@ function ConfirmStep({ workflow, fixtures, submitting, deviceLocationName, onSub
         <ConfirmRow label="Scanned at" value={deviceLocationName} />
         {workflow.action === "load_assigned" && <><ConfirmRow label="Goods" value={workflow.goodsType} /><ConfirmRow label="Quality" value={workflow.secondaryValue} /></>}
         {workflow.action === "batch_out" && <ConfirmRow label="Going to" value={destination ?? "Not selected"} />}
-        {workflow.notes && <ConfirmRow label="Note" value={workflow.notes} />}
+        {workflow.notes && <ConfirmRow label="Message for operations" value={workflow.notes} />}
         <ConfirmRow label="Device time" value={new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} last />
       </View>
       <View style={styles.auditNotice}><Icon name="information-circle-outline" size={22} /><Text>This saves the action with the time, scanner, and location so it can be followed by the operations team.</Text></View>
