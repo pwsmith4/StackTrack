@@ -1584,21 +1584,26 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
   const updateFilter = (field: keyof LoadFilters, value: string) => setDraft((current) => ({ ...current, [field]: value }));
   const applyFilters = (event: React.FormEvent) => { event.preventDefault(); if (invalidRange) return; setPageIndex(0); setApplied({ ...draft }); };
   const clearFilters = () => { setDraft(emptyLoadFilters); setApplied(emptyLoadFilters); setFilter("available"); setPageIndex(0); };
-  const exportLoads = () => downloadCsv("stacktrack-load-codes.csv", [
-    ["Load code", "Container", "Location", "Goods type", "Classification", "Created at"],
-    ...loads.map((event) => [
-      codeFor(event),
-      containerName(event.containerId) ?? "",
-      locationName(event.locationId) ?? "",
-      String(event.payload.goodsType ?? ""),
-      String(event.payload.secondaryValue ?? ""),
-      eventMessage(event) ?? "",
-      event.eventAt
-    ])
-  ]);
+  const exportLoads = () => {
+    if (!loads.length) return;
+    downloadCsv("stacktrack-load-codes.csv", [
+      ["Load code", "Container", "Location", "Status", "Goods type", "Classification", "Message for operations", "Created at", "Scanner"],
+      ...loads.map((event) => [
+        codeFor(event),
+        containerName(event.containerId),
+        locationName(event.locationId),
+        isActive(event) ? "Available" : "Used",
+        String(event.payload.goodsType ?? ""),
+        String(event.payload.secondaryValue ?? ""),
+        eventMessage(event) ?? "",
+        event.eventAt,
+        data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`
+      ])
+    ]);
+  };
   return (
     <>
-      <div className="notice-banner"><CheckCircle2 size={22} /><div><strong>Validated load-code register</strong><span>Managers can use these codes in the production system. Filter or sort the accepted mark-full observations before exporting.</span></div><button className="primary" onClick={exportLoads}><Download size={16} /> Download list</button></div>
+      <div className="notice-banner"><CheckCircle2 size={22} /><div><strong>Validated load-code register</strong><span>Managers can use these codes in the production system. Filter or sort the accepted mark-full observations before exporting.</span></div><button className="primary" onClick={exportLoads} disabled={!loads.length}><Download size={16} /> Download filtered list</button></div>
       <section className="panel">
         <form className="load-filter-panel" onSubmit={applyFilters}>
           <div className="load-filter-panel__header"><div><strong>Filter and sort load codes</strong><span>{statusLabel}{activeCount ? ` · ${activeCount} active filter${activeCount === 1 ? "" : "s"}` : ""} · {loads.length.toLocaleString()} matching</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!draftHasFilters}>Clear filters</button><button className="primary" type="submit" disabled={invalidRange}>Apply filters</button></div></div>
