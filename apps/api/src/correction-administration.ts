@@ -209,7 +209,8 @@ export class PostgresCorrectionAdministration implements CorrectionAdministratio
   ): Promise<CorrectionRequest> {
     if (
       actor.role !== "organization_owner" &&
-      actor.role !== "operations_administrator"
+      actor.role !== "operations_administrator" &&
+      actor.role !== "location_manager"
     ) {
       throw new Error("Your administrator role cannot request official-state corrections.");
     }
@@ -233,6 +234,23 @@ export class PostgresCorrectionAdministration implements CorrectionAdministratio
       if (!container.rows[0]) {
         throw new Error("The container must have scan evidence before its state can be corrected.");
       }
+      if (actor.role === "location_manager") {
+        const scope = new Set(actor.locationIds ?? []);
+        if (scope.size === 0) {
+          throw new Error("This Location Manager has no active location assignment.");
+        }
+        const latest = await client.query<{ location_id: string }>(
+          `SELECT location_id
+             FROM asset_events
+            WHERE tenant_id=$1 AND container_id=$2
+            ORDER BY effective_at DESC, received_at DESC, event_id DESC
+            LIMIT 1`,
+          [tenantId, input.containerId]
+        );
+        if (!latest.rows[0] || !scope.has(latest.rows[0].location_id)) {
+          throw new Error("Location Managers can only request corrections for containers currently associated with an assigned location.");
+        }
+      }
       if (proposedCorrection.locationId) {
         const location = await client.query(
           `SELECT 1 FROM locations
@@ -240,6 +258,9 @@ export class PostgresCorrectionAdministration implements CorrectionAdministratio
           [tenantId, proposedCorrection.locationId]
         );
         if (!location.rows[0]) throw new Error("The proposed location is not active.");
+        if (actor.role === "location_manager" && !new Set(actor.locationIds ?? []).has(proposedCorrection.locationId)) {
+          throw new Error("A Location Manager can only propose a location within their assigned scope.");
+        }
       }
 
       const inserted = await client.query<{ correction_request_id: string }>(

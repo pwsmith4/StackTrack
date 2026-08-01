@@ -209,7 +209,7 @@ export function seedLocalLedger(
       locationId: transit.locationId,
       eventType: "batch_out",
       eventAt: at(2.2),
-      payload: { destinationLocationId: warehouse.locationId }
+      payload: { sourceLocationId: store.locationId }
     },
     {
       eventId: "51000000-0000-4000-8000-000000000003",
@@ -289,7 +289,7 @@ export function seedLocalLedger(
       locationId: transit.locationId,
       eventType: "batch_out",
       eventAt: at(59),
-      payload: { sourceLocationId: localFixtures.locations[0]!.locationId, destinationLocationId: warehouse.locationId }
+      payload: { sourceLocationId: localFixtures.locations[0]!.locationId }
     },
     {
       eventId: "51000000-0000-4000-8000-000000000012",
@@ -298,7 +298,7 @@ export function seedLocalLedger(
       locationId: warehouse.locationId,
       eventType: "batch_in",
       eventAt: at(58),
-      payload: { sourceLocationId: localFixtures.locations[0]!.locationId }
+      payload: {}
     },
     {
       eventId: "51000000-0000-4000-8000-000000000013",
@@ -307,7 +307,7 @@ export function seedLocalLedger(
       locationId: transit.locationId,
       eventType: "batch_out",
       eventAt: at(57),
-      payload: { sourceLocationId: warehouse.locationId, destinationLocationId: northWarehouse.locationId }
+      payload: { sourceLocationId: warehouse.locationId }
     },
     {
       eventId: "51000000-0000-4000-8000-000000000014",
@@ -316,7 +316,7 @@ export function seedLocalLedger(
       locationId: northWarehouse.locationId,
       eventType: "batch_in",
       eventAt: at(56),
-      payload: { sourceLocationId: warehouse.locationId }
+      payload: {}
     },
     {
       eventId: "51000000-0000-4000-8000-000000000015",
@@ -325,7 +325,7 @@ export function seedLocalLedger(
       locationId: transit.locationId,
       eventType: "batch_out",
       eventAt: at(55),
-      payload: { sourceLocationId: northWarehouse.locationId, destinationLocationId: store.locationId }
+      payload: { sourceLocationId: northWarehouse.locationId }
     },
     {
       eventId: "51000000-0000-4000-8000-000000000016",
@@ -334,7 +334,7 @@ export function seedLocalLedger(
       locationId: store.locationId,
       eventType: "batch_in",
       eventAt: at(54),
-      payload: { sourceLocationId: northWarehouse.locationId }
+      payload: {}
     }
   ] as const;
 

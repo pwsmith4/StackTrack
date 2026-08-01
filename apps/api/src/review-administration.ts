@@ -47,7 +47,7 @@ export class PostgresReviewAdministration {
   public async takeAction(tenantId: string, actor: AdminPrincipal, reviewCaseId: string, action: ReviewAction, reasonInput: string): Promise<ReviewCase> {
     const reason = reasonInput.trim();
     if (reason.length < 8 || reason.length > 1200) throw new Error("A review decision needs a clear reason of 8-1200 characters.");
-    if (actor.role === "read_only_reviewer" || actor.role === "support") throw new Error("Your administrator role cannot change review cases.");
+    if (actor.role === "read_only_reviewer" || actor.role === "support" || actor.role === "location_manager") throw new Error("Your administrator role cannot change review cases.");
     if (actor.role !== "organization_owner" && action !== "assigned" && action !== "reopened") throw new Error("Only an Organization Owner can make an approval, rejection, or resolution decision.");
     return this.transaction(tenantId, async (client) => {
       const exists = await client.query(`SELECT review_case_id FROM review_cases WHERE tenant_id=$1 AND review_case_id=$2`, [tenantId, reviewCaseId]);

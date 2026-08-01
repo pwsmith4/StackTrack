@@ -11,12 +11,12 @@ never modify operational state.
 | Report | Answers | Good use | Do not infer |
 | --- | --- | --- | --- |
 | Movement ledger | Which observations were recorded, where, by which scanner, and when they reached the service? | Reconstruct a container route or explain an out-of-order event. | A clean row proves the physical scan was performed correctly. |
-| Load-code handoff | Which filled containers generated a production-facing load code? | Reconcile a store’s daily handoff with the production system. | A load code means the destination has received the container. |
+| Load-code handoff | Which filled containers generated a production-facing load code? | Reconcile a store’s daily handoff with the production system. | A load code means the container was marked full; it does not prove a receiving scan. |
 | Data-quality exceptions | Which projections or observations need a human decision? | Triage conflicts, timing flags, and unresolved evidence. | A warning means the container is lost. |
 | Correction register | Which official-state changes were requested, decided, and why? | Review owner approvals, rejected requests, and open work. | A correction deletes the original observation. |
 | Scanner coverage | Which scanners are enabled, assigned, current on app version, and recently reporting? | Distinguish a quiet location from a stale or disabled scanner. | A recent heartbeat proves the scanner was in the assigned building. |
 | Location throughput | How many observations and distinct containers touched each location? | Compare workload and identify locations with unusual flag rates. | Higher volume alone means better performance. |
-| Transit aging | Which containers are still between locations and how long has the receipt been outstanding? | Call a destination about an aging delivery or missing receipt. | Age is automatically a service-level breach; routes may be intentionally held. |
+| Transit aging | Which containers are still between locations, where they departed, and how long the receiving scan has been outstanding? | Investigate an aging handoff with transportation or locations that may have received it. | StackTrack does not know the receiving site until that site scans the arrival; age is not automatically a service-level breach. |
 | Scan latency | How long did each scanner’s observations take to upload? | Separate offline queue behavior from service/device problems. | A delayed upload is automatically inaccurate. |
 | Governance actions | Who signed in, changed a scanner, requested a correction, or made a decision? | Accountability, investigations, and compliance review. | It replaces the physical Activity feed. |
 
@@ -25,7 +25,7 @@ never modify operational state.
 The page uses an explicit **Apply report scope** step so a partially edited
 filter cannot silently change a download. Search matches identifiers, labels,
 locations, scanners, event names, and evidence flags. Location includes the
-virtual **In transit** location because it is essential for route aging.
+virtual **In transit** location because it is essential for route aging. A departure records only the confirmed origin; a later `batch_in` scan supplies the receiving site. Older clients may have written a planned destination in the payload, but reports deliberately ignore that value for open transfers.
 
 - **Date range** uses the event time for observations, request time for
   corrections, last report time for scanners, and occurrence time for audit

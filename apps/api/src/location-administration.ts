@@ -24,9 +24,18 @@ export interface LocationDependencyDevice {
   readonly isActive: boolean;
 }
 
+export interface LocationDependencyManager {
+  readonly userId: string;
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: "location_manager" | "read_only_reviewer";
+}
+
 export interface LocationDependencySummary {
   readonly location: LocationRecord;
   readonly devices: readonly LocationDependencyDevice[];
+  /** Scoped administrators who would lose their site boundary if this site is retired. */
+  readonly managers: readonly LocationDependencyManager[];
   /** Containers whose latest recorded observation points at this location. */
   readonly currentContainerCount: number;
   /** Historical load codes created at the location; these are never rewritten. */
@@ -137,7 +146,7 @@ export class PostgresLocationAdministration implements LocationAdministration {
     const location = locationResult.rows[0];
     if (!location) return null;
 
-    const [devices, containers, loadCodes, observations] = await Promise.all([
+    const [devices, managers, containers, loadCodes, observations] = await Promise.all([
       client.query<{
         device_id: string;
         device_label: string;
@@ -147,6 +156,20 @@ export class PostgresLocationAdministration implements LocationAdministration {
            FROM devices
           WHERE tenant_id = $1 AND assigned_location_id = $2
           ORDER BY device_label`,
+        [tenantId, locationId]
+      ),
+      client.query<{
+        user_id: string;
+        username: string;
+        display_name: string;
+        role: "location_manager" | "read_only_reviewer";
+      }>(
+        `SELECT u.user_id, u.username, u.display_name, u.role
+           FROM admin_user_locations scope
+           JOIN admin_users u
+             ON u.tenant_id = scope.tenant_id AND u.user_id = scope.user_id
+          WHERE scope.tenant_id = $1 AND scope.location_id = $2
+          ORDER BY u.display_name, u.username`,
         [tenantId, locationId]
       ),
       client.query<{ count: string }>(
@@ -180,6 +203,12 @@ export class PostgresLocationAdministration implements LocationAdministration {
         deviceId: row.device_id,
         label: row.device_label,
         isActive: row.is_active
+      })),
+      managers: managers.rows.map((row) => ({
+        userId: row.user_id,
+        username: row.username,
+        displayName: row.display_name,
+        role: row.role
       })),
       currentContainerCount: Number(containers.rows[0]?.count ?? 0),
       loadCodeCount: Number(loadCodes.rows[0]?.count ?? 0),
@@ -279,6 +308,13 @@ export class PostgresLocationAdministration implements LocationAdministration {
       const dependencies = await this.dependencySummary(client, tenantId, locationId);
       if (!dependencies) throw new Error("Location dependencies could not be loaded.");
       const hasDevices = dependencies.devices.length > 0;
+      const hasManagers = dependencies.managers.length > 0;
+      if (hasManagers) {
+        throw new LocationRetireConflict(
+          "Reassign or remove every scoped administrator assignment before retiring this location. This prevents a user from silently losing or retaining access to a closed site.",
+          dependencies
+        );
+      }
       if (hasDevices && !input.replacementLocationId && !input.moveDevicesToUnknown) {
         throw new LocationRetireConflict(
           "Move the assigned scanners first, or explicitly move the remaining scanners to Unknown location before retiring this location.",

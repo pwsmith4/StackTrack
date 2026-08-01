@@ -169,6 +169,30 @@ describe("StackTrack API foundation", () => {
     expect(mobileReferenceData.json().containers).toHaveLength(11);
   });
 
+  it("scopes a read-only reviewer to explicitly assigned locations", async () => {
+    const reviewer: AdminPrincipal = {
+      ...ownerPrincipal,
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      role: "read_only_reviewer",
+      locationIds: ["20000000-0000-4000-8000-000000000002"]
+    };
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(reviewer) } as unknown as PostgresAdminAccess
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/reference-data",
+      headers: { authorization: `Bearer ${"r".repeat(32)}` }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.devices.every((device: { assignedLocationId: string }) => device.assignedLocationId === reviewer.locationIds?.[0])).toBe(true);
+    expect(body.locations.some((location: { locationId: string }) => location.locationId === "20000000-0000-4000-8000-000000000003")).toBe(false);
+  });
+
   it("rate limits repeated administrator sign-in attempts", async () => {
     const signIn = vi.fn().mockResolvedValue(null);
     app = await createApp({ localMode: true, adminAccess: { signIn } as unknown as PostgresAdminAccess });
@@ -285,6 +309,36 @@ describe("StackTrack API foundation", () => {
     });
 
     expect(response.statusCode).toBe(403);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("requires an Organization Owner for a cross-location scanner move", async () => {
+    const update = vi.fn();
+    const administration: DeviceAdministration = {
+      update,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true
+    };
+    const operationsPrincipal: AdminPrincipal = {
+      ...ownerPrincipal,
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      role: "operations_administrator"
+    };
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(operationsPrincipal) } as unknown as PostgresAdminAccess,
+      deviceAdministration: administration
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/local/devices/30000000-0000-4000-8000-000000000001",
+      headers: { authorization: `Bearer ${"o".repeat(32)}` },
+      payload: { assignedLocationId: "20000000-0000-4000-8000-000000000003" }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "CorporateApprovalRequired" });
     expect(update).not.toHaveBeenCalled();
   });
 

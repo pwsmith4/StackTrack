@@ -42,6 +42,19 @@ export const eventSubmissionSchema = z
       });
     }
 
+    // A scanner at the departure site cannot know which facility will receive
+    // the truck.  The receiving event's locationId is the only authoritative
+    // destination, so reject destination fields from every event payload
+    // rather than allowing an old client to re-introduce a planned route.
+    if (Object.prototype.hasOwnProperty.call(value.payload, "destinationLocationId")) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payload", "destinationLocationId"],
+        message:
+          "A departure scan records only where the container left. Do not include a receiving site or planned destination; a later arrival scan, if one occurs, provides that location."
+      });
+    }
+
     if (
       (value.deviceClockOffsetSeconds === undefined) !==
       (value.clockVerifiedAt === undefined)

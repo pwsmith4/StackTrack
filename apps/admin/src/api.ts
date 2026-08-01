@@ -25,9 +25,17 @@ export interface LocationDependencyDevice {
   isActive: boolean;
 }
 
+export interface LocationDependencyManager {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: "location_manager" | "read_only_reviewer";
+}
+
 export interface LocationDependencySummary {
   location: Location;
   devices: LocationDependencyDevice[];
+  managers: LocationDependencyManager[];
   currentContainerCount: number;
   loadCodeCount: number;
   observationCount: number;
@@ -62,9 +70,9 @@ export interface DeviceAssignment {
   occurredAt: string;
 }
 
-export type AdminRole = "organization_owner" | "operations_administrator" | "read_only_reviewer" | "support";
+export type AdminRole = "organization_owner" | "operations_administrator" | "location_manager" | "read_only_reviewer" | "support";
 export type ManagedAdminRole = Exclude<AdminRole, "support">;
-export interface AdminPrincipal { tenantId: string; userId: string; username: string; displayName: string; role: AdminRole; supportExpiresAt: string | null; isActive: boolean; mustChangePassword: boolean; }
+export interface AdminPrincipal { tenantId: string; userId: string; username: string; displayName: string; role: AdminRole; locationIds?: string[]; supportExpiresAt: string | null; isActive: boolean; mustChangePassword: boolean; }
 export interface AdminSession { token: string; principal: AdminPrincipal; expiresAt: string; }
 export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; actorUsername?: string | null; action: string; targetType: string; targetId: string | null; targetLabel?: string | null; locationId?: string | null; locationName?: string | null; details: Record<string, unknown>; }
 export interface AuditPage { items: AuditEntry[]; total: number; limit: number; offset: number; }
@@ -320,7 +328,7 @@ export async function searchAuditEntries(session: AdminSession, filters: AuditSe
   return { items: result.items ?? [], total: Number(result.total ?? 0), limit: Number(result.limit ?? filters.limit ?? 100), offset: Number(result.offset ?? filters.offset ?? 0) };
 }
 
-export async function createAdminUser(session: AdminSession, input: { username: string; displayName: string; role: ManagedAdminRole; temporaryPassword: string }): Promise<AdminPrincipal> {
+export async function createAdminUser(session: AdminSession, input: { username: string; displayName: string; role: ManagedAdminRole; temporaryPassword: string; locationIds?: string[] }): Promise<AdminPrincipal> {
   const response = await fetch(`${API_URL}/api/v1/local/admin/users`, { method: "POST", headers: { ...adminHeaders(session), "content-type": "application/json" }, body: JSON.stringify(input) });
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { message?: string } | null;
@@ -329,15 +337,15 @@ export async function createAdminUser(session: AdminSession, input: { username: 
   return ((await response.json()) as { user: AdminPrincipal }).user;
 }
 
-export async function updateAdminUser(session: AdminSession, userId: string, update: { displayName?: string; role?: ManagedAdminRole; isActive?: boolean }): Promise<AdminPrincipal> {
+export async function updateAdminUser(session: AdminSession, userId: string, update: { displayName?: string; role?: ManagedAdminRole; isActive?: boolean; locationIds?: string[] }): Promise<AdminPrincipal> {
   const response = await patchJson<{ user: AdminPrincipal }>(`/api/v1/local/admin/users/${userId}`, update, session);
   return response.user;
 }
 
-export async function resetAdminPassword(session: AdminSession, userId: string, temporaryPassword: string): Promise<AdminPrincipal> {
+export async function resetAdminPassword(session: AdminSession, userId: string, temporaryPassword: string, reason = "Owner initiated password reset"): Promise<AdminPrincipal> {
   const response = await postJson<{ user: AdminPrincipal }>(
     `/api/v1/local/admin/users/${userId}/password-reset`,
-    { temporaryPassword },
+    { temporaryPassword, reason },
     session
   );
   return response.user;

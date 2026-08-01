@@ -160,6 +160,53 @@ describe("InMemoryEventLedger", () => {
     expect(ledger.reviewQueue(tenantId)).toHaveLength(1);
   });
 
+  it("does not accept a planned receiving site in an event payload", () => {
+    const ledger = new InMemoryEventLedger();
+    const result = ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777780",
+        deviceInstallationId: installationId,
+        deviceSequence: 1,
+        containerId,
+        locationId,
+        eventType: "batch_out",
+        eventAt: "2026-07-22T12:05:00.000Z",
+        payload: {
+          sourceLocationId: locationId,
+          destinationLocationId: secondLocationId
+        }
+      },
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:05:01.000Z")
+    );
+
+    expect(result.accepted).toBe(false);
+    expect(result.errorCode).toBe("InvalidPayload");
+    expect(result.message).toContain("receiving site");
+  });
+
+  it("uses the arrival event location instead of a destination payload", () => {
+    const ledger = new InMemoryEventLedger();
+    const result = ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777781",
+        deviceInstallationId: installationId,
+        deviceSequence: 2,
+        containerId,
+        locationId: secondLocationId,
+        eventType: "batch_in",
+        eventAt: "2026-07-22T12:06:00.000Z",
+        payload: { destinationLocationId: secondLocationId }
+      },
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:06:01.000Z")
+    );
+
+    expect(result.accepted).toBe(false);
+    expect(result.errorCode).toBe("InvalidPayload");
+    expect(result.message).toContain("arrival scan");
+  });
+
   it("does not confuse legitimate offline time with clock skew", () => {
     const ledger = new InMemoryEventLedger();
     const result = ledger.submit(

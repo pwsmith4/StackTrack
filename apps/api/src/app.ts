@@ -102,6 +102,75 @@ function publicEvent(event: StoredEvent) {
   return result;
 }
 
+function isLocationManager(principal: AdminPrincipal): boolean {
+  return principal.role === "location_manager";
+}
+
+/**
+ * A non-corporate account is scoped only when explicit site assignments exist.
+ * This lets a read-only reviewer be either network-wide (legacy account) or
+ * deliberately limited to a set of locations without changing the owner and
+ * operations roles.
+ */
+function isScopedPrincipal(principal: AdminPrincipal): boolean {
+  return isLocationManager(principal) || (principal.role === "read_only_reviewer" && (principal.locationIds?.length ?? 0) > 0);
+}
+
+function principalLocationIds(principal: AdminPrincipal): ReadonlySet<string> | null {
+  return isScopedPrincipal(principal) ? new Set(principal.locationIds ?? []) : null;
+}
+
+function eventVisibleToPrincipal(
+  event: StoredEvent,
+  principal: AdminPrincipal,
+  fixtures: LocalFixtures
+): boolean {
+  const scope = principalLocationIds(principal);
+  if (!scope) return true;
+  if (scope.size === 0) return false;
+  if (scope.has(event.locationId)) return true;
+  const device = fixtures.devices.find((item) => item.deviceId === event.deviceId);
+  if (!device) return false;
+  // A scanner can move after it records an observation. Resolve its assignment
+  // at the observation time instead of using today's location, otherwise a
+  // manager could see historical events from a site they never operated.
+  const history = fixtures.deviceAssignments
+    .filter((assignment) => assignment.deviceId === event.deviceId)
+    .sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
+  let locationId = history[0]?.previousLocationId ?? device.assignedLocationId;
+  const eventAt = Date.parse(event.eventAt);
+  for (const assignment of history) {
+    if (Date.parse(assignment.occurredAt) > eventAt) break;
+    locationId = assignment.assignedLocationId;
+  }
+  return scope.has(locationId);
+}
+
+function scopedFixtures(
+  fixtures: LocalFixtures,
+  principal: AdminPrincipal,
+  events: readonly StoredEvent[]
+): LocalFixtures {
+  const scope = principalLocationIds(principal);
+  if (!scope) return fixtures;
+  const devices = fixtures.devices.filter((device) => scope.has(device.assignedLocationId));
+  const deviceIds = new Set(devices.map((device) => device.deviceId));
+  const visibleEvents = events.filter((event) => eventVisibleToPrincipal(event, principal, fixtures));
+  const visibleContainerIds = new Set(visibleEvents.map((event) => event.containerId));
+  return {
+    ...fixtures,
+    // Keep the system transit node visible so a local manager can understand a
+    // handoff without learning the entire network's operating directory.
+    locations: fixtures.locations.filter((location) => scope.has(location.locationId) || location.type === "in_transit"),
+    devices,
+    deviceAssignments: fixtures.deviceAssignments.filter((assignment) =>
+      deviceIds.has(assignment.deviceId) &&
+      (scope.has(assignment.assignedLocationId) || scope.has(assignment.previousLocationId))
+    ),
+    containers: fixtures.containers.filter((container) => visibleContainerIds.has(container.containerId))
+  };
+}
+
 export async function createApp(dependencies: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const ledger = dependencies.ledger ?? new InMemoryEventLedger();
@@ -247,7 +316,10 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         ...(from ? { from } : {}),
         ...(to ? { to } : {})
       };
-      return reply.send(await dependencies.adminAccess!.searchAuditEntries(filters));
+      const scopedFilters = isScopedPrincipal(principal)
+        ? { ...filters, locationIds: [...(principalLocationIds(principal) ?? [])] }
+        : filters;
+      return reply.send(await dependencies.adminAccess!.searchAuditEntries(scopedFilters));
     });
 
     app.post<{ Body: NewAdminUser }>("/api/v1/local/admin/users", {
@@ -257,7 +329,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       if (!principal) return;
       if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can add administrators." });
       const input = request.body;
-      if (!input || typeof input.username !== "string" || typeof input.displayName !== "string" || typeof input.temporaryPassword !== "string" || !["organization_owner", "operations_administrator", "read_only_reviewer"].includes(input.role)) {
+      if (!input || typeof input.username !== "string" || typeof input.displayName !== "string" || typeof input.temporaryPassword !== "string" || !["organization_owner", "operations_administrator", "location_manager", "read_only_reviewer"].includes(input.role) || (input.locationIds !== undefined && (!Array.isArray(input.locationIds) || input.locationIds.some((value) => typeof value !== "string")))) {
         return reply.code(400).send({ error: "InvalidAdminUser" });
       }
       try {
@@ -302,7 +374,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       if (!principal) return;
       if (principal.role !== "organization_owner") return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can manage administrator accounts." });
       const update = request.body;
-      if (!update || (update.displayName !== undefined && typeof update.displayName !== "string") || (update.role !== undefined && !["organization_owner", "operations_administrator", "read_only_reviewer"].includes(update.role)) || (update.isActive !== undefined && typeof update.isActive !== "boolean")) {
+      if (!update || (update.displayName !== undefined && typeof update.displayName !== "string") || (update.role !== undefined && !["organization_owner", "operations_administrator", "location_manager", "read_only_reviewer"].includes(update.role)) || (update.isActive !== undefined && typeof update.isActive !== "boolean") || (update.locationIds !== undefined && (!Array.isArray(update.locationIds) || update.locationIds.some((value) => typeof value !== "string")))) {
         return reply.code(400).send({ error: "InvalidAdminUserUpdate" });
       }
       try {
@@ -312,7 +384,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     });
 
-    app.post<{ Params: { userId: string }; Body: { temporaryPassword?: string } }>(
+    app.post<{ Params: { userId: string }; Body: { temporaryPassword?: string; reason?: string } }>(
       "/api/v1/local/admin/users/:userId/password-reset",
       { config: { rateLimit: { max: 20, timeWindow: "15 minutes" } } },
       async (request, reply) => {
@@ -322,11 +394,15 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
           return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can reset administrator passwords." });
         }
         const temporaryPassword = request.body?.temporaryPassword;
-        if (typeof temporaryPassword !== "string" || temporaryPassword.length < 12 || temporaryPassword.length > 256) {
+        const reason = request.body?.reason;
+        if (typeof temporaryPassword !== "string" || temporaryPassword.length < 12 || temporaryPassword.length > 256 || (reason !== undefined && (typeof reason !== "string" || reason.trim().length < 8 || reason.trim().length > 500))) {
           return reply.code(400).send({ error: "InvalidTemporaryPassword", message: "Temporary password must contain 12-256 characters." });
         }
         try {
-          return reply.send({ user: await dependencies.adminAccess!.resetUserPassword(principal, request.params.userId, temporaryPassword) });
+          const user = reason === undefined
+            ? await dependencies.adminAccess!.resetUserPassword(principal, request.params.userId, temporaryPassword)
+            : await dependencies.adminAccess!.resetUserPassword(principal, request.params.userId, temporaryPassword, reason);
+          return reply.send({ user });
         } catch (error) {
           return reply.code(400).send({ error: "PasswordResetRejected", message: error instanceof Error ? error.message : "The administrator password could not be reset." });
         }
@@ -339,7 +415,17 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
-      return reply.send({ items: await dependencies.reviewAdministration.listCases(principal.tenantId) });
+      const items = await dependencies.reviewAdministration.listCases(principal.tenantId);
+      if (!isScopedPrincipal(principal)) return reply.send({ items });
+      const fixtures = (dependencies.referenceData
+        ? await dependencies.referenceData(principal.tenantId)
+        : principal.tenantId === localFixtures.tenant.tenantId ? localFixtures : null) ?? localFixtures;
+      const visibleEventIds = new Set(
+        (await ledger.eventsForTenant(principal.tenantId))
+          .filter((event) => eventVisibleToPrincipal(event, principal, fixtures))
+          .map((event) => event.eventId)
+      );
+      return reply.send({ items: items.filter((item) => item.evidenceEventIds.some((eventId) => visibleEventIds.has(eventId))) });
     });
 
     app.post<{ Params: { reviewCaseId: string }; Body: { action?: ReviewAction; reason?: string } }>("/api/v1/local/review-cases/:reviewCaseId/actions", {
@@ -348,6 +434,9 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
       if (!dependencies.reviewAdministration) return reply.code(501).send({ error: "ReviewAdministrationUnavailable" });
+      if (isScopedPrincipal(principal)) {
+        return reply.code(403).send({ error: "InsufficientRole", message: "Location-scoped accounts can request a correction but cannot change review decisions." });
+      }
       const body = request.body;
       if (!body || !["assigned", "approved", "rejected", "resolved", "reopened"].includes(body.action ?? "") || typeof body.reason !== "string") return reply.code(400).send({ error: "InvalidReviewAction" });
       try {
@@ -365,8 +454,22 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       if (!dependencies.correctionAdministration) {
         return reply.code(501).send({ error: "CorrectionAdministrationUnavailable" });
       }
+      const items = await dependencies.correctionAdministration.listRequests(principal.tenantId);
+      if (!isScopedPrincipal(principal)) return reply.send({ items });
+      const fixtures = (dependencies.referenceData
+        ? await dependencies.referenceData(principal.tenantId)
+        : principal.tenantId === localFixtures.tenant.tenantId ? localFixtures : null) ?? localFixtures;
+      const visibleContainerIds = new Set(
+        (await ledger.eventsForTenant(principal.tenantId))
+          .filter((event) => eventVisibleToPrincipal(event, principal, fixtures))
+          .map((event) => event.containerId)
+      );
+      const scope = principalLocationIds(principal)!;
       return reply.send({
-        items: await dependencies.correctionAdministration.listRequests(principal.tenantId)
+        items: items.filter((item) =>
+          visibleContainerIds.has(item.containerId) ||
+          (typeof item.proposedCorrection.locationId === "string" && scope.has(item.proposedCorrection.locationId))
+        )
       });
     });
 
@@ -516,10 +619,17 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       const tenantId = principal?.tenantId ?? readTenantId(request);
       if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
 
-      const state = await ledger.projectionForContainer(
-        tenantId,
-        request.params.containerId
-      );
+      const containerEvents = await ledger.eventsForContainer(tenantId, request.params.containerId);
+      const scopeFixtures = principal
+        ? (dependencies.referenceData ? await dependencies.referenceData(tenantId) : localFixtures) ?? localFixtures
+        : localFixtures;
+      if (principal && !containerEvents.some((event) => eventVisibleToPrincipal(event, principal, scopeFixtures))) {
+        return reply.code(404).send({ error: "NotFound" });
+      }
+      const visibleContainerEvents = principal
+        ? containerEvents.filter((event) => eventVisibleToPrincipal(event, principal, scopeFixtures))
+        : containerEvents;
+      const state = projectContainer(visibleContainerEvents);
       if (!state) {
         return reply.code(404).send({ error: "NotFound" });
       }
@@ -540,11 +650,17 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
     const tenantId = principal?.tenantId ?? readTenantId(request);
     if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
     const events = await ledger.eventsForTenant(tenantId);
-    const containerIds = [...new Set(events.map((event) => event.containerId))];
+    const statesFixtures = principal
+      ? (dependencies.referenceData ? await dependencies.referenceData(tenantId) : localFixtures) ?? localFixtures
+      : localFixtures;
+    const visibleEvents = principal
+      ? events.filter((event) => eventVisibleToPrincipal(event, principal, statesFixtures))
+      : events;
+    const containerIds = [...new Set(visibleEvents.map((event) => event.containerId))];
     let items = containerIds
       .map((containerId) =>
         projectContainer(
-          events.filter((event) => event.containerId === containerId)
+          visibleEvents.filter((event) => event.containerId === containerId)
         )
       )
       .filter((item) => item !== null);
@@ -563,7 +679,12 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
     const tenantId = principal?.tenantId ?? readTenantId(request);
     if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
     const items = await ledger.reviewQueue(tenantId);
-    return reply.send({ count: items.length, items });
+    if (!principal) return reply.send({ count: items.length, items });
+    const reviewFixtures = (dependencies.referenceData ? await dependencies.referenceData(tenantId) : localFixtures) ?? localFixtures;
+    const reviewEvents = await ledger.eventsForTenant(tenantId);
+    const visibleEventIds = new Set(reviewEvents.filter((event) => eventVisibleToPrincipal(event, principal, reviewFixtures)).map((event) => event.eventId));
+    const visibleItems = items.filter((item) => item.appliedEventIds.some((eventId) => visibleEventIds.has(eventId)));
+    return reply.send({ count: visibleItems.length, items: visibleItems });
   });
 
   if (localMode) {
@@ -588,7 +709,8 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       if (!fixtures) {
         return reply.code(404).send({ error: "NotFound" });
       }
-      return reply.send(fixtures);
+      const events = await ledger.eventsForTenant(principal.tenantId);
+      return reply.send(scopedFixtures(fixtures, principal, events));
     });
 
     app.get<{ Params: { locationId: string } }>(
@@ -602,6 +724,9 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         }
         if (!requestContextSchema.shape.deviceId.safeParse(request.params.locationId).success) {
           return reply.code(400).send({ error: "InvalidLocationId" });
+        }
+        if (isScopedPrincipal(principal) && !principalLocationIds(principal)?.has(request.params.locationId)) {
+          return reply.code(403).send({ error: "LocationScopeDenied", message: "This account is not assigned to that operating location." });
         }
         const result = await dependencies.locationAdministration.dependencies(
           principal.tenantId,
@@ -710,7 +835,12 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
     app.get("/api/v1/local/events", async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
-      const events = [...(await ledger.eventsForTenant(principal.tenantId))]
+      const fixtures = (dependencies.referenceData
+        ? await dependencies.referenceData(principal.tenantId)
+        : principal.tenantId === localFixtures.tenant.tenantId ? localFixtures : null) ?? localFixtures;
+      const visible = (await ledger.eventsForTenant(principal.tenantId))
+        .filter((event) => eventVisibleToPrincipal(event, principal, fixtures));
+      const events = [...visible]
         .sort(
           (left, right) =>
             Date.parse(right.receivedAt) - Date.parse(left.receivedAt)
@@ -736,10 +866,10 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       async (request, reply) => {
         const principal = await requireAdmin(request, reply);
         if (!principal) return;
-        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator" && principal.role !== "location_manager") {
           return reply.code(403).send({
             error: "InsufficientRole",
-            message: "Only Organization Owners and Operations Administrators can change scanners."
+            message: "This administrator role cannot change scanners."
           });
         }
         const tenantId = principal.tenantId;
@@ -758,12 +888,37 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         ) {
           return reply.code(400).send({ error: "InvalidDeviceUpdate" });
         }
+        const fixtures = (dependencies.referenceData
+          ? await dependencies.referenceData(principal.tenantId)
+          : principal.tenantId === localFixtures.tenant.tenantId ? localFixtures : null);
+        const currentDevice = fixtures?.devices.find((device) => device.deviceId === request.params.deviceId);
+        const changingLocation = Boolean(
+          currentDevice &&
+          update.assignedLocationId !== undefined &&
+          update.assignedLocationId !== currentDevice.assignedLocationId
+        );
+        if (changingLocation && principal.role !== "organization_owner") {
+          return reply.code(403).send({
+            error: "CorporateApprovalRequired",
+            message: "Cross-location scanner moves require an Organization Owner approval. Keep the scanner at its current site or ask an Organization Owner to move it."
+          });
+        }
+        if (isLocationManager(principal)) {
+          const scope = principalLocationIds(principal);
+          if (!currentDevice || !scope?.has(currentDevice.assignedLocationId) ||
+              (update.assignedLocationId !== undefined && !scope.has(update.assignedLocationId))) {
+            return reply.code(403).send({
+              error: "LocationScopeDenied",
+              message: "Location Managers can only change scanners assigned to their locations."
+            });
+          }
+        }
         try {
           const device = await dependencies.deviceAdministration.update(
             tenantId,
             request.params.deviceId,
             update,
-            { userId: principal.userId }
+            { userId: principal.userId, role: principal.role }
           );
           if (!device) return reply.code(404).send({ error: "NotFound" });
           return reply.send({ device });
