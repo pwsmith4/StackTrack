@@ -2196,6 +2196,16 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
   const fromTimestamp = startOfDate(applied.from);
   const toTimestamp = endOfDate(applied.to);
   const draftDateError = draft.from && draft.to && (startOfDate(draft.from) ?? 0) > (endOfDate(draft.to) ?? 0) ? "The start date must be on or before the end date." : null;
+  // Container filters are local and inexpensive to evaluate, so keep the
+  // result set in sync with the controls as soon as a choice changes.  An
+  // invalid date range is the one exception: retain the last valid result
+  // until the user fixes the range.
+  useEffect(() => {
+    if (!draftDateError) {
+      setApplied(draft);
+      setPageIndex(0);
+    }
+  }, [draft, draftDateError]);
   const hasDateRestriction = quickStart !== null || fromTimestamp !== null || toTimestamp !== null;
   const matchesDate = (row: ContainerFilterRow) => {
     if (!hasDateRestriction) return true;
@@ -2229,10 +2239,7 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
   const visibleRows = filteredRows.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize);
   const activeFilterCount = draft.states.length + draft.types.length + draft.locations.length + draft.movement.length + draft.health.length + draft.messages.length + (draft.timeWindow !== "all" ? 1 : 0) + (draft.from ? 1 : 0) + (draft.to ? 1 : 0);
   const clearFilters = () => { setDraft(emptyContainerFilters); setApplied(emptyContainerFilters); setPageIndex(0); };
-  const toggleFilter = (key: "states" | "types" | "locations" | "movement" | "health" | "messages", value: string) => setDraft((current) => {
-    const values = current[key] as string[];
-    return { ...current, [key]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] } as ContainerFilters;
-  });
+  const setSingleContainerFilter = (key: "states" | "types" | "locations" | "movement" | "health" | "messages", value: string) => setDraft((current) => ({ ...current, [key]: value ? [value] : [] } as ContainerFilters));
 
   const showContainer = (container: Container) => {
     const projection = data.projections[container.containerId];
@@ -2273,13 +2280,13 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage }: { da
   ]);
   return (
     <section className="panel containers-panel">
-      <div className="container-filter-panel"><div className="container-filter-panel__header"><div><span className="eyebrow">Detailed container filters</span><h2>Find the exact assets to review</h2><p>Combine any number of filters. The location filter includes current, origin, and destination locations so multi-hop journeys remain findable.</p></div><div className="container-filter-panel__actions"><span>{filteredRows.length} matching</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button><button className="primary" onClick={() => { setApplied(draft); setPageIndex(0); }} disabled={Boolean(draftDateError)}>Apply filters</button></div></div><div className="container-filter-grid">
-        <AuditMultiSelect label="Current state" options={[{ value: "loaded", label: "Loaded" }, { value: "empty", label: "Empty" }, { value: "unknown", label: "Not observed" }]} selected={draft.states} onToggle={(value) => toggleFilter("states", value)} onClear={() => setDraft((current) => ({ ...current, states: [] }))} emptyLabel="All states" />
-        <AuditMultiSelect label="Container type" options={[{ value: "bin", label: "Bin" }, { value: "cart", label: "Cart" }, { value: "gaylord", label: "Gaylord" }]} selected={draft.types} onToggle={(value) => toggleFilter("types", value)} onClear={() => setDraft((current) => ({ ...current, types: [] }))} emptyLabel="All types" />
-        <AuditMultiSelect label="Locations involved" options={locationOptions} selected={draft.locations} onToggle={(value) => toggleFilter("locations", value)} onClear={() => setDraft((current) => ({ ...current, locations: [] }))} emptyLabel="All locations" />
-        <AuditMultiSelect label="Movement" options={[{ value: "stationary", label: "At confirmed location" }, { value: "in_transit", label: "In transit" }, { value: "not_observed", label: "Not observed" }]} selected={draft.movement} onToggle={(value) => toggleFilter("movement", value)} onClear={() => setDraft((current) => ({ ...current, movement: [] }))} emptyLabel="All movement" />
-        <AuditMultiSelect label="History health" options={[{ value: "clean", label: "Clean" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }, { value: "corrected", label: "Corrected" }, { value: "no_history", label: "No history" }]} selected={draft.health} onToggle={(value) => toggleFilter("health", value)} onClear={() => setDraft((current) => ({ ...current, health: [] }))} emptyLabel="All health" />
-        <AuditMultiSelect label="Scanner messages" options={[{ value: "with_message", label: "Has a message" }, { value: "without_message", label: "No message" }]} selected={draft.messages} onToggle={(value) => toggleFilter("messages", value)} onClear={() => setDraft((current) => ({ ...current, messages: [] }))} emptyLabel="Any message status" />
+      <div className="container-filter-panel"><div className="container-filter-panel__header"><div><span className="eyebrow">Detailed container filters</span><h2>Find the exact assets to review</h2><p>Each filter has one active choice and updates immediately. The location filter includes current, origin, and destination locations so multi-hop journeys remain findable.</p></div><div className="container-filter-panel__actions"><span>{filteredRows.length} matching</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button><span className="filter-live-note">Updates as you choose</span></div></div><div className="container-filter-grid">
+        <SingleFilterSelect label="Current state" options={[{ value: "loaded", label: "Loaded" }, { value: "empty", label: "Empty" }, { value: "unknown", label: "Not observed" }]} value={draft.states[0] ?? ""} onChange={(value) => setSingleContainerFilter("states", value)} emptyLabel="All states" />
+        <SingleFilterSelect label="Container type" options={[{ value: "bin", label: "Bin" }, { value: "cart", label: "Cart" }, { value: "gaylord", label: "Gaylord" }]} value={draft.types[0] ?? ""} onChange={(value) => setSingleContainerFilter("types", value)} emptyLabel="All types" />
+        <SingleFilterSelect label="Locations involved" options={locationOptions} value={draft.locations[0] ?? ""} onChange={(value) => setSingleContainerFilter("locations", value)} emptyLabel="All locations" />
+        <SingleFilterSelect label="Movement" options={[{ value: "stationary", label: "At confirmed location" }, { value: "in_transit", label: "In transit" }, { value: "not_observed", label: "Not observed" }]} value={draft.movement[0] ?? ""} onChange={(value) => setSingleContainerFilter("movement", value)} emptyLabel="All movement" />
+        <SingleFilterSelect label="History health" options={[{ value: "clean", label: "Clean" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }, { value: "corrected", label: "Corrected" }, { value: "no_history", label: "No history" }]} value={draft.health[0] ?? ""} onChange={(value) => setSingleContainerFilter("health", value)} emptyLabel="All health" />
+        <SingleFilterSelect label="Scanner messages" options={[{ value: "with_message", label: "Has a message" }, { value: "without_message", label: "No message" }]} value={draft.messages[0] ?? ""} onChange={(value) => setSingleContainerFilter("messages", value)} emptyLabel="Any message status" />
         <label>Time window<select value={draft.timeWindow} onChange={(event) => setDraft((current) => ({ ...current, timeWindow: event.target.value as ContainerTimeWindow }))}><option value="all">Any time</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
         <label>Sort results<select value={draft.sort} onChange={(event) => setDraft((current) => ({ ...current, sort: event.target.value as ContainerSort }))}><option value="newest">Most recently observed</option><option value="oldest">Least recently observed</option><option value="label">Container label A–Z</option><option value="location">Location A–Z</option><option value="health">Health status</option></select></label>
         <label>From date<input type="date" value={draft.from} onChange={(event) => setDraft((current) => ({ ...current, from: event.target.value }))} /></label>
@@ -2349,10 +2356,15 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
   const activeCount = Object.entries(applied).filter(([key, value]) => key !== "sort" && Boolean(value) && value !== "all").length + (applied.sort !== "newest" ? 1 : 0);
   const statusLabel = filter === "available" ? "Available codes" : filter === "used" ? "Used codes" : "Previous days";
   const invalidRange = Boolean(draft.from && draft.to && draft.from > draft.to);
+  useEffect(() => {
+    if (!invalidRange) {
+      setApplied(draft);
+      setPageIndex(0);
+    }
+  }, [draft, invalidRange]);
   const hasLoadFilterValues = (value: LoadFilters) => Boolean(value.locationId || value.goodsType || value.timeWindow !== "all" || value.from || value.to || value.sort !== "newest");
   const draftHasFilters = Boolean(filter !== "available" || hasLoadFilterValues(draft) || hasLoadFilterValues(applied));
   const updateFilter = (field: keyof LoadFilters, value: string) => setDraft((current) => ({ ...current, [field]: value }));
-  const applyFilters = (event: React.FormEvent) => { event.preventDefault(); if (invalidRange) return; setPageIndex(0); setApplied({ ...draft }); };
   const clearFilters = () => { setDraft(emptyLoadFilters); setApplied(emptyLoadFilters); setFilter("available"); setPageIndex(0); };
   const exportLoads = () => {
     if (!loads.length) return;
@@ -2375,8 +2387,8 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
     <>
       <div className="notice-banner"><CheckCircle2 size={22} /><div><strong>Validated load-code register</strong><span>Managers can use these codes in the production system. Filter or sort the accepted mark-full observations before exporting.</span></div><button className="primary" onClick={exportLoads} disabled={!loads.length}><Download size={16} /> Download filtered list</button></div>
       <section className="panel">
-        <form className="load-filter-panel" onSubmit={applyFilters}>
-          <div className="load-filter-panel__header"><div><strong>Filter and sort load codes</strong><span>{statusLabel}{activeCount ? ` · ${activeCount} active filter${activeCount === 1 ? "" : "s"}` : ""} · {loads.length.toLocaleString()} matching</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!draftHasFilters}>Clear filters</button><button className="primary" type="submit" disabled={invalidRange}>Apply filters</button></div></div>
+        <section className="load-filter-panel">
+          <div className="load-filter-panel__header"><div><strong>Filter and sort load codes</strong><span>{statusLabel}{activeCount ? ` · ${activeCount} active filter${activeCount === 1 ? "" : "s"}` : ""} · {loads.length.toLocaleString()} matching</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!draftHasFilters}>Clear filters</button><span className="filter-live-note">Updates as you choose</span></div></div>
           <div className="load-filter-grid">
             <label className="load-filter--wide">Location<select value={draft.locationId} onChange={(event) => updateFilter("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label>
             <label>Time window<select value={draft.timeWindow} onChange={(event) => updateFilter("timeWindow", event.target.value as LoadTimeWindow)}><option value="all">All available</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
@@ -2386,7 +2398,7 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
             <label>Sort by<select value={draft.sort} onChange={(event) => updateFilter("sort", event.target.value as LoadSort)}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="location">Location A–Z</option><option value="code">Load code A–Z</option></select></label>
           </div>
           {invalidRange && <p className="load-filter-error">The from date must be on or before the to date.</p>}
-        </form>
+        </section>
         <div className="toolbar"><div className="filter-tabs"><button className={filter === "available" ? "active" : ""} onClick={() => { setFilter("available"); setPageIndex(0); }}>Available <b>{allLoads.filter(isActive).length}</b></button><button className={filter === "used" ? "active" : ""} onClick={() => { setFilter("used"); setPageIndex(0); }}>Used <b>{allLoads.filter((event) => !isActive(event)).length}</b></button><button className={filter === "previous" ? "active" : ""} onClick={() => { setFilter("previous"); setPageIndex(0); }}>Previous days</button></div><span className="date-chip"><Clock3 size={15} /> {loads.length.toLocaleString()} matching</span></div>
         <div className="load-grid">{visibleLoads.map((event) => (
           <article className="load-card" key={event.eventId}>
@@ -3411,11 +3423,11 @@ function ActivityPage({ data, query, openDetail, setPage }: { data: OperationsDa
   return <section className="panel activity-page">
     <div className="activity-purpose"><div><span className="eyebrow">Operational feed</span><strong>Physical observations from scanners</strong><p>Use Activity to trace where a container was scanned and how the movement unfolded. For administrator changes, sign-ins, device controls, and approvals, use Audit trail.</p></div><button className="secondary" onClick={() => setPage("audit")}><ScrollText size={15} /> Open audit trail</button></div>
     <div className="activity-filter-panel">
-      <div className="activity-filter-panel__header"><div><span className="eyebrow">Filter observations</span><h2>Choose exactly what to review</h2><p>Combine actions, locations, scanners, and time boundaries. Selecting several options matches any selected option within that field.</p></div><div className="activity-filter-panel__actions"><span className="date-chip">{events.length} shown</span><button className="secondary" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button></div></div>
+      <div className="activity-filter-panel__header"><div><span className="eyebrow">Filter observations</span><h2>Choose exactly what to review</h2><p>Choose one action, location, or scanner at a time. Every selection applies immediately; clear a field to return to all results.</p></div><div className="activity-filter-panel__actions"><span className="date-chip">{events.length} shown</span><button className="secondary" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button><span className="filter-live-note">Live filters</span></div></div>
       <div className="activity-filters activity-filters--expanded">
-        <AuditMultiSelect label="Actions" options={actionOptions} selected={eventFilters} onToggle={(value) => setEventFilters((current) => current.includes(value as StoredEvent["eventType"]) ? current.filter((item) => item !== value) : [...current, value as StoredEvent["eventType"]])} onClear={() => setEventFilters([])} emptyLabel="All actions" />
-        <AuditMultiSelect label="Locations" options={locationOptions} selected={locationFilters} onToggle={(value) => setLocationFilters((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setLocationFilters([])} emptyLabel="All locations" />
-        <AuditMultiSelect label="Scanners" options={deviceOptions} selected={deviceFilters} onToggle={(value) => setDeviceFilters((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setDeviceFilters([])} emptyLabel="All scanners" />
+        <SingleFilterSelect label="Actions" options={actionOptions} value={eventFilters[0] ?? ""} onChange={(value) => setEventFilters(value ? [value as StoredEvent["eventType"]] : [])} emptyLabel="All actions" />
+        <SingleFilterSelect label="Locations" options={locationOptions} value={locationFilters[0] ?? ""} onChange={(value) => setLocationFilters(value ? [value] : [])} emptyLabel="All locations" />
+        <SingleFilterSelect label="Scanners" options={deviceOptions} value={deviceFilters[0] ?? ""} onChange={(value) => setDeviceFilters(value ? [value] : [])} emptyLabel="All scanners" />
         <label>Quick time window<select value={windowFilter} onChange={(event) => setWindowFilter(event.target.value as ActivityWindow)}><option value="all">All available</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
         <label>From date<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
         <label>From time<input type="time" value={fromTime} onChange={(event) => setFromTime(event.target.value)} /></label>
@@ -3724,10 +3736,12 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   const unobservedContainers = registrationScopeAvailable ? data.fixtures.containers.filter((container) => !data.projections[container.containerId] && (!searchTerm || container.label.toLowerCase().includes(searchTerm))).length : null;
   const integrityPercent = filteredEvents.length ? Math.round(((filteredEvents.length - flaggedEvents.length) / filteredEvents.length) * 100) : 100;
   const deviceFreshnessPercent = filteredDevices.length ? Math.round(((filteredDevices.length - staleDevices.length) / filteredDevices.length) * 100) : 100;
-   const activeFilterCount = [applied.search, applied.locationIds.length, applied.deviceIds.length, applied.actors.length, applied.eventTypes.length, applied.healthValues.length, applied.from, applied.to].filter(Boolean).length;
+  const activeFilterCount = [applied.search, applied.locationIds.length, applied.deviceIds.length, applied.actors.length, applied.eventTypes.length, applied.healthValues.length, applied.from, applied.to].filter(Boolean).length;
   const draftDateError = draft.from && draft.to && draft.from > draft.to ? "The start date must be on or before the end date." : null;
+  useEffect(() => {
+    if (!draftDateError) setApplied(draft);
+  }, [draft, draftDateError]);
   const updateDraft = <K extends keyof ReportsFilterDraft>(key: K, value: ReportsFilterDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  const applyFilters = () => { if (!draftDateError) setApplied(draft); };
   const clearFilters = () => { setDraft(emptyReportsFilters); setApplied(emptyReportsFilters); };
   const reportScopeParts = [
     applied.locationIds.length ? `${applied.locationIds.length} location${applied.locationIds.length === 1 ? "" : "s"}` : "",
@@ -3820,7 +3834,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
   };
   return <div className="reports-workspace">
     <section className="panel report-filter-panel">
-      <div className="report-filter-panel__header"><div><span className="eyebrow">Reporting scope</span><h2>Choose exactly what to analyze</h2><p>Filters narrow the matching datasets and downloads; the source events are never changed. User filters apply to governance and correction reports.</p></div><div><span className="report-filter-panel__scope">{reportScope}</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button></div></div>
+      <div className="report-filter-panel__header"><div><span className="eyebrow">Reporting scope</span><h2>Choose exactly what to analyze</h2><p>Filters narrow the matching datasets and downloads; the source events are never changed. Choose several locations, scanners, or users when you need an exact combined scope; every choice updates immediately.</p></div><div><span className="report-filter-panel__scope">{reportScope}</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button><span className="filter-live-note">Live filters</span></div></div>
       <div className="report-filter-grid">
         <label className="report-filter--wide">Search<input value={draft.search} onChange={(event) => updateDraft("search", event.target.value)} placeholder="Container, scanner, event, or location" /></label>
         <AuditMultiSelect label="Locations" options={reportLocationOptions} selected={draft.locationIds} onToggle={(value) => setDraft((current) => ({ ...current, locationIds: current.locationIds.includes(value) ? current.locationIds.filter((item) => item !== value) : [...current.locationIds, value] }))} onClear={() => updateDraft("locationIds", [])} emptyLabel="All locations" />
@@ -3830,7 +3844,6 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
         <AuditMultiSelect label="Data health" options={[{ value: "clean", label: "Clean projection" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }]} selected={draft.healthValues} onToggle={(value) => setDraft((current) => ({ ...current, healthValues: current.healthValues.includes(value as Projection["health"]) ? current.healthValues.filter((item) => item !== value) : [...current.healthValues, value as Projection["health"]] }))} onClear={() => updateDraft("healthValues", [])} emptyLabel="All projection health" />
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateDraft("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateDraft("to", event.target.value)} /></label>
-        <button className="primary report-filter-panel__apply" onClick={applyFilters} disabled={Boolean(draftDateError)}>Apply report scope</button>
       </div>
       {draftDateError && <p className="report-filter-error">{draftDateError}</p>}
     </section>
@@ -3880,6 +3893,16 @@ function auditRequestFilters(filters: AuditDraft) {
 }
 
 type AuditFilterOption = { value: string; label: string };
+
+/**
+ * The default filter interaction across the console is a single, immediately
+ * applied choice.  Keeping this as a small shared component makes it harder
+ * for one page to drift into a different interaction model (or leave a stale
+ * previous choice visible after a new one is selected).
+ */
+function SingleFilterSelect({ label, options, value, onChange, emptyLabel }: { label: string; options: readonly AuditFilterOption[]; value: string; onChange: (value: string) => void; emptyLabel: string }) {
+  return <label className="single-filter-select"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}><option value="">{emptyLabel}</option>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+}
 
 function AuditMultiSelect({ label, options, selected, onToggle, onClear, emptyLabel }: { label: string; options: readonly AuditFilterOption[]; selected: readonly string[]; onToggle: (value: string) => void; onClear: () => void; emptyLabel: string }) {
   const selectionLabel = selected.length === 0
@@ -4024,24 +4047,30 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const latestRequest = useRef(0);
 
   const load = useCallback(async () => {
+    const requestNumber = ++latestRequest.current;
     setLoading(true);
     try {
       const next = await searchAuditEntries(session, { ...auditRequestFilters(applied), limit: pageSize, offset: pageIndex * pageSize });
+      if (requestNumber !== latestRequest.current) return;
       setResult(next); setError(null);
     } catch (caught) {
+      if (requestNumber !== latestRequest.current) return;
       setError(caught instanceof Error ? caught.message : "The audit trail could not be loaded.");
-    } finally { setLoading(false); }
+    } finally { if (requestNumber === latestRequest.current) setLoading(false); }
   }, [applied, pageIndex, pageSize, session]);
   useEffect(() => { void load(); }, [load]);
 
   const updateFilter = (field: Exclude<keyof AuditDraft, "actionPrefixes" | "targetTypes">, value: string) => setDraft((current) => ({ ...current, [field]: value }));
-  const toggleMultiFilter = (field: "actionPrefixes" | "targetTypes", value: string) => setDraft((current) => ({ ...current, [field]: current[field].includes(value) ? current[field].filter((item) => item !== value) : [...current[field], value] }));
-  const clearMultiFilter = (field: "actionPrefixes" | "targetTypes") => setDraft((current) => ({ ...current, [field]: [] }));
-  const applyFilters = (event: React.FormEvent) => {
-    event.preventDefault(); setPageIndex(0); setApplied({ ...draft });
-  };
+  useEffect(() => {
+    if (!draft.from || !draft.to || draft.from <= draft.to) {
+      setApplied(draft);
+      setPageIndex(0);
+    }
+  }, [draft]);
+  const setSingleAuditFilter = (field: "actionPrefixes" | "targetTypes", value: string) => setDraft((current) => ({ ...current, [field]: value ? [value] : [] }));
   const clearFilters = () => { setDraft(emptyAuditFilters); setPageIndex(0); setApplied(emptyAuditFilters); };
   const activeCount = Object.values(applied).filter((value) => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
   const pageCount = Math.max(1, Math.ceil(result.total / Math.max(1, pageSize)));
@@ -4063,19 +4092,19 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   return <section className="audit-page">
     <div className="audit-page__intro"><div><h2>Searchable evidence history</h2><p>Every event is append-only. Filters narrow the server-side audit log without hiding the original observation.</p></div><div className="audit-page__actions"><button className="secondary" onClick={() => void exportResults()} disabled={exporting || !result.total}><Download size={16} />{exporting ? "Preparing…" : "Export up to 250"}</button><span className="audit-page__count">{result.total.toLocaleString()} matching events</span></div></div>
     <div className="audit-purpose"><span className="audit-purpose__icon"><ScrollText size={18} /></span><div><strong>Governance and accountability</strong><p>Audit trail records administrator sign-ins, scanner controls, role changes, review decisions, and corrections. It answers who changed the system; Activity answers what scanners observed in the field. Rows use plain-language actions, while technical IDs stay inside the detail view.</p></div></div>
-    <form className="audit-filter-panel" onSubmit={applyFilters}>
-      <div className="audit-filter-panel__header"><div><strong>Filter the trail</strong><span>{activeCount ? `${activeCount} active filter${activeCount === 1 ? "" : "s"}` : "All audit events"}</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!activeCount}>Clear</button><button className="primary" type="submit"><Search size={16} /> Apply filters</button></div></div>
+    <section className="audit-filter-panel">
+      <div className="audit-filter-panel__header"><div><strong>Filter the trail</strong><span>{activeCount ? `${activeCount} active filter${activeCount === 1 ? "" : "s"}` : "All audit events"}</span></div><div><button className="secondary" type="button" onClick={clearFilters} disabled={!activeCount}>Clear</button><span className="filter-live-note">Live filters</span></div></div>
       <div className="audit-filter-grid">
         <label className="audit-filter--wide">Search text<input value={draft.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Actor, scanner, container, reason, or action" /></label>
         <label>Operating location<select value={draft.locationId} onChange={(event) => updateFilter("locationId", event.target.value)}><option value="">All locations</option>{data.fixtures.locations.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label>
         <label>Scanner<select value={draft.deviceId} onChange={(event) => updateFilter("deviceId", event.target.value)}><option value="">All scanners</option>{data.fixtures.devices.map((device) => <option key={device.deviceId} value={device.deviceId}>{scannerNumber(device.deviceId)} · {device.label}</option>)}</select></label>
-        <AuditMultiSelect label="Action groups" options={[{ value: "admin", label: "Administrator access" }, { value: "device", label: "Scanner administration" }, { value: "review", label: "Review decisions" }, { value: "correction", label: "Corrections" }]} selected={draft.actionPrefixes} onToggle={(value) => toggleMultiFilter("actionPrefixes", value)} onClear={() => clearMultiFilter("actionPrefixes")} emptyLabel="All action groups" />
-        <AuditMultiSelect label="Action applies to" options={[{ value: "device", label: "Scanner" }, { value: "container", label: "Container" }, { value: "review_case", label: "Review case" }, { value: "correction_request", label: "Correction request" }, { value: "admin_user", label: "Administrator account" }]} selected={draft.targetTypes} onToggle={(value) => toggleMultiFilter("targetTypes", value)} onClear={() => clearMultiFilter("targetTypes")} emptyLabel="All subjects" />
+        <SingleFilterSelect label="Action groups" options={[{ value: "admin", label: "Administrator access" }, { value: "device", label: "Scanner administration" }, { value: "review", label: "Review decisions" }, { value: "correction", label: "Corrections" }]} value={draft.actionPrefixes[0] ?? ""} onChange={(value) => setSingleAuditFilter("actionPrefixes", value)} emptyLabel="All action groups" />
+        <SingleFilterSelect label="Action applies to" options={[{ value: "device", label: "Scanner" }, { value: "container", label: "Container" }, { value: "review_case", label: "Review case" }, { value: "correction_request", label: "Correction request" }, { value: "admin_user", label: "Administrator account" }]} value={draft.targetTypes[0] ?? ""} onChange={(value) => setSingleAuditFilter("targetTypes", value)} emptyLabel="All subjects" />
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateFilter("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateFilter("to", event.target.value)} /></label>
       </div>
       {draft.from && !draft.to && <p className="audit-filter-panel__date-note">No To date means from the selected local date through now.</p>}
-    </form>
+    </section>
     {error && <div className="api-error"><AlertTriangle size={20} /><span>{error}</span><button onClick={() => void load()}>Retry</button></div>}
     <div className="audit-page__results"><div className="audit-page__results-heading"><div><span className="eyebrow">Append-only record</span><h3>{loading ? "Loading audit events…" : result.total ? `Events ${result.offset + 1}–${Math.min(result.offset + result.items.length, result.total)}` : "No matching events"}</h3></div><span>Page {currentPage} of {pageCount}</span></div>
       {!loading && !result.items.length && <EmptyState>No audit events match these filters. Try clearing one filter or widening the date range.</EmptyState>}
