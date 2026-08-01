@@ -1742,6 +1742,8 @@ footer > span:first-child { display: none; }
 .store-outlook__store-search-input input::placeholder { color: #9aaab1; font-weight: 500; }
 .store-outlook__store-search-input button { display: grid; place-items: center; padding: 2px; border: 0; color: #80939b; background: transparent; cursor: pointer; }
 .store-outlook__store-search-input button:hover { color: var(--blue-800); }
+.store-outlook__attention-toggle { display: inline-flex !important; align-items: center; align-self: center; gap: 6px; min-height: 30px; white-space: nowrap; color: #4d6976 !important; font-size: 8px !important; font-weight: 800 !important; }
+.store-outlook__attention-toggle input { width: 14px; height: 14px; margin: 0; accent-color: var(--blue-800); }
 .store-outlook__queue-actions { display: flex; align-items: flex-end; gap: 9px; }
 .store-outlook__queue-actions .secondary { min-height: 30px; padding: 0 8px; font-size: 8px; white-space: nowrap; }
 .store-outlook__group-table-wrap { overflow-x: auto; }
