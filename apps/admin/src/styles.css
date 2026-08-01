@@ -1846,3 +1846,123 @@ footer > span:first-child { display: none; }
   .warehouse-trend__header { flex-direction: column; }
   .warehouse-trend__forecast { width: 100%; box-sizing: border-box; }
 }
+
+/* Signed-out experience: a Goodwill-first entrance that still feels like the
+   same operational console after authentication. The form stays bright and
+   calm while the dark partner panel keeps the requested black visual anchor. */
+.authentication-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: clamp(16px, 4vw, 56px);
+  background:
+    radial-gradient(circle at 10% 10%, rgba(0, 117, 185, .42), transparent 34%),
+    radial-gradient(circle at 92% 82%, rgba(0, 174, 239, .16), transparent 28%),
+    #05090d;
+}
+.authentication-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: .22;
+  background-image: linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(135deg, #000, transparent 65%);
+}
+.sign-in-dialog {
+  position: relative !important;
+  inset: auto !important;
+  transform: none !important;
+  display: grid;
+  grid-template-columns: minmax(280px, .9fr) minmax(340px, 1.1fr);
+  width: min(980px, 100%);
+  min-height: 600px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 34px 110px rgba(0,0,0,.48), 0 0 0 1px rgba(0,147,214,.08);
+}
+.sign-in-dialog--overlay {
+  position: fixed !important;
+  z-index: 60;
+  top: 50% !important;
+  left: 50% !important;
+  width: min(980px, calc(100vw - 32px));
+  transform: translate(-50%, -50%) !important;
+}
+.sign-in-dialog__story {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding: clamp(26px, 5vw, 52px);
+  overflow: hidden;
+  color: #fff;
+  background:
+    radial-gradient(circle at 82% 8%, rgba(11, 141, 211, .56), transparent 34%),
+    linear-gradient(150deg, #06121d 0%, #071f33 55%, #06385d 100%);
+}
+.sign-in-dialog__story::after {
+  content: "";
+  position: absolute;
+  right: -90px;
+  bottom: -120px;
+  width: 360px;
+  height: 360px;
+  border: 1px solid rgba(114, 216, 251, .22);
+  border-radius: 50%;
+  box-shadow: 0 0 0 24px rgba(114, 216, 251, .04), 0 0 0 48px rgba(114, 216, 251, .03);
+}
+.sign-in-dialog__partner-mark { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 11px; color: #dff6ff; font: 800 10px/1.35 Manrope, sans-serif; letter-spacing: .12em; }
+.sign-in-dialog__partner-mark img { width: 48px; height: 48px; object-fit: contain; }
+.sign-in-dialog__story-copy { position: relative; z-index: 1; max-width: 390px; margin: auto 0; }
+.sign-in-dialog__story .eyebrow { color: #6ed9ff; }
+.sign-in-dialog__story h1 { max-width: 370px; margin: 12px 0 14px; color: #fff; font: 800 clamp(29px, 4vw, 45px)/1.03 Manrope, sans-serif; letter-spacing: -1.7px; }
+.sign-in-dialog__story p { max-width: 350px; margin: 0; color: #a9c3d3; font-size: 13px; line-height: 1.6; }
+.sign-in-dialog__story-points { display: grid; gap: 9px; margin-top: 28px; }
+.sign-in-dialog__story-points span { display: grid; grid-template-columns: 22px 1fr; column-gap: 9px; align-items: center; padding: 10px 11px; border: 1px solid rgba(145, 218, 245, .16); background: rgba(0,0,0,.18); }
+.sign-in-dialog__story-points svg { grid-row: span 2; color: #69d9ff; }
+.sign-in-dialog__story-points strong { color: #f4fbff; font-size: 10px; }
+.sign-in-dialog__story-points small { margin-top: 2px; color: #91b1c1; font-size: 9px; line-height: 1.35; }
+.sign-in-dialog__story-footer { position: relative; z-index: 1; display: flex; align-items: center; gap: 9px; color: #8eacbd; font-size: 9px; }
+.sign-in-dialog__story-footer img { width: 126px; max-height: 26px; object-fit: contain; object-position: left center; filter: saturate(.9); }
+.sign-in-dialog__form-panel { display: flex; flex-direction: column; justify-content: center; padding: clamp(28px, 5vw, 58px); background: #fff; }
+.sign-in-dialog__form-heading { max-width: 410px; }
+.sign-in-dialog__form-heading .eyebrow { color: #176ba6; }
+.sign-in-dialog__icon { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 18px; border: 1px solid #cae5ef; border-radius: 10px; color: #0563a0; background: #eaf8fc; }
+.sign-in-dialog__form-panel h2 { margin: 10px 0 9px; color: #132633; font: 800 clamp(25px, 3vw, 33px)/1.1 Manrope, sans-serif; letter-spacing: -.9px; }
+.sign-in-dialog__form-panel p { margin: 0; color: #697d89; font-size: 12px; line-height: 1.6; }
+.sign-in-dialog__form-panel form { display: grid; gap: 15px; max-width: 410px; margin-top: 25px; }
+.sign-in-dialog__form-panel form label { gap: 7px; color: #466270; font-size: 9px; letter-spacing: .12em; }
+.sign-in-dialog__form-panel input { min-height: 47px; border-radius: 7px; border-color: #b8cbd4; font-size: 13px; }
+.sign-in-dialog__form-panel input:focus { border-color: #139bd0; outline: 3px solid rgba(19,155,208,.13); }
+.sign-in-dialog__form-panel .primary { min-height: 47px; border-radius: 7px; font-size: 12px; }
+.sign-in-dialog__trust { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 21px; }
+.sign-in-dialog__trust span { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid #e0edf1; border-radius: 999px; color: #4d7180; background: #f7fbfc; font-size: 9px; font-weight: 800; }
+.sign-in-dialog__trust svg { color: #159d73; }
+.sign-in-dialog__privacy { display: flex; align-items: flex-start; gap: 8px; max-width: 410px; margin-top: 24px; padding-top: 16px; border-top: 1px solid #e6eef1; color: #7a8d96; font-size: 9px; line-height: 1.5; }
+.sign-in-dialog__privacy svg { flex: none; color: #176ba6; }
+.sign-in-error { border-radius: 6px; }
+.scope-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 9px; border: 1px solid #d8e4ea; border-radius: 999px; color: #607985; background: #f6fafb; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.scope-chip svg { color: #1673a9; }
+.scope-chip--local { border-color: #bfe4ed; color: #0e638f; background: #eaf8fb; }
+@media (max-width: 780px) {
+  .sign-in-dialog { grid-template-columns: 1fr; min-height: 0; }
+  .sign-in-dialog__story { min-height: 365px; }
+  .sign-in-dialog__story-copy { margin: 10px 0 0; }
+  .sign-in-dialog__story-footer { margin-top: auto; }
+  .sign-in-dialog__form-panel { padding: 32px 26px 30px; }
+  .scope-chip { display: none; }
+}
+@media (max-width: 480px) {
+  .authentication-shell { padding: 0; place-items: stretch; }
+  .sign-in-dialog { width: 100%; min-height: 100vh; border: 0; border-radius: 0; }
+  .sign-in-dialog__story { min-height: 330px; padding: 24px 20px 22px; }
+  .sign-in-dialog__story-points span:nth-child(3) { display: none; }
+  .sign-in-dialog__form-panel { padding: 27px 20px 30px; }
+  .sign-in-dialog__story h1 { font-size: 31px; }
+}

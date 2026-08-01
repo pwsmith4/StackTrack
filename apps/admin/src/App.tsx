@@ -87,6 +87,7 @@ import {
   type StoredEvent
 } from "./api";
 import stacktrackLogo from "./assets/stacktrack-logo-tight.png";
+import goodwillLogo from "./assets/goodwill-logo.png";
 
 type Page =
   | "dashboard"
@@ -276,6 +277,41 @@ const nav: { page: Page; label: string; icon: typeof Boxes }[] = [
   { page: "reports", label: "Reports & data", icon: BarChart3 }
 ];
 
+// The API is the security boundary, but the console should also make the
+// boundary obvious. A location-scoped account should not have to discover
+// corporate-only pages by clicking into a disabled screen. Keep the list in
+// one place so navigation, deep links, and action buttons agree.
+const pagesForRole: Record<AdminPrincipal["role"], readonly Page[]> = {
+  organization_owner: ["dashboard", "inventory", "service", "forecast", "containers", "loads", "locations", "exceptions", "corrections", "activity", "audit", "devices", "reports", "settings"],
+  operations_administrator: ["dashboard", "inventory", "service", "forecast", "containers", "loads", "locations", "exceptions", "corrections", "activity", "audit", "devices", "reports", "settings"],
+  location_manager: ["dashboard", "inventory", "service", "containers", "locations", "exceptions", "corrections", "activity", "devices"],
+  read_only_reviewer: ["dashboard", "inventory", "containers", "locations", "exceptions", "activity"],
+  support: ["dashboard", "containers", "locations", "activity", "devices"]
+};
+
+function canAccessPage(role: AdminPrincipal["role"], page: Page): boolean {
+  return pagesForRole[role]?.includes(page) ?? false;
+}
+
+function isScopedPrincipal(principal: AdminPrincipal): boolean {
+  return principal.role === "location_manager" ||
+    (principal.role === "read_only_reviewer" && (principal.locationIds?.length ?? 0) > 0);
+}
+
+function scopeLabel(principal: AdminPrincipal): string {
+  if (principal.role === "organization_owner") return "Goodwill-wide control";
+  if (principal.role === "operations_administrator") return "Network operations";
+  if (principal.role === "location_manager") {
+    const count = principal.locationIds?.length ?? 0;
+    return `${count} assigned location${count === 1 ? "" : "s"}`;
+  }
+  if (principal.role === "read_only_reviewer") {
+    const count = principal.locationIds?.length ?? 0;
+    return count ? `Read-only · ${count} assigned location${count === 1 ? "" : "s"}` : "Read-only · network view";
+  }
+  return "Support access";
+}
+
 type LocationInventoryBucket = "current" | "arriving" | "leaving";
 
 interface LocationInventoryFilter {
@@ -400,6 +436,24 @@ function eventLabel(type: StoredEvent["eventType"]) {
   }[type];
 }
 
+/**
+ * A departure scan has one reliable fact: the container left the named
+ * location.  It does not contain a destination.  Keep this copy centralized
+ * so cards, timelines, reports, and detail drawers cannot accidentally imply
+ * that a scanner knew where the truck was going.
+ */
+function inTransitDepartureSummary(origin?: string | null) {
+  return origin
+    ? `In transit — leaving ${origin}`
+    : "In transit — departure location not confirmed";
+}
+
+function inTransitDepartureDetail(origin?: string | null) {
+  return origin
+    ? `The container left ${origin}. The receiving location will be recorded when another scanner records its arrival.`
+    : "The container is in transit, but its departure location is not confirmed. The receiving location will be recorded when another scanner records its arrival.";
+}
+
 function containerTypeLabel(value?: string | null) {
   return value ? humanizeCode(value) : "Container";
 }
@@ -424,7 +478,7 @@ function eventNarrative(event: StoredEvent, data: OperationsData) {
   if (event.eventType === "emptied") return `${subject} marked empty at ${location}.`;
   if (event.eventType === "batch_out") {
     const origin = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
-    return `${subject} in transit — leaving ${origin ?? "its last confirmed location"}.`;
+    return `${subject} is in transit — leaving ${origin ?? "its last confirmed location"}.`;
   }
   return `${subject} observed at ${location}.`;
 }
@@ -620,9 +674,10 @@ function humanizeDetailsText(details: Record<string, unknown>, data?: Operations
 
 function eventPayloadFacts(event: StoredEvent, data: OperationsData): [string, ReactNode][] {
   return Object.entries(event.payload)
-    // A departure destination from an older client was only a plan.  Do not
-    // surface it as evidence now that receiving scans establish destinations.
-    .filter(([key]) => !(event.eventType === "batch_out" && key === "destinationLocationId"))
+    // A destination from an older client was only a plan.  Do not surface it
+    // as evidence now that the receiving scan's location establishes the
+    // actual handoff.
+    .filter(([key]) => key !== "destinationLocationId")
     .filter(([, value]) => value !== null && value !== undefined && value !== "")
     .map(([key, value]) => [humanizeDetailKey(key), humanizeDetailValue(key, value, data)] as [string, ReactNode]);
 }
@@ -742,8 +797,9 @@ export function App() {
   }, []);
 
   const setPage = (next: Page) => {
-    window.location.hash = `/${next}`;
-    setRoute({ page: next });
+    const target = session && !canAccessPage(session.principal.role, next) ? "dashboard" : next;
+    window.location.hash = `/${target}`;
+    setRoute({ page: target });
     setDetail(null);
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -782,12 +838,26 @@ export function App() {
     setSession(next);
   };
 
+  useEffect(() => {
+    if (!session || session.principal.mustChangePassword) return;
+    const locationOutsideScope = Boolean(
+      locationId && isScopedPrincipal(session.principal) && !session.principal.locationIds?.includes(locationId)
+    );
+    if (canAccessPage(session.principal.role, page) && !locationOutsideScope) return;
+    window.location.hash = "/dashboard";
+    setRoute({ page: "dashboard" });
+    setDetail(null);
+  }, [locationId, page, session?.principal.locationIds, session?.principal.mustChangePassword, session?.principal.role]);
+
   const selectedLocationName = data && locationId
     ? data.fixtures.locations.find((item) => item.locationId === locationId)?.name
     : undefined;
   const selected = page === "locations" && locationId && selectedLocationName
     ? { eyebrow: "Location workspace", title: selectedLocationName, description: "A focused operating picture for this site: containers, handoffs, scanners, reviews, and local activity." }
     : pageTitles[page];
+  const heading = page === "dashboard" && session && isScopedPrincipal(session.principal)
+    ? { eyebrow: "Assigned operations", title: "Your locations, at a glance.", description: "A focused operating picture for the locations assigned to your account." }
+    : selected;
   const reviewCount = data
     ? Object.values(data.projections).filter((projection) => projection?.health === "needs_review").length
     : 0;
@@ -812,10 +882,17 @@ export function App() {
         ? "API connected with warnings"
         : API_URL.includes("127.0.0.1") || API_URL.includes("localhost")
           ? "API connected"
-          : "Cloud API connected";
+           : "Cloud API connected";
+
+  // Keep this safe while the sign-in screen is being shown.  Session state is
+  // intentionally cleared before the API request is made, so rendering must
+  // never dereference a principal while the browser is signed out.
+  const visibleNav = session
+    ? nav.filter((item) => canAccessPage(session.principal.role, item.page))
+    : [];
 
   if (!session) {
-    return <div className="authentication-shell"><SignInDialog onClose={() => undefined} onSuccess={establishSession} /></div>;
+    return <div className="authentication-shell"><SignInDialog fullPage onClose={() => undefined} onSuccess={establishSession} /></div>;
   }
 
   // Temporary passwords are one-time credentials. Keep operational data out
@@ -839,13 +916,13 @@ export function App() {
             body: <><p className="detail-lead">The organization workspace for container movement, scanner administration, and governed operational decisions.</p><DetailFacts items={[["Organization", data?.fixtures.tenant.name ?? "Goodwill Operations"], ["Data service", isCloudEnvironment ? "Cloud PostgreSQL service" : "PostgreSQL service"], ["Authentication", "Server-verified administrator session"]]}/></>
           })}>
             <span className="site-dot">M</span>
-            <span><strong>Goodwill Operations</strong><small>Container tracking workspace</small></span>
+            <span><strong>{isScopedPrincipal(session.principal) ? "Assigned operations" : "Goodwill Operations"}</strong><small>{scopeLabel(session.principal)}</small></span>
             <ChevronRight size={16} />
           </button>
         </div>
         <nav>
           <span className="nav-label">OPERATIONS</span>
-          {nav.map((item) => (
+          {visibleNav.map((item) => (
             <button
               key={item.page}
               className={page === item.page ? "active" : ""}
@@ -859,9 +936,9 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar__bottom">
-          <button onClick={() => setPage("settings")} className={page === "settings" ? "active" : ""}>
+          {canAccessPage(session.principal.role, "settings") && <button onClick={() => setPage("settings")} className={page === "settings" ? "active" : ""}>
             <Settings size={19} /><span>Settings</span>
-          </button>
+          </button>}
           {isCloudEnvironment ? (
             <button onClick={() => setDetail({
               eyebrow: "Field operations",
@@ -877,7 +954,7 @@ export function App() {
           )}
           <button className="user-card" onClick={() => session ? setDetail({
             eyebrow: "Signed-in profile", title: session.principal.displayName, icon: <UserRound size={18} />, status: { label: roleLabel(session.principal.role), tone: session.principal.role === "organization_owner" ? "blue" : "good" }, summary: "Your verified administrator identity and current browser session.", recordId: session.principal.userId, recordIdLabel: "Administrator ID",
-            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically. Every administrative change is attributed to this account.</p><h3 className="detail-section-title">Account access</h3><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", session.principal.role === "organization_owner" ? "Goodwill-wide full control" : session.principal.role === "location_manager" ? `${session.principal.locationIds?.length ?? 0} assigned operating locations` : "All operating locations"]]}/><h3 className="detail-section-title">Session security</h3><div className="profile-security-card"><CheckCircle2 size={18}/><div><strong>Server-verified session</strong><span>Expires {new Date(session.expiresAt).toLocaleString()}</span><small>Signing out revokes this browser session on the server.</small></div></div><div className="detail-danger-zone"><div><strong>End this session</strong><p>Sign out when you leave this workstation. You can sign back in with your administrator account.</p></div><button className="danger-button" onClick={() => void signOut()}>Sign out</button></div></>
+            body: <><p className="detail-lead">This session is verified by the StackTrack API and expires automatically. Every administrative change is attributed to this account.</p><h3 className="detail-section-title">Account access</h3><DetailFacts items={[["Username", session.principal.username], ["Role", roleLabel(session.principal.role)], ["Scope", scopeLabel(session.principal)]]}/><h3 className="detail-section-title">Session security</h3><div className="profile-security-card"><CheckCircle2 size={18}/><div><strong>Server-verified session</strong><span>Expires {new Date(session.expiresAt).toLocaleString()}</span><small>Signing out revokes this browser session on the server.</small></div></div><div className="detail-danger-zone"><div><strong>End this session</strong><p>Sign out when you leave this workstation. You can sign back in with your administrator account.</p></div><button className="danger-button" onClick={() => void signOut()}>Sign out</button></div></>
           }) : setSignInOpen(true)}>
             <span className="avatar">{session ? initials(session.principal.displayName) : "?"}</span>
             <span><strong>{session ? session.principal.displayName : "Admin sign in"}</strong><small>{session ? roleLabel(session.principal.role) : "Operational changes locked"}</small></span>
@@ -892,6 +969,7 @@ export function App() {
           <button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="Open menu"><Menu /></button>
           <Mark compact />
           <div className="topbar__right">
+            <span className={`scope-chip ${isScopedPrincipal(session.principal) ? "scope-chip--local" : ""}`}><MapPin size={13} /> {scopeLabel(session.principal)}</span>
             <span className={`connection connection--${connectionState}`}>
               <i /> {connectionLabel}
             </span>
@@ -904,9 +982,9 @@ export function App() {
         <div className="content">
           <section className="page-heading">
             <div>
-              <span className="eyebrow">{selected.eyebrow}</span>
-              <h1>{selected.title}</h1>
-              <p>{selected.description}</p>
+              <span className="eyebrow">{heading.eyebrow}</span>
+              <h1>{heading.title}</h1>
+              <p>{heading.description}</p>
             </div>
             <div className="page-actions">
               <div className="search">
@@ -963,10 +1041,22 @@ export function App() {
 function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase(); }
 function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", location_manager: "Location Manager", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
 
-function SignInDialog({ onClose: _onClose, onSuccess }: { onClose: () => void; onSuccess: (session: AdminSession) => void }) {
+function SignInDialog({ fullPage = false, onClose: _onClose, onSuccess }: { fullPage?: boolean; onClose: () => void; onSuccess: (session: AdminSession) => void }) {
   const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { onSuccess(await signIn(username, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Sign-in failed."); } finally { setBusy(false); } };
-  return <section className="sign-in-dialog" role="dialog" aria-modal="true" aria-label="Administrator sign in"><div className="sign-in-dialog__brand"><Mark /></div><div className="sign-in-dialog__icon"><ShieldCheck size={25}/></div><span className="eyebrow">SECURE ADMIN ACCESS</span><h2>Sign in to view operations.</h2><p>Container, route, device, and report data stays unavailable until the StackTrack API verifies an approved account.</p><div className="sign-in-dialog__trust"><span><CheckCircle2 size={14}/> Server-verified access</span><span><ShieldCheck size={14}/> Audit-ready changes</span></div><form onSubmit={(event) => void submit(event)}><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form><small>Use your approved Goodwill administrator account. Access is recorded and expires automatically.</small></section>;
+  return <section className={`sign-in-dialog ${fullPage ? "sign-in-dialog--full-page" : "sign-in-dialog--overlay"}`} role="dialog" aria-modal="true" aria-label="Administrator sign in">
+    <div className="sign-in-dialog__story">
+      <div className="sign-in-dialog__partner-mark"><img src={goodwillLogo} alt="Goodwill" /><span>GOODWILL<br />OPERATIONS</span></div>
+      <div className="sign-in-dialog__story-copy"><span className="eyebrow">GOODWILL OPERATIONS CONSOLE</span><h1>Know where every container is.</h1><p>One shared view for the people who receive, move, and care for reusable assets across the network.</p><div className="sign-in-dialog__story-points"><span><ContainerIcon size={16} /><strong>Container history</strong><small>Every scan stays traceable.</small></span><span><Truck size={16} /><strong>Movement clarity</strong><small>See what left and where it was last confirmed.</small></span><span><ShieldCheck size={16} /><strong>Accountable access</strong><small>Every administrative action is recorded.</small></span></div></div>
+      <div className="sign-in-dialog__story-footer"><img src={stacktrackLogo} alt="StackTrack" /><span>Reusable asset operations</span></div>
+    </div>
+    <div className="sign-in-dialog__form-panel">
+      <div className="sign-in-dialog__form-heading"><div className="sign-in-dialog__icon"><ShieldCheck size={23}/></div><span className="eyebrow">SECURE ADMIN ACCESS</span><h2>Sign in to manage operations.</h2><p>Use your approved administrator account. Operational data remains private until the StackTrack service verifies your access.</p></div>
+      <div className="sign-in-dialog__trust"><span><CheckCircle2 size={14}/> Server-verified access</span><span><ShieldCheck size={14}/> Audit-ready changes</span></div>
+      <form onSubmit={(event) => void submit(event)}><label>Username<input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="sign-in-error" role="alert">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form>
+      <div className="sign-in-dialog__privacy"><ShieldCheck size={14}/><span>Access expires automatically. Sign out when you leave a shared workstation.</span></div>
+    </div>
+  </section>;
 }
 
 function PageContent({
@@ -1000,8 +1090,8 @@ function PageContent({
   onPasswordChanged: () => void;
   onSignOut: () => Promise<void>;
 }) {
-  if (page === "dashboard") return <Dashboard data={data} setPage={setPage} openLocation={openLocation} />;
-  if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} />;
+  if (page === "dashboard") return <Dashboard data={data} setPage={setPage} openLocation={openLocation} session={session!} />;
+  if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} session={session!} />;
   if (page === "service") return <ServicePlanPage data={data} openLocation={openLocation} />;
   if (page === "forecast") return <WarehouseForecastPage data={data} openLocation={openLocation} />;
   if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} />;
@@ -1016,8 +1106,8 @@ function PageContent({
   return <SettingsPage data={data} setPage={setPage} session={session} refresh={refresh} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
 }
 
-function InventoryPage({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void }) {
-  return <div className="inventory-page"><DashboardInventoryMatrix data={data} setPage={setPage} openLocation={openLocation} /></div>;
+function InventoryPage({ data, setPage, openLocation, session }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void; session: AdminSession }) {
+  return <div className="inventory-page"><DashboardInventoryMatrix data={data} setPage={setPage} openLocation={openLocation} scoped={isScopedPrincipal(session.principal)} /></div>;
 }
 
 function buildInventorySnapshotRecords(data: OperationsData): InventorySnapshotRecord[] {
@@ -2000,9 +2090,10 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
   </div>;
 }
 
-function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
+function Dashboard({ data, setPage, openLocation, session }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; session: AdminSession }) {
   const projections = Object.values(data.projections).filter(Boolean) as Projection[];
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
+  const scoped = isScopedPrincipal(session.principal);
   const loaded = projections.filter((item) => item.loadState === "loaded").length;
   const transitId = data.fixtures.locations.find((item) => item.type === "in_transit")?.locationId;
   const inTransit = transitId ? projections.filter((item) => item.locationId === transitId).length : 0;
@@ -2062,12 +2153,18 @@ function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setP
         <Metric icon={<AlertTriangle />} label="Needs attention" value={attentionCount} detail={attentionCount ? `${review} history issue${review === 1 ? "" : "s"} · ${pendingCorrections.length} approval${pendingCorrections.length === 1 ? "" : "s"}` : "No open exceptions"} tone={attentionCount ? "orange" : "green"} onClick={() => setPage("exceptions")} />
       </div>
 
+      <section className={`dashboard-scope-banner ${scoped ? "dashboard-scope-banner--local" : ""}`}>
+        <span className="dashboard-scope-banner__icon"><MapPin size={17} /></span>
+        <div><strong>{scoped ? `Showing ${scopeLabel(session.principal).toLowerCase()}` : "Company-wide live view"}</strong><span>{scoped ? "The API has limited this workspace to the locations assigned to your account. Cross-location records remain protected." : "Counts and actions below include every active Goodwill operating location visible to your account."}</span></div>
+        <Pill tone={scoped ? "blue" : "good"}>{scoped ? "Scoped access" : "Network view"}</Pill>
+      </section>
+
       <section className="panel operations-pulse">
         <PanelTitle title="Operations pulse" subtitle="Signals that help administrators prioritize today’s work" />
         <div className="pulse-grid">
           <button className="pulse-card pulse-card--blue" onClick={() => setPage("devices")}><span className="pulse-card__icon"><Wifi size={18} /></span><span><small>Scanner coverage</small><strong>{activeDevices.length} of {data.fixtures.devices.length} enabled</strong><em>{staleDevices.length ? `${staleDevices.length} stale report${staleDevices.length === 1 ? "" : "s"} · review Devices` : activeDevices.length ? "All enabled scanners reported recently" : "No scanners are enabled"}</em></span><ChevronRight size={16} /></button>
           <button className="pulse-card pulse-card--cyan" onClick={() => setPage("activity")}><span className="pulse-card__icon"><Activity size={18} /></span><span><small>Recent observations</small><strong>{observationsLastDay} in the last 24 hours</strong><em>{observationsLastDay ? "Open Activity to trace movement and scanner timing" : "No accepted observations in the last 24 hours"}</em></span><ChevronRight size={16} /></button>
-          <button className="pulse-card pulse-card--navy" onClick={() => setPage("loads")}><span className="pulse-card__icon"><PackageCheck size={18} /></span><span><small>Load codes ready</small><strong>{availableLoadCodes} available for handoff</strong><em>{availableLoadCodes ? "Open Load codes to select a validated handoff." : "No validated handoff codes are ready."}</em></span><ChevronRight size={16} /></button>
+          {canAccessPage(session.principal.role, "loads") && <button className="pulse-card pulse-card--navy" onClick={() => setPage("loads")}><span className="pulse-card__icon"><PackageCheck size={18} /></span><span><small>Load codes ready</small><strong>{availableLoadCodes} available for handoff</strong><em>{availableLoadCodes ? "Open Load codes to select a validated handoff." : "No validated handoff codes are ready."}</em></span><ChevronRight size={16} /></button>}
           <button className="pulse-card pulse-card--green" onClick={() => setPage("containers")}><span className="pulse-card__icon"><ContainerIcon size={18} /></span><span><small>Observation coverage</small><strong>{observedContainers} of {data.fixtures.containers.length} observed</strong><em>{unobservedContainers ? `${unobservedContainers} container${unobservedContainers === 1 ? " has" : "s have"} no confirmed history` : `All registered containers have history · ${coveragePercent}% coverage`}</em></span><ChevronRight size={16} /></button>
         </div>
       </section>
@@ -2144,7 +2241,7 @@ function Dashboard({ data, setPage, openLocation }: { data: OperationsData; setP
         </div>
       </section>
 
-      <WarehouseInventoryOverview data={data} setPage={setPage} openLocation={openLocation} />
+      {canAccessPage(session.principal.role, "forecast") && <WarehouseInventoryOverview data={data} setPage={setPage} openLocation={openLocation} />}
     </>
   );
 }
@@ -2174,7 +2271,7 @@ interface InventoryMatrixRow {
 
 const inventoryContainerTypes = ["bin", "cart", "gaylord"] as const;
 
-function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void }) {
+function DashboardInventoryMatrix({ data, setPage, openLocation, scoped = false }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; scoped?: boolean }) {
   const [mode, setMode] = useState<InventoryMatrixMode>("container");
   const [locationScope, setLocationScope] = useState<InventoryLocationScope>("network");
   const [selectedContainerTypes, setSelectedContainerTypes] = useState<string[]>([]);
@@ -2260,8 +2357,8 @@ function DashboardInventoryMatrix({ data, setPage, openLocation }: { data: Opera
       : { goodsType: column.value, bucket: "current" });
   };
   return <section className="panel inventory-matrix-panel" onClickCapture={handleInventoryCellCapture}>
-    <PanelTitle title="Company-wide inventory" subtitle="Current container inventory by location and category. Each container is counted once using its latest accepted projection." action="View all containers" onClick={() => setPage("containers")} />
-    <div className="inventory-matrix__toolbar"><div><span className="eyebrow">Network inventory snapshot</span><p>Use container type for physical capacity planning, or goods category to mirror the inventory report used by Goodwill operations.</p></div><div className="inventory-matrix__actions"><div className="inventory-matrix__modes" role="group" aria-label="Inventory breakdown"><button type="button" className={mode === "container" ? "active" : ""} onClick={() => setMode("container")}><ContainerIcon size={14} /> Container type</button><button type="button" className={mode === "goods" ? "active" : ""} onClick={() => setMode("goods")}><Boxes size={14} /> Goods category</button></div><button type="button" className="secondary" onClick={exportInventory} disabled={!records.length}><Download size={15} /> Excel-ready CSV</button></div></div>
+    <PanelTitle title={scoped ? "Assigned inventory" : "Company-wide inventory"} subtitle="Current container inventory by location and category. Each container is counted once using its latest accepted projection." action="View all containers" onClick={() => setPage("containers")} />
+    <div className="inventory-matrix__toolbar"><div><span className="eyebrow">{scoped ? "Assigned inventory snapshot" : "Network inventory snapshot"}</span><p>{scoped ? "Review the containers at your assigned locations, then open a cell to work with that exact group." : "Use container type for physical capacity planning, or goods category to mirror the inventory report used by Goodwill operations."}</p></div><div className="inventory-matrix__actions"><div className="inventory-matrix__modes" role="group" aria-label="Inventory breakdown"><button type="button" className={mode === "container" ? "active" : ""} onClick={() => setMode("container")}><ContainerIcon size={14} /> Container type</button><button type="button" className={mode === "goods" ? "active" : ""} onClick={() => setMode("goods")}><Boxes size={14} /> Goods category</button></div><button type="button" className="secondary" onClick={exportInventory} disabled={!records.length}><Download size={15} /> Excel-ready CSV</button></div></div>
     <div className="inventory-matrix__filters"><label><span>Location scope</span><select value={locationScope} onChange={(event) => setLocationScope(event.target.value as InventoryLocationScope)}><option value="network">All locations</option><option value="donation_express">Donation Xpress</option><option value="store_backroom">Stores</option><option value="warehouse">Warehouses</option></select></label><AuditMultiSelect label="Container types" options={inventoryContainerTypes.map((value) => ({ value, label: containerTypeLabel(value) }))} selected={selectedContainerTypes} onToggle={(value) => setSelectedContainerTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setSelectedContainerTypes([])} emptyLabel="All container types" /><div className="inventory-matrix__filter-summary"><strong>{scopeLabel}</strong><span>{typeLabel}</span><small>{records.length} container{records.length === 1 ? "" : "s"} included</small></div><button type="button" className="inventory-matrix__clear" onClick={clearInventoryFilters} disabled={locationScope === "network" && selectedContainerTypes.length === 0}>Clear filters</button></div>
       <div className="inventory-matrix__summary"><div><span><ContainerIcon size={15} />Tracked containers</span><strong>{records.length}</strong><small>{scopeLabel} · {typeLabel}</small></div><div><span><MapPin size={15} />At operating locations</span><strong>{physicalCount}</strong><small>Confirmed physical placement</small></div><div><span><Truck size={15} />In transit</span><strong>{transitRow?.records.length ?? 0}</strong><small>Left a confirmed location · arrival pending</small></div><div><span><CircleHelp size={15} />Unknown / unassigned</span><strong>{unknownRow?.records.length ?? 0}</strong><small>{unknownRow?.records.length ? "Needs location follow-up" : "No current location gaps"}</small></div></div>
      <div className="table-wrap inventory-matrix__table-wrap"><table className="inventory-matrix"><thead><tr><th>Location</th>{columns.map((column) => <th key={column.value}>{column.label}</th>)}<th>Total</th></tr></thead><tbody>{locationRows.map((row) => <tr key={row.key}><th scope="row"><button type="button" className="inventory-matrix__location" onClick={() => openRow(row)}><span className={`inventory-matrix__location-icon ${row.isUnknown ? "inventory-matrix__location-icon--unknown" : row.location ? `inventory-matrix__location-icon--${row.location.type}` : "inventory-matrix__location-icon--unknown"}`}>{row.location && !row.isUnknown ? <LocationTypeIcon location={row.location} size={15} /> : <CircleHelp size={15} />}</span><span><strong>{row.locationName}</strong><small>{row.locationType}{row.location?.isActive === false ? " · Inactive" : ""}</small></span><ChevronRight size={13} /></button></th>{columns.map((column) => { const items = recordsForColumn(row, column.value); return <td key={column.value}>{items.length ? <button type="button" className="inventory-matrix__cell" onClick={() => openRow(row)} title={`${items.length} ${column.label.toLowerCase()} at ${row.locationName}. ${statusSummary(items)}.`}><strong>{items.length}</strong><small>{statusSummary(items)}</small><em>{cellDetail(items)}</em></button> : <span className="inventory-matrix__empty">—</span>}</td>; })}<td><button type="button" className="inventory-matrix__cell inventory-matrix__cell--total" onClick={() => openRow(row)} title={`${row.records.length} containers at ${row.locationName}.`}><strong>{row.records.length}</strong><small>{statusSummary(row.records) || "No current inventory"}</small></button></td></tr>)}</tbody><tfoot><tr><th>Network total</th>{columns.map((column) => <td key={column.value}><strong>{records.filter((record) => mode === "container" ? record.container.type === column.value : record.goodsType === column.value).length}</strong></td>)}<td><strong>{records.length}</strong></td></tr></tfoot></table></div>
@@ -2395,9 +2492,7 @@ function routeLocationNames(route: ContainerRouteContext): string[] {
 
 function humanRouteSummary(route: ContainerRouteContext): string {
   if (route.inTransit) {
-    return route.origin
-      ? `In transit — leaving ${route.origin.name}`
-      : "In transit — departure location not confirmed";
+    return inTransitDepartureSummary(route.origin?.name);
   }
   if (route.segments.length > 0) {
     return `${route.segments.length} handoff${route.segments.length === 1 ? "" : "s"} recorded`;
@@ -2407,7 +2502,7 @@ function humanRouteSummary(route: ContainerRouteContext): string {
 
 function humanSegmentSummary(segment: ContainerRouteSegment): string {
   const origin = segment.origin?.name ?? "Departure origin not confirmed";
-  if (segment.status === "in_transit") return `In transit — leaving ${origin}`;
+  if (segment.status === "in_transit") return inTransitDepartureSummary(origin);
   const destination = segment.destination?.name ?? "arrival location not recorded";
   return `Received at ${destination} after leaving ${origin}`;
 }
@@ -2429,7 +2524,7 @@ function ContainerRouteCell({ route }: { route: ContainerRouteContext }) {
           <strong title={route.origin?.name ?? "Departure location not confirmed"}>Leaving {route.origin?.name ?? "departure location not confirmed"}</strong>
         </div>
         <small>In transit · left {relativeTime(route.departedAt)}{route.segments.length > 1 ? ` · handoff ${route.segments.length}` : ""}</small>
-       <small className="container-route-cell__truth">The next arrival scan records where it was received.</small>
+       <small className="container-route-cell__truth">{inTransitDepartureDetail(route.origin?.name)}</small>
        </div>
     );
   }
@@ -2457,11 +2552,11 @@ function ContainerRouteSummary({ containerId, data, onOpenLocation }: { containe
   return <div className={`detail-route-summary ${route.inTransit ? "detail-route-summary--active" : ""}`}>
     <div className="detail-route-summary__heading"><span><Truck size={15} /> Movement context</span><Pill tone={route.inTransit ? "blue" : "good"}>{route.inTransit ? "In transit" : "Physical location confirmed"}</Pill></div>
     {route.inTransit && <div className="detail-route-summary__path detail-route-summary__path--departure">
-       <div><small>Movement</small><RouteLocationLink location={route.origin} fallback="Departure location not confirmed" onOpenLocation={onOpenLocation} /><em>In transit — leaving this location</em></div>
+       <div><small>Departure location</small><RouteLocationLink location={route.origin} fallback="Departure location not confirmed" onOpenLocation={onOpenLocation} /><em>{inTransitDepartureSummary(route.origin?.name)}</em></div>
       </div>}
      {!route.inTransit && route.segments.length > 0 && <div className="detail-route-summary__journey"><small>Recorded journey</small><strong>{routeLocationNames(route).join("  →  ")}</strong></div>}
      {!route.inTransit && route.currentLocation && <button type="button" className="detail-route-summary__workspace-link" onClick={() => onOpenLocation(route.currentLocation!.locationId)}>Open {currentName} location workspace <ChevronRight size={13} aria-hidden="true" /></button>}
-      <small className="detail-route-summary__note">{route.inTransit ? `In transit after leaving ${route.origin?.name ?? "the last confirmed location"}. The next arrival scan records where it was received.` : current ? `Last authoritative observation: ${eventLabel(current.eventType)} at ${currentName}. ${route.segments.length > 1 ? `${route.segments.length} handoffs are recorded for this container.` : ""}` : "No route observations are recorded yet."}</small>
+      <small className="detail-route-summary__note">{route.inTransit ? inTransitDepartureDetail(route.origin?.name ?? "the last confirmed location") : current ? `Last authoritative observation: ${eventLabel(current.eventType)} at ${currentName}. ${route.segments.length > 1 ? `${route.segments.length} handoffs are recorded for this container.` : ""}` : "No route observations are recorded yet."}</small>
     {route.unresolvedSegmentCount > 0 && !route.inTransit && <div className="detail-route-summary__warning"><AlertTriangle size={14} /> {route.unresolvedSegmentCount} handoff{route.unresolvedSegmentCount === 1 ? "" : "s"} still lacks a matching receipt.</div>}
   </div>;
 }
