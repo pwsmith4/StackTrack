@@ -2127,11 +2127,21 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
   const safeQueuePage = Math.min(queuePage, queuePageCount - 1);
   const visibleQueueGroups = queuePageSize === "all" ? queueGroups : queueGroups.slice(safeQueuePage * queuePageSize, (safeQueuePage + 1) * queuePageSize);
   useEffect(() => setQueuePage(0), [locationFilter, locationSearch, goodsFilter, containerFilter, priorityFilter, mode]);
-  const actionRows = rows.filter((row) => row.pickupQty > 0 || row.deliveryQty > 0);
+  // Summary cards must describe the same scope as the worklist.  Previously
+  // they were calculated from every target row, which meant selecting one
+  // store or one crate type left the headline counts showing the whole
+  // network.  That is especially misleading for a location manager and for
+  // dispatchers narrowing a route plan before export.
+  // The headline cards should describe exactly the rows the dispatcher is
+  // looking at.  In queue mode that includes the selected queue-status
+  // filter (Needs service, Pickup ready, etc.); in target setup visibleRows is
+  // the full location/goods/crate scope.
+  const scopedRows = visibleRows;
+  const actionRows = scopedRows.filter((row) => row.pickupQty > 0 || row.deliveryQty > 0);
   const pickupRows = actionRows.filter((row) => row.pickupQty > 0);
   const deliveryRows = actionRows.filter((row) => row.deliveryQty > 0);
   const criticalRows = actionRows.filter((row) => row.priority === "critical");
-  const unknownRows = rows.filter((row) => row.unknown > 0);
+  const unknownRows = scopedRows.filter((row) => row.unknown > 0);
   const pickupStops = new Set(pickupRows.map((row) => row.location.locationId)).size;
   const deliveryStops = new Set(deliveryRows.map((row) => row.location.locationId)).size;
   const pickupTotal = pickupRows.reduce((total, row) => total + row.pickupQty, 0);
@@ -2511,7 +2521,7 @@ function PanelTitle({ title, subtitle, action, onClick }: { title: string; subti
   return (
     <div className="panel-title">
       <div><h2>{title}</h2><p>{subtitle}</p></div>
-      {action && <button onClick={onClick}>{action}<ChevronRight size={16} /></button>}
+      {action && <button type="button" onClick={onClick}>{action}<ChevronRight size={16} /></button>}
     </div>
   );
 }
@@ -3419,10 +3429,14 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
   const visibleLocationMetrics = locationPageSize === "all"
     ? matchingMetrics
     : matchingMetrics.slice(safeLocationPage * locationPageSize, (safeLocationPage + 1) * locationPageSize);
-  const matchingLocationIds = new Set(matchingMetrics.map((metric) => metric.location.locationId));
+  // Keep the network map in step with the directory page.  Rendering every
+  // matching node above a 50+ location directory makes the map grow without
+  // bound and forces the operator to scan two different scopes.  Exports and
+  // matching totals still use the full filtered set below.
+  const mapLocationIds = new Set(visibleLocationMetrics.map((metric) => metric.location.locationId));
   const visibleRouteRecords = routeRecords.filter((record) => {
     const originId = record.route.activeSegment?.origin?.locationId;
-    return Boolean(originId && matchingLocationIds.has(originId));
+    return Boolean(originId && mapLocationIds.has(originId));
   });
   const visibleMovingCount = visibleRouteRecords.filter((record) => Boolean(record.route.activeSegment)).length;
   const visibleMovingReviewCount = visibleRouteRecords.filter((record) => record.projection?.health === "needs_review").length;
@@ -3471,7 +3485,7 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
 
   return <>
     {session && <RoleScopeNotice principal={session.principal} pageLabel="Locations" />}
-    <LocationNetworkMap metrics={matchingMetrics} movingCount={visibleMovingCount} movingReviewCount={visibleMovingReviewCount} routeRecords={visibleRouteRecords} onSelect={openLocation} onOpen={openRouteRecord} />
+    <LocationNetworkMap metrics={visibleLocationMetrics} movingCount={visibleMovingCount} movingReviewCount={visibleMovingReviewCount} routeRecords={visibleRouteRecords} onSelect={openLocation} onOpen={openRouteRecord} />
     {false && <LocationLifecycleExplorer routeRecords={routeRecords} focusLocationId={selected.locationId} onOpen={(record) => {
       const projection = record.projection;
       if (projection) openContainer(projection);
@@ -3486,7 +3500,7 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
     <section className="location-selector panel">
       <div className="location-selector__heading"><PanelTitle title="Location directory" subtitle="Search, sort, and filter every physical location before opening its operating picture." /><div className="location-directory-tools"><label className="location-search"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="Search locations" aria-label="Search locations" /></label><select value={locationTypeFilter} onChange={(event) => setLocationTypeFilter(event.target.value as typeof locationTypeFilter)} aria-label="Filter by location type"><option value="all">All location types</option><option value="store_backroom">Stores</option><option value="donation_express">Donation Xpress</option><option value="warehouse">Warehouses</option></select><select value={locationHealthFilter} onChange={(event) => setLocationHealthFilter(event.target.value as typeof locationHealthFilter)} aria-label="Filter locations needing attention"><option value="all">All locations</option><option value="attention">Needs attention</option></select><select value={locationSort} onChange={(event) => setLocationSort(event.target.value as typeof locationSort)} aria-label="Sort locations"><option value="work">Sort by active work</option><option value="containers">Sort by containers here</option><option value="activity">Sort by 24h activity</option><option value="alphabetical">Sort A–Z</option></select></div></div>
       <div className="location-directory-summary"><span>Showing <b>{matchingMetrics.length}</b> of {physicalLocations.length} locations</span><span>{matchingMetrics.reduce((total, metric) => total + metric.current.length, 0)} containers in the filtered view</span><span>{matchingMetrics.reduce((total, metric) => total + metric.needsReview, 0)} need review</span></div>
-      <div className="location-directory-export"><span>Filters apply to the map, directory, open-departure count, and export.</span><span className="location-directory-export__actions"><button type="button" className="secondary" onClick={clearLocationFilters} disabled={!locationQuery && locationTypeFilter === "all" && locationHealthFilter === "all" && locationSort === "work"}>Clear filters</button><button type="button" className="secondary" onClick={exportFilteredLocations} disabled={!matchingMetrics.length}><Download size={15} /> Export filtered CSV</button></span></div>
+      <div className="location-directory-export"><span>Filters apply to the map and directory page. Export includes every matching location, not only the visible page.</span><span className="location-directory-export__actions"><button type="button" className="secondary" onClick={clearLocationFilters} disabled={!locationQuery && locationTypeFilter === "all" && locationHealthFilter === "all" && locationSort === "work"}>Clear filters</button><button type="button" className="secondary" onClick={exportFilteredLocations} disabled={!matchingMetrics.length}><Download size={15} /> Export filtered CSV</button></span></div>
       <div className="location-selector__list">{visibleLocationMetrics.map((metric) => {
         const location = metric.location;
         return <button key={location.locationId} className={`location-directory-card ${location.locationId === selected.locationId ? "active" : ""}`} onClick={() => setSelectedLocationId(location.locationId)}><span className={`location-type-icon location-type-icon--${location.type}`}><LocationTypeIcon location={location} /></span><span className="location-directory-card__body"><b>{location.name}</b><small>{locationTypeLabel(location.type)} · {metric.scanners.length} scanner{metric.scanners.length === 1 ? "" : "s"}</small><span className="location-directory-card__stats"><span><strong>{metric.current.length}</strong> here</span><span><strong>{metric.arriving.length}</strong> received</span><span><strong>{metric.leaving.length}</strong> out</span><span><strong>{metric.eventsLastDay}</strong> scans</span></span></span><span className="location-directory-card__status">{metric.needsReview > 0 ? <Pill tone="warn">{metric.needsReview} review</Pill> : metric.staleScanners > 0 ? <Pill tone="warn">{metric.staleScanners} stale</Pill> : <Pill tone="good">Operating</Pill>}<ChevronRight size={17} /></span></button>;
@@ -4057,6 +4071,7 @@ function CorrectionsPage({
 }
 
 type ActivityWindow = "all" | "today" | "7d" | "30d";
+type ActivityPageSize = 25 | 50 | 100 | 200 | "all";
 
 type ActivityEventNeighbors = {
   previousContainer?: StoredEvent;
@@ -4110,6 +4125,8 @@ function ActivityPage({ data, query, openDetail, setPage, session }: { data: Ope
   const [fromTime, setFromTime] = useState("");
   const [toDate, setToDate] = useState("");
   const [toTime, setToTime] = useState("");
+  const [pageSize, setPageSize] = useState<ActivityPageSize>(50);
+  const [pageIndex, setPageIndex] = useState(0);
   const containerName = (id: string) => data.fixtures.containers.find((item) => item.containerId === id)?.label ?? "Unknown container";
   const locationName = (id: string) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Unknown location";
   const deviceFor = (id: string) => data.fixtures.devices.find((item) => item.deviceId === id);
@@ -4195,14 +4212,19 @@ function ActivityPage({ data, query, openDetail, setPage, session }: { data: Ope
       eventTimestamp <= upperBound &&
       timeOfDayMatches;
   }).sort((left, right) => -activityEventOrder(left, right));
-  const visibleEvents = events.slice(0, 100);
+  const pageCount = pageSize === "all" ? 1 : Math.max(1, Math.ceil(events.length / pageSize));
+  const safePageIndex = Math.min(pageIndex, pageCount - 1);
+  const visibleEvents = pageSize === "all"
+    ? events
+    : events.slice(safePageIndex * pageSize, (safePageIndex + 1) * pageSize);
+  useEffect(() => setPageIndex(0), [query, eventFilters.join("|"), locationFilters.join("|"), deviceFilters.join("|"), windowFilter, fromDate, fromTime, toDate, toTime]);
   const clearFilters = () => { setEventFilters([]); setLocationFilters([]); setDeviceFilters([]); setWindowFilter("all"); setFromDate(""); setFromTime(""); setToDate(""); setToTime(""); };
   const hasFilters = Boolean(searchTerm || locationFilters.length || deviceFilters.length || windowFilter !== "all" || eventFilters.length || fromDate || fromTime || toDate || toTime);
   const filtersInvalid = Boolean(dateRangeError);
   return <><RoleScopeNotice principal={session.principal} pageLabel="Activity" /><section className="panel activity-page">
     <div className="activity-purpose"><div><span className="eyebrow">Operational feed</span><strong>Physical observations from scanners</strong><p>Use Activity to trace where a container was scanned and how the movement unfolded. For administrator changes, sign-ins, device controls, and approvals, use Audit trail.</p></div><button className="secondary" onClick={() => setPage("audit")}><ScrollText size={15} /> Open audit trail</button></div>
     <div className="activity-filter-panel">
-      <div className="activity-filter-panel__header"><div><span className="eyebrow">Filter observations</span><h2>Choose exactly what to review</h2><p>Choose one or more actions, locations, or scanners. Every selection applies immediately; clear a field to return to all results.</p></div><div className="activity-filter-panel__actions"><span className="date-chip">{events.length} shown</span><button className="secondary" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button><span className="filter-live-note">Live filters</span></div></div>
+      <div className="activity-filter-panel__header"><div><span className="eyebrow">Filter observations</span><h2>Choose exactly what to review</h2><p>Choose one or more actions, locations, or scanners. Every selection applies immediately; clear a field to return to all results.</p></div><div className="activity-filter-panel__actions"><span className="date-chip">{events.length} matching</span><button className="secondary" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button><span className="filter-live-note">Live filters</span></div></div>
       <div className="activity-filters activity-filters--expanded">
         <AuditMultiSelect label="Actions" options={actionOptions} selected={eventFilters} onToggle={(value) => setEventFilters((current) => current.includes(value as StoredEvent["eventType"]) ? current.filter((item) => item !== value) : [...current, value as StoredEvent["eventType"]])} onClear={() => setEventFilters([])} emptyLabel="All actions" />
         <AuditMultiSelect label="Locations" options={locationOptions} selected={locationFilters} onToggle={(value) => setLocationFilters((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} onClear={() => setLocationFilters([])} emptyLabel="All locations" />
@@ -4217,7 +4239,7 @@ function ActivityPage({ data, query, openDetail, setPage, session }: { data: Ope
       {(fromDate || toDate || fromTime || toTime) && !filtersInvalid && <p className="activity-filter-help">{fromDate && !toDate ? `From ${fromDate}${fromTime ? ` at ${fromTime}` : ""} through now.` : toDate && !fromDate ? `Through ${toDate}${toTime ? ` at ${toTime}` : ""}.` : fromDate && toDate ? `${fromDate}${fromTime ? ` ${fromTime}` : ""} through ${toDate}${toTime ? ` ${toTime}` : ""}.` : `Daily events between ${fromTime || "00:00"} and ${toTime || "23:59"}${fromMinutes !== null && toMinutes !== null && fromMinutes > toMinutes ? " (overnight)" : ""}.`}</p>}
     </div>
     {searchTerm && <p className="activity-search-summary">Searching event IDs, load codes, goods, containers, scanners, locations, and warning text for <strong>“{query.trim()}”</strong>.</p>}
-     {filtersInvalid ? <EmptyState>Adjust the time range to see scanner observations.</EmptyState> : events.length ? <div className="timeline">{visibleEvents.map((event, index) => {
+    {filtersInvalid ? <EmptyState>Adjust the time range to see scanner observations.</EmptyState> : events.length ? <div className="activity-results"><div className="activity-results-toolbar"><span>Showing {safePageIndex * (pageSize === "all" ? 0 : pageSize) + 1}–{Math.min(events.length, pageSize === "all" ? events.length : (safePageIndex + 1) * pageSize)} of {events.length} observations</span><label><span>Rows</span><select value={pageSize} onChange={(event) => { const next = event.target.value === "all" ? "all" : Number(event.target.value) as ActivityPageSize; setPageSize(next); setPageIndex(0); }} aria-label="Observations per page"><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={200}>200</option><option value="all">All</option></select></label></div><div className="timeline">{visibleEvents.map((event, index) => {
        const container = data.fixtures.containers.find((item) => item.containerId === event.containerId);
        const location = locationName(event.locationId);
        // Relationships are resolved against the complete event history, not the
@@ -4242,8 +4264,7 @@ function ActivityPage({ data, query, openDetail, setPage, session }: { data: Ope
         title: `${container?.label ?? "Unknown container"} · ${eventLabel(event.eventType)}`,
          body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Handoff", routeText ?? "Not a location handoff"], ["Message for operations", eventMessage(event) ?? "No message recorded"], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
          })}><div className={`timeline__rail ${adjacentSameContainer ? "timeline__rail--linked" : ""}`}><span>{index + 1}</span>{adjacentSameContainer && <i aria-hidden="true" />}</div><div className="timeline__card"><div className="timeline__card-heading"><span><span className={`timeline__event-pill timeline__event-pill--${event.eventType}`}>{eventLabel(event.eventType)}</span>{event.accuracyFlags.length > 0 && <span className="timeline__warning">Needs review</span>}{relationship && <span className={`timeline__relationship ${relationshipClass}`}><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"}</h3><p className="timeline__narrative">{eventNarrative(event, data)}</p>{eventMessage(event) && <p className="timeline__message"><MessageSquare size={11} />Message for operations: {eventMessage(event)}</p>}<p className="timeline__meta"><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />Route: {routeText}</span>}<span>received {relativeTime(event.receivedAt)}</span>{event.accuracyFlags.length > 0 && <span>{event.accuracyFlags.length} data-quality warning{event.accuracyFlags.length === 1 ? "" : "s"}</span>}</p></div></article>;
-     })}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
-    {events.length > 100 && <p className="activity-limit-note">Showing the newest 100 matching observations. Use the filters to narrow the feed further.</p>}
+     })}</div>{pageCount > 1 && <div className="activity-pagination"><button type="button" className="secondary" disabled={safePageIndex === 0} title={safePageIndex === 0 ? "Already showing the first page" : "Show older observations"} aria-label={safePageIndex === 0 ? "Previous observations unavailable: first page" : "Show older observations"} onClick={() => setPageIndex((current) => Math.max(0, current - 1))}>Previous</button><strong>Page {safePageIndex + 1} of {pageCount}</strong><button type="button" className="secondary" disabled={safePageIndex >= pageCount - 1} title={safePageIndex >= pageCount - 1 ? "Already showing the last page" : "Show newer observations"} aria-label={safePageIndex >= pageCount - 1 ? "Next observations unavailable: last page" : "Show newer observations"} onClick={() => setPageIndex((current) => Math.min(pageCount - 1, current + 1))}>Next</button></div>}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
   </section></>;
 }
 
