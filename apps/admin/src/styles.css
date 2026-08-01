@@ -762,6 +762,12 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .location-directory-export__actions { display: flex; align-items: center; gap: 7px; flex: none; }
 .location-directory-export .secondary { min-height: 32px; padding: 0 10px; }
 .location-selector__list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; padding: 0 18px 18px; }
+.location-directory-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin: -5px 18px 18px; padding-top: 12px; border-top: 1px solid #e4edf1; color: #71828d; font-size: 9px; }
+.location-directory-pagination > span { margin-right: auto; }
+.location-directory-pagination label { display: inline-flex; align-items: center; gap: 6px; color: #647783; font-weight: 800; }
+.location-directory-pagination select { min-height: 31px; padding: 0 7px; border: 1px solid #c6d2da; border-radius: 4px; color: var(--ink); background: #fff; font: inherit; font-size: 9px; font-weight: 700; }
+.location-directory-pagination button { min-height: 31px; padding: 0 10px; }
+.location-directory-pagination strong { min-width: 74px; color: #526b78; font-size: 9px; text-align: center; }
 .location-selector__list button { min-width: 0; }
 .location-directory-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); background: white; color: #516170; text-align: left; }
 .location-directory-card:hover, .location-directory-card.active { border-color: #95cbe4; background: #eef8fc; color: var(--blue-900); }
@@ -1234,6 +1240,10 @@ footer > span:first-child { display: none; }
   .location-directory-export { align-items: stretch; flex-direction: column; }
   .location-directory-export__actions { align-items: stretch; flex-wrap: wrap; }
   .location-directory-export .secondary { align-self: flex-start; }
+  .location-directory-pagination { align-items: stretch; justify-content: space-between; }
+  .location-directory-pagination > span { width: 100%; margin-right: 0; }
+  .location-directory-pagination label { flex: 1; justify-content: space-between; }
+  .location-directory-pagination button { flex: 1; }
   .location-option__header { flex-direction: column; }
   .location-option__icon { order: -1; }
   .lifecycle-row { grid-template-columns: 1fr auto; gap: 9px; }
