@@ -1572,7 +1572,14 @@ footer > span:first-child { display: none; }
 
 /* Dedicated location workspaces. The network directory remains the corporate
    landing page; this hierarchy gives a manager a calm, local operating view. */
-.location-focused-page { display: grid; gap: 16px; }
+.location-focused-page { display: flex; flex-direction: column; gap: 16px; }
+.location-focused-page > .location-focused-toolbar { order: 1; }
+.location-focused-page > .location-focused-hero { order: 2; }
+.location-focused-page > .location-focused-metrics { order: 3; }
+.location-focused-page > .location-focused-columns { order: 4; }
+.location-focused-page > section.location-focused-section { order: 5; }
+.location-focused-page > .location-focused-health { order: 6; }
+.location-focused-page > .location-inventory { order: 7; }
 .location-inventory { overflow: hidden; }
 .location-inventory__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 17px 20px 14px; border-bottom: 1px solid var(--line); background: #fbfdfe; }
 .location-inventory__header h3 { margin: 3px 0 0; color: var(--ink); font: 800 15px/1.25 Manrope, sans-serif; }
