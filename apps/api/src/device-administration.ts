@@ -1,5 +1,14 @@
 import type { Pool, PoolClient } from "pg";
 
+export const devicePermissionKeys = [
+  "reference_data.read",
+  "observation.create",
+  "load_code.lookup",
+  "telemetry.report"
+] as const;
+
+export type DevicePermissionKey = (typeof devicePermissionKeys)[number];
+
 export interface DeviceControlUpdate {
   readonly label?: string;
   readonly assignedLocationId?: string;
@@ -48,6 +57,30 @@ export interface DeviceAdministration {
     deviceId: string,
     installationId: string
   ): Promise<boolean>;
+  /**
+   * Returns the authoritative operating location for an active installation.
+   * Event ingestion uses this to prevent a scanner from claiming observations
+   * for a different site.  It is optional for lightweight test doubles and
+   * older local adapters; the production Postgres adapter implements it.
+   */
+  assignedLocationId?(
+    tenantId: string,
+    deviceId: string,
+    installationId: string
+  ): Promise<string | null>;
+  /** Returns true only when the active installation's named role grants key. */
+  hasPermission?(
+    tenantId: string,
+    deviceId: string,
+    installationId: string,
+    permissionKey: DevicePermissionKey
+  ): Promise<boolean>;
+  /** Resolve the complete named permission set for the active installation. */
+  permissionKeys?(
+    tenantId: string,
+    deviceId: string,
+    installationId: string
+  ): Promise<readonly DevicePermissionKey[]>;
 }
 
 export class PostgresDeviceAdministration implements DeviceAdministration {
@@ -303,6 +336,87 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
         [tenantId, deviceId, installationId]
       );
       return result.rowCount === 1;
+    });
+  }
+
+  public async assignedLocationId(
+    tenantId: string,
+    deviceId: string,
+    installationId: string
+  ): Promise<string | null> {
+    return this.tenantTransaction(tenantId, async (client) => {
+      const result = await client.query<{ assigned_location_id: string }>(
+        `SELECT d.assigned_location_id
+           FROM devices d
+           JOIN device_installations di
+             ON di.tenant_id = d.tenant_id AND di.device_id = d.device_id
+          WHERE d.tenant_id = $1
+            AND d.device_id = $2
+            AND di.installation_id = $3
+            AND d.is_active
+            AND di.is_active
+          LIMIT 1`,
+        [tenantId, deviceId, installationId]
+      );
+      return result.rows[0]?.assigned_location_id ?? null;
+    });
+  }
+
+  public async hasPermission(
+    tenantId: string,
+    deviceId: string,
+    installationId: string,
+    permissionKey: DevicePermissionKey
+  ): Promise<boolean> {
+    return this.tenantTransaction(tenantId, async (client) => {
+      const result = await client.query(
+        `SELECT 1
+           FROM device_installations di
+           JOIN devices d
+             ON d.tenant_id = di.tenant_id AND d.device_id = di.device_id
+           JOIN device_roles dr
+             ON dr.tenant_id = di.tenant_id AND dr.role_key = di.device_role
+           JOIN device_role_permissions drp
+             ON drp.tenant_id = dr.tenant_id AND drp.role_key = dr.role_key
+          WHERE di.tenant_id = $1
+            AND di.device_id = $2
+            AND di.installation_id = $3
+            AND di.is_active
+            AND d.is_active
+            AND dr.is_active
+            AND drp.permission_key = $4
+          LIMIT 1`,
+        [tenantId, deviceId, installationId, permissionKey]
+      );
+      return result.rowCount === 1;
+    });
+  }
+
+  public async permissionKeys(
+    tenantId: string,
+    deviceId: string,
+    installationId: string
+  ): Promise<readonly DevicePermissionKey[]> {
+    return this.tenantTransaction(tenantId, async (client) => {
+      const result = await client.query<{ permission_key: DevicePermissionKey }>(
+        `SELECT drp.permission_key
+           FROM device_installations di
+           JOIN devices d
+             ON d.tenant_id = di.tenant_id AND d.device_id = di.device_id
+           JOIN device_roles dr
+             ON dr.tenant_id = di.tenant_id AND dr.role_key = di.device_role
+           JOIN device_role_permissions drp
+             ON drp.tenant_id = dr.tenant_id AND drp.role_key = dr.role_key
+          WHERE di.tenant_id = $1
+            AND di.device_id = $2
+            AND di.installation_id = $3
+            AND di.is_active
+            AND d.is_active
+            AND dr.is_active
+          ORDER BY drp.permission_key` ,
+        [tenantId, deviceId, installationId]
+      );
+      return result.rows.map((row) => row.permission_key);
     });
   }
 }

@@ -214,6 +214,35 @@ export class PostgresEventLedger implements EventLedger {
         ]
       );
 
+      if (event.eventType === "emptied") {
+        const priorEvents = existingEvents.filter(
+          (candidate) => candidate.containerId === event.containerId
+        );
+        const priorProjection = projectContainer(priorEvents);
+        const processedPercentage =
+          typeof event.payload.processedPercentage === "number" &&
+          Number.isInteger(event.payload.processedPercentage)
+            ? event.payload.processedPercentage
+            : 100;
+        await client.query(
+          `INSERT INTO processed_loads (
+             tenant_id, container_id, load_code_id, location_id, event_id,
+             device_id, processed_percentage, processed_at
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (tenant_id, event_id) DO NOTHING`,
+          [
+            event.tenantId,
+            event.containerId,
+            priorProjection?.activeLoadCodeId ?? null,
+            event.locationId,
+            event.eventId,
+            event.deviceId,
+            processedPercentage,
+            event.effectiveAt
+          ]
+        );
+      }
+
       if (result.status === "accepted_for_review") {
         const evidenceFingerprint = createHash("sha256")
           .update(`${event.containerId}:${event.eventId}:${event.accuracyFlags.join(",")}`)

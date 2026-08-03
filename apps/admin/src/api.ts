@@ -1,6 +1,12 @@
 export const API_URL =
   import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:3000";
 
+// The deployment workflow injects the commit SHA so a reviewer can verify
+// which build is actually being served by GitHub Pages.  Keeping the fallback
+// deterministic makes local development equally clear.
+export const BUILD_ID = import.meta.env.VITE_BUILD_ID ?? "local";
+export const BUILD_TIME = import.meta.env.VITE_BUILD_TIME ?? "";
+
 export const TENANT_ID = "10000000-0000-4000-8000-000000000001";
 
 export class ApiRequestError extends Error {
@@ -72,8 +78,21 @@ export interface DeviceAssignment {
 
 export type AdminRole = "organization_owner" | "operations_administrator" | "location_manager" | "read_only_reviewer" | "support";
 export type ManagedAdminRole = Exclude<AdminRole, "support">;
-export interface AdminPrincipal { tenantId: string; userId: string; username: string; displayName: string; role: AdminRole; locationIds?: string[]; supportExpiresAt: string | null; isActive: boolean; mustChangePassword: boolean; }
-export interface AdminSession { token: string; principal: AdminPrincipal; expiresAt: string; }
+export interface AdminPrincipal {
+  tenantId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  role: AdminRole;
+  locationIds?: string[];
+  supportExpiresAt: string | null;
+  isActive: boolean;
+  mustChangePassword: boolean;
+  rolePreview?: AdminRolePreview;
+}
+export interface AdminRolePreview { sourceRole: AdminRole; previewRole: AdminRole; locationIds: string[]; expiresAt: string; }
+export interface AdminSession { token: string; principal: AdminPrincipal; expiresAt: string; rolePreviewToken?: string; rolePreview?: AdminRolePreview; }
+export interface AdminRolePreviewSession { previewToken: string; principal: AdminPrincipal; expiresAt: string; preview: AdminRolePreview; }
 export interface AuditEntry { auditId: string; occurredAt: string; actorType: "user" | "device" | "system"; actorDisplayName: string; actorUsername?: string | null; action: string; targetType: string; targetId: string | null; targetLabel?: string | null; locationId?: string | null; locationName?: string | null; details: Record<string, unknown>; }
 export interface AuditPage { items: AuditEntry[]; total: number; limit: number; offset: number; }
 export interface AuditSearchFilters { search?: string; locationId?: string; deviceId?: string; selectedLocationIds?: string[]; selectedDeviceIds?: string[]; actorUserId?: string; actionPrefixes?: string[]; targetTypes?: string[]; actionPrefix?: string; targetType?: string; from?: string; to?: string; limit?: number; offset?: number; }
@@ -155,7 +174,12 @@ const readRetryDelaysMs = [750, 2_000, 5_000];
 const retryableReadStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function adminHeaders(session?: AdminSession | null) {
-  return session ? { authorization: `Bearer ${session.token}` } : {};
+  return session
+    ? {
+        authorization: `Bearer ${session.token}`,
+        ...(session.rolePreviewToken ? { "x-stacktrack-role-preview": session.rolePreviewToken } : {})
+      }
+    : {};
 }
 
 async function readWithRetry(path: string, session: AdminSession): Promise<Response> {
@@ -268,6 +292,23 @@ export async function signIn(username: string, password: string): Promise<AdminS
   return response.json() as Promise<AdminSession>;
 }
 
+export async function startRolePreview(
+  session: AdminSession,
+  role: AdminRole,
+  locationIds: string[] = []
+): Promise<AdminRolePreviewSession> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/role-preview`, {
+    method: "POST",
+    headers: { ...headers, ...adminHeaders(session), "content-type": "application/json", "cache-control": "no-cache" },
+    body: JSON.stringify({ role, locationIds })
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new ApiRequestError(response.status, "/api/v1/local/admin/role-preview", detail?.message ?? "The role preview could not be started.");
+  }
+  return response.json() as Promise<AdminRolePreviewSession>;
+}
+
 export async function requestAccessHelp(username: string, message: string): Promise<void> {
   const response = await fetch(`${API_URL}/api/v1/local/admin/access-issues`, {
     method: "POST",
@@ -352,6 +393,19 @@ export async function createAdminUser(session: AdminSession, input: { username: 
 export async function updateAdminUser(session: AdminSession, userId: string, update: { displayName?: string; role?: ManagedAdminRole; isActive?: boolean; locationIds?: string[] }): Promise<AdminPrincipal> {
   const response = await patchJson<{ user: AdminPrincipal }>(`/api/v1/local/admin/users/${userId}`, update, session);
   return response.user;
+}
+
+export async function removeAdminUser(session: AdminSession, userId: string, confirmation: string): Promise<{ userId: string; username: string; displayName: string; role: AdminRole }> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/users/${userId}`, {
+    method: "DELETE",
+    headers: { ...adminHeaders(session), "content-type": "application/json" },
+    body: JSON.stringify({ confirmation })
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? "Could not permanently remove the administrator.");
+  }
+  return ((await response.json()) as { removed: { userId: string; username: string; displayName: string; role: AdminRole } }).removed;
 }
 
 export async function resetAdminPassword(session: AdminSession, userId: string, temporaryPassword: string, reason = "Owner initiated password reset"): Promise<AdminPrincipal> {

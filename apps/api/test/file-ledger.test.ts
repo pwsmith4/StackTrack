@@ -18,7 +18,8 @@ function localEvent() {
     loadCodeId: "50000000-0000-4000-8000-000000000001",
     locationId: "20000000-0000-4000-8000-000000000002",
     eventType: "load_assigned",
-    eventAt: "2026-07-22T12:00:00.000Z"
+    eventAt: "2026-07-22T12:00:00.000Z",
+    payload: { goodsType: "Soft", secondaryValue: "Raw" }
   };
 }
 
@@ -64,4 +65,3 @@ describe("LocalFileEventLedger", () => {
     expect(new LocalFileEventLedger(path).eventsForTenant(tenantId)).toHaveLength(0);
   });
 });
-

@@ -15,6 +15,7 @@ function loadAssigned(
   eventId = "77777777-7777-4777-8777-777777777777",
   overrides: Record<string, unknown> = {}
 ) {
+  const { payload: overridePayload, ...otherOverrides } = overrides;
   return {
     eventId,
     deviceInstallationId: installationId,
@@ -24,8 +25,13 @@ function loadAssigned(
     locationId,
     eventType: "load_assigned",
     eventAt: "2026-07-22T12:00:00.000Z",
-    payload: { note: "baseline" },
-    ...overrides
+    payload: {
+      goodsType: "Soft",
+      secondaryValue: "Raw",
+      note: "baseline",
+      ...(overridePayload && typeof overridePayload === "object" ? overridePayload : {})
+    },
+    ...otherOverrides
   };
 }
 
@@ -44,6 +50,19 @@ describe("InMemoryEventLedger", () => {
     expect(first.status).toBe("accepted");
     expect(duplicate.status).toBe("duplicate");
     expect(ledger.eventsForContainer(tenantId, containerId)).toHaveLength(1);
+  });
+
+  it("rejects an incomplete load-code classification", () => {
+    const ledger = new InMemoryEventLedger();
+    const result = ledger.submit(
+      loadAssigned(undefined, { payload: { goodsType: "Soft", secondaryValue: "" } }),
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:00:01.000Z")
+    );
+
+    expect(result.accepted).toBe(false);
+    expect(result.errorCode).toBe("InvalidPayload");
+    expect(result.message).toContain("secondaryValue");
   });
 
   it("rejects reuse of an event UUID with changed evidence", () => {
@@ -217,5 +236,27 @@ describe("InMemoryEventLedger", () => {
 
     expect(result.warnings).not.toContain("ClockSkewWarning");
     expect(result.status).toBe("accepted");
+  });
+
+  it("validates the processed percentage on an empty-container observation", () => {
+    const ledger = new InMemoryEventLedger();
+    const result = ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777782",
+        deviceInstallationId: installationId,
+        deviceSequence: 1,
+        containerId,
+        locationId,
+        eventType: "emptied",
+        eventAt: "2026-07-22T12:06:00.000Z",
+        payload: { processedPercentage: 125 }
+      },
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:06:01.000Z")
+    );
+
+    expect(result.accepted).toBe(false);
+    expect(result.errorCode).toBe("InvalidPayload");
+    expect(result.message).toContain("processedPercentage");
   });
 });

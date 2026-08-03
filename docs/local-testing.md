@@ -55,7 +55,7 @@ To test offline capture, open **Settings** in the mobile preview, enable **Simul
 
 ## What can be tested now
 
-- Four core observations: mark full, send out, receive, and mark empty
+- Four core observations: generate a load code, record a departure, record an arrival, and mark a container empty
 - 120 seeded reusable-container labels across bin, cart, and gaylord types
 - Eight simulated locations and seven location-locked shared scanners
 - Shared physical-device identities locked to a location
@@ -90,9 +90,9 @@ The default services bind only to this computer. Before field-device testing, th
 | Production dependency | Local substitute |
 |---|---|
 | Azure Database for PostgreSQL | Local PostgreSQL 16 using the same schema and restricted application role |
-| Device authentication | Fixed local tenant/device identities |
+| Device authentication | Fixed local tenant/device identities and named device permission keys |
 | Entra administrator login | Prototype corporate-administrator profile |
-| Unitech scanner SDK / camera | Typed label entry and keyboard-wedge-compatible input |
+| Unitech scanner SDK / camera | Typed label entry plus explicit keyboard-wedge and Unitech-intent adapter seams |
 | Production-system integration | Local load-code generation and validated admin list |
 | Microsoft Fabric / data lake | Reports and integration placeholders |
 | Enterprise reference data | PostgreSQL-seeded locations, devices, containers, and goods types |
@@ -101,7 +101,7 @@ The event contracts, ordering evidence, conflict rules, offline queue, and proje
 
 ## Remaining pilot boundaries
 
-- Camera-based QR recognition and physical Unitech hardware integration
+- Camera-based QR recognition, exact Unitech model intent action, and physical hardware validation
 - Entra login and employee session identity (the isolated pilot uses a
   server-issued password session)
 - Push notifications and escalation reminders for pending approvals
@@ -109,6 +109,9 @@ The event contracts, ordering evidence, conflict rules, offline queue, and proje
 - Printing labels or load codes
 - Enterprise mobile provisioning and multi-store rollout tooling
 
-PostgreSQL is the runtime source of truth for the local and Azure test APIs.
+On native Android, the offline event queue is encrypted in Expo SecureStore
+(chunked to stay below platform value limits); the browser preview keeps the
+queue in AsyncStorage because browser SecureStore is not available. PostgreSQL
+is the runtime source of truth for the local and Azure test APIs.
 Remote scanner assignment/availability, review decisions, administrator access,
 and governed correction approval are implemented in the pilot.

@@ -1,4 +1,4 @@
-import { createHash, pbkdf2 as pbkdf2Callback, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, pbkdf2 as pbkdf2Callback, randomBytes, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import type { Pool, PoolClient } from "pg";
 
@@ -20,6 +20,8 @@ export interface AdminPrincipal {
   readonly supportExpiresAt: string | null;
   readonly isActive: boolean;
   readonly mustChangePassword: boolean;
+  /** Present only while a higher-level administrator is safely previewing a lower role. */
+  readonly rolePreview?: AdminRolePreview;
 }
 
 export interface AdminSession {
@@ -41,6 +43,75 @@ export interface AdminUserUpdate {
   readonly role?: ManagedAdminRole;
   readonly isActive?: boolean;
   readonly locationIds?: readonly string[];
+}
+
+export interface AdminRolePreview {
+  readonly sourceRole: AdminRole;
+  readonly previewRole: AdminRole;
+  readonly locationIds: readonly string[];
+  readonly expiresAt: string;
+}
+
+export interface AdminRolePreviewSession {
+  readonly previewToken: string;
+  readonly principal: AdminPrincipal;
+  readonly expiresAt: string;
+  readonly preview: AdminRolePreview;
+}
+
+const rolePreviewLifetimeMs = 1000 * 60 * 30;
+const rolePreviewRoles: readonly AdminRole[] = [
+  "organization_owner",
+  "operations_administrator",
+  "location_manager",
+  "read_only_reviewer"
+];
+
+function rolePreviewRank(role: AdminRole): number {
+  return {
+    organization_owner: 4,
+    operations_administrator: 3,
+    location_manager: 2,
+    read_only_reviewer: 1,
+    support: 0
+  }[role];
+}
+
+function previewTokenPart(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function createPreviewSignature(payload: string, sessionToken: string): string {
+  return createHmac("sha256", sessionToken).update(`${payload}.${sessionToken.length}`).digest("base64url");
+}
+
+function createPreviewToken(payload: Record<string, unknown>, sessionToken: string): string {
+  const encoded = previewTokenPart(JSON.stringify(payload));
+  return `${encoded}.${createPreviewSignature(encoded, sessionToken)}`;
+}
+
+function readPreviewToken(token: string, sessionToken: string): Record<string, unknown> | null {
+  const [encoded, signature] = token.split(".");
+  if (!encoded || !signature) return null;
+  const expected = createPreviewSignature(encoded, sessionToken);
+  const actualBytes = Buffer.from(signature, "base64url");
+  const expectedBytes = Buffer.from(expected, "base64url");
+  if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface AdminUserRemoval {
+  readonly userId: string;
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: AdminRole;
 }
 
 export interface AuditEntry {
@@ -246,6 +317,132 @@ export class PostgresAdminAccess {
       await client.query(`UPDATE admin_sessions SET last_seen_at=clock_timestamp() WHERE tenant_id=$1 AND token_sha256=$2`, [this.tenantId, tokenHash]);
       return rowPrincipal(found.rows[0]);
     });
+  }
+
+  /**
+   * Create a short-lived, read-only capability for inspecting a lower role.
+   * The capability is signed with the already-authenticated session token, so
+   * it is useless without that session and does not require a new database
+   * table or a second password. The effective principal is still resolved by
+   * the API on every request; the browser cannot grant itself access.
+   */
+  public async startRolePreview(
+    actor: AdminPrincipal,
+    sessionToken: string,
+    previewRoleInput: string,
+    requestedLocationIds: readonly string[] | undefined
+  ): Promise<AdminRolePreviewSession> {
+    if (!rolePreviewRoles.includes(previewRoleInput as AdminRole)) {
+      throw new Error("Choose a valid lower administrator role to preview.");
+    }
+    const previewRole = previewRoleInput as AdminRole;
+    if (rolePreviewRank(actor.role) <= rolePreviewRank(previewRole)) {
+      throw new Error("You can only preview a lower permission level.");
+    }
+    if (actor.role === "support" || previewRole === "organization_owner" || previewRole === "support") {
+      throw new Error("This administrator level cannot be previewed.");
+    }
+    let locationIds = normalizeLocationIds(requestedLocationIds);
+    // A scoped Location Manager may preview a read-only screen only within the
+    // same assigned sites. Never let a lower-role preview become an accidental
+    // network-wide access expansion.
+    if (actor.role === "location_manager") {
+      const actorLocationIds = normalizeLocationIds(actor.locationIds);
+      if (!actorLocationIds.length) throw new Error("This Location Manager has no assigned locations to preview.");
+      if (locationIds.length === 0) locationIds = actorLocationIds;
+      if (locationIds.some((locationId) => !actorLocationIds.includes(locationId))) {
+        throw new Error("A role preview cannot include locations outside your assigned scope.");
+      }
+    }
+    if (previewRole === "location_manager" && locationIds.length === 0) {
+      throw new Error("Choose at least one location for a Location Manager preview.");
+    }
+    if (locationIds.length > 0) {
+      await this.transaction(async (client) => {
+        const locations = await client.query(
+          `SELECT location_id
+             FROM locations
+            WHERE tenant_id=$1 AND is_active
+              AND lower(location_name) NOT IN ('unknown location', 'in transit')
+              AND location_id = ANY($2::uuid[])`,
+          [this.tenantId, locationIds]
+        );
+        if (locations.rows.length !== locationIds.length) {
+          throw new Error("Every preview location must be an active operating location.");
+        }
+        return undefined;
+      });
+    }
+    const expiresAt = new Date(Date.now() + rolePreviewLifetimeMs).toISOString();
+    const preview: AdminRolePreview = {
+      sourceRole: actor.role,
+      previewRole,
+      locationIds,
+      expiresAt
+    };
+    const payload = {
+      version: 1,
+      tenantId: this.tenantId,
+      actorUserId: actor.userId,
+      sourceRole: actor.role,
+      previewRole,
+      locationIds,
+      expiresAt,
+      nonce: randomBytes(12).toString("base64url")
+    };
+    const previewToken = createPreviewToken(payload, sessionToken);
+    await this.transaction(async (client) => {
+      await this.audit(client, actor, "admin.role_preview_started", actor.userId, {
+        sourceRole: actor.role,
+        previewRole,
+        locationIds,
+        expiresAt
+      });
+    });
+    return {
+      previewToken,
+      expiresAt,
+      preview,
+      principal: {
+        ...actor,
+        role: previewRole,
+        ...(locationIds.length > 0 ? { locationIds } : { locationIds: [] }),
+        rolePreview: preview
+      }
+    };
+  }
+
+  /** Resolve and validate a role-preview capability against its real session. */
+  public async resolveRolePreview(
+    actor: AdminPrincipal,
+    sessionToken: string,
+    previewToken: string
+  ): Promise<AdminPrincipal | null> {
+    const payload = readPreviewToken(previewToken, sessionToken);
+    if (!payload) return null;
+    const expiresAt = typeof payload.expiresAt === "string" ? payload.expiresAt : "";
+    const previewRole = typeof payload.previewRole === "string" ? payload.previewRole as AdminRole : null;
+    const sourceRole = typeof payload.sourceRole === "string" ? payload.sourceRole as AdminRole : null;
+    const actorUserId = typeof payload.actorUserId === "string" ? payload.actorUserId : null;
+    const tenantId = typeof payload.tenantId === "string" ? payload.tenantId : null;
+    const locationIds = Array.isArray(payload.locationIds) ? payload.locationIds.map(String) : [];
+    if (!previewRole || !sourceRole || !rolePreviewRoles.includes(previewRole) || !rolePreviewRoles.includes(sourceRole)) return null;
+    if (tenantId !== this.tenantId || actorUserId !== actor.userId || sourceRole !== actor.role) return null;
+    if (rolePreviewRank(actor.role) <= rolePreviewRank(previewRole)) return null;
+    if (!expiresAt || Date.parse(expiresAt) <= Date.now()) return null;
+    try { normalizeLocationIds(locationIds); } catch { return null; }
+    if (actor.role === "location_manager") {
+      const actorLocationIds = actor.locationIds ?? [];
+      if (!actorLocationIds.length || locationIds.some((locationId) => !actorLocationIds.includes(locationId))) return null;
+    }
+    if (previewRole === "location_manager" && locationIds.length === 0) return null;
+    const preview: AdminRolePreview = { sourceRole, previewRole, locationIds, expiresAt };
+    return {
+      ...actor,
+      role: previewRole,
+      locationIds,
+      rolePreview: preview
+    };
   }
 
   public async revokeSession(actor: AdminPrincipal, token: string): Promise<void> {
@@ -556,6 +753,60 @@ export class PostgresAdminAccess {
         sessionsRevoked: !isActive || role !== existing.role
       });
       return user;
+    });
+  }
+
+  /** Permanently remove an administrator profile while retaining the audit trail. */
+  public async removeUser(actor: AdminPrincipal, userId: string, confirmation: string): Promise<AdminUserRemoval> {
+    if (actor.role !== "organization_owner") {
+      throw new Error("Only Organization Owners can permanently remove administrator accounts.");
+    }
+    return this.transaction(async (client) => {
+      const found = await client.query(
+        `SELECT u.tenant_id,u.user_id,u.username,u.display_name,u.role,u.support_expires_at,u.is_active,u.must_change_password,
+                (SELECT COALESCE(array_agg(scope.location_id::text ORDER BY scope.location_id), ARRAY[]::text[])
+                   FROM admin_user_locations scope
+                  WHERE scope.tenant_id = u.tenant_id AND scope.user_id = u.user_id) AS location_ids
+           FROM admin_users u
+          WHERE u.tenant_id=$1 AND u.user_id=$2
+          FOR UPDATE`,
+        [this.tenantId, userId]
+      );
+      const target = found.rows[0] as AdminRow | undefined;
+      if (!target) throw new Error("Administrator account was not found. It may already have been removed.");
+      const existing = rowPrincipal(target);
+      if (existing.userId === actor.userId) {
+        throw new Error("Use another Organization Owner to remove your account.");
+      }
+      if (confirmation.trim().toLowerCase() !== existing.username) {
+        throw new Error(`Type ${existing.username} exactly to confirm permanent removal.`);
+      }
+      if (existing.role === "organization_owner") {
+        const count = await client.query(
+          `SELECT count(*)::int AS count
+             FROM admin_users
+            WHERE tenant_id=$1 AND role='organization_owner' AND is_active AND user_id <> $2`,
+          [this.tenantId, existing.userId]
+        );
+        if (Number(count.rows[0]?.count ?? 0) < 1) {
+          throw new Error("StackTrack must retain at least one active Organization Owner.");
+        }
+      }
+
+      // Revoke dependent sessions and detach historical assignment ownership
+      // before deleting the profile. Audit records remain append-only.
+      await client.query(`DELETE FROM admin_sessions WHERE tenant_id=$1 AND user_id=$2`, [this.tenantId, existing.userId]);
+      await client.query(`UPDATE admin_user_locations SET assigned_by=NULL WHERE tenant_id=$1 AND assigned_by=$2`, [this.tenantId, existing.userId]);
+      await client.query(`DELETE FROM admin_user_locations WHERE tenant_id=$1 AND user_id=$2`, [this.tenantId, existing.userId]);
+      await this.audit(client, actor, "admin.user_removed", existing.userId, {
+        removedUsername: existing.username,
+        removedDisplayName: existing.displayName,
+        removedRole: existing.role,
+        removedLocationIds: existing.locationIds ?? [],
+        sessionsRevoked: true
+      });
+      await client.query(`DELETE FROM admin_users WHERE tenant_id=$1 AND user_id=$2`, [this.tenantId, existing.userId]);
+      return { userId: existing.userId, username: existing.username, displayName: existing.displayName, role: existing.role };
     });
   }
 

@@ -29,6 +29,9 @@
     "web": {
       "bundler": "metro",
       "name": "StackTrack Mobile"
-    }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
   }
 }

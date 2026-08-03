@@ -9,7 +9,7 @@ import {
   type StoredEvent
 } from "@stacktrack/domain";
 import { localFixtures, type LocalFixtures } from "./local-fixtures.js";
-import type { DeviceAdministration, DeviceControlUpdate, DeviceTelemetryUpdate } from "./device-administration.js";
+import type { DeviceAdministration, DeviceControlUpdate, DevicePermissionKey, DeviceTelemetryUpdate } from "./device-administration.js";
 import type { AdminPrincipal, AdminUserUpdate, AuditFilters, NewAdminUser, PostgresAdminAccess } from "./admin-access.js";
 import type { PostgresReviewAdministration, ReviewAction } from "./review-administration.js";
 import type {
@@ -23,6 +23,11 @@ import type {
   NewLocation,
   RetireLocationInput
 } from "./location-administration.js";
+import type {
+  IdentityProvider,
+  NotificationProvider,
+  ReportingExporter
+} from "./integration-ports.js";
 
 export interface AppDependencies {
   readonly ledger?: EventLedger;
@@ -36,6 +41,18 @@ export interface AppDependencies {
   readonly adminAccess?: PostgresAdminAccess;
   readonly reviewAdministration?: PostgresReviewAdministration;
   readonly correctionAdministration?: CorrectionAdministration;
+  /** Optional production identity adapter; the pilot uses adminAccess. */
+  readonly identityProvider?: IdentityProvider;
+  /** Optional delivery adapter for future approval/escalation notifications. */
+  readonly notificationProvider?: NotificationProvider;
+  /** Optional managed export adapter; browser CSV remains the pilot fallback. */
+  readonly reportingExporter?: ReportingExporter;
+  /**
+   * Require the named device-role permission adapter for scanner traffic.
+   * Lightweight in-memory test doubles may leave this false, but the cloud
+   * server enables it so a missing permission configuration fails closed.
+   */
+  readonly strictDevicePermissions?: boolean;
 }
 
 interface ResettableLedger extends EventLedger {
@@ -102,6 +119,11 @@ function readBearerToken(request: FastifyRequest): string | null {
 function publicEvent(event: StoredEvent) {
   const { canonicalPayload: _canonicalPayload, ...result } = event;
   return result;
+}
+
+function readRolePreviewToken(request: FastifyRequest): string | null {
+  const value = firstHeader(request.headers["x-stacktrack-role-preview"]);
+  return value && value.length >= 32 ? value : null;
 }
 
 function isLocationManager(principal: AdminPrincipal): boolean {
@@ -178,6 +200,10 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
   const ledger = dependencies.ledger ?? new InMemoryEventLedger();
   const now = dependencies.now ?? (() => new Date());
   const localMode = dependencies.localMode ?? false;
+  // The password bridge is pilot-only. Once a production IdentityProvider is
+  // supplied, the same governed administrator routes are available to it, but
+  // the local username/password session endpoints remain disabled.
+  const adminRoutesEnabled = localMode || Boolean(dependencies.identityProvider);
   const browserOrigins = (process.env.STACKTRACK_ALLOWED_ORIGINS ?? [
     "https://pwsmith4.github.io",
     "http://127.0.0.1:5173",
@@ -202,17 +228,40 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
   const requireAdmin = async (
     request: FastifyRequest,
     reply: FastifyReply,
-    options: { allowPendingPasswordChange?: boolean } = {}
+    options: { allowPendingPasswordChange?: boolean; allowPreviewWrite?: boolean } = {}
   ): Promise<AdminPrincipal | null> => {
-    if (!dependencies.adminAccess) {
+    if (!dependencies.adminAccess && !dependencies.identityProvider) {
       reply.code(503).send({ error: "AdminAccessUnavailable", message: "Administrative sign-in has not been provisioned." });
       return null;
     }
     const token = readBearerToken(request);
-    const principal = token ? await dependencies.adminAccess.authenticate(token) : null;
+    let principal = token
+      ? dependencies.identityProvider
+        ? await dependencies.identityProvider.authenticateAccessToken(token)
+        : dependencies.adminAccess
+          ? await dependencies.adminAccess.authenticate(token)
+          : null
+      : null;
     if (!principal) {
       reply.code(401).send({ error: "AdminAuthenticationRequired", message: "Sign in is required for this administrative action." });
       return null;
+    }
+    const previewToken = readRolePreviewToken(request);
+    if (previewToken) {
+      if (!token || !dependencies.adminAccess?.resolveRolePreview) {
+        reply.code(401).send({ error: "RolePreviewExpired", message: "This role preview is no longer available. Return to your normal view and start it again." });
+        return null;
+      }
+      const previewPrincipal = await dependencies.adminAccess.resolveRolePreview(principal, token, previewToken);
+      if (!previewPrincipal) {
+        reply.code(401).send({ error: "RolePreviewExpired", message: "This role preview is no longer available. Return to your normal view and start it again." });
+        return null;
+      }
+      principal = previewPrincipal;
+      if (!options.allowPreviewWrite && !["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase())) {
+        reply.code(403).send({ error: "RolePreviewReadOnly", message: "Role previews are read-only. Return to your normal view before making a change." });
+        return null;
+      }
     }
     if (principal.mustChangePassword && !options.allowPendingPasswordChange) {
       reply.code(409).send({
@@ -224,53 +273,206 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
     return principal;
   };
 
+  type PreparedScannerSubmission =
+    | { ok: true; input: unknown }
+    | { ok: false; statusCode: 401 | 403 | 503; error: string; message: string };
+
+  const strictDevicePermissions = dependencies.strictDevicePermissions === true;
+
+  // Device assignment is the server-side authority for scanner-originated
+  // observations. Keep this normalization in one place so single scans and
+  // batch uploads enforce exactly the same rules.
+  const prepareScannerSubmission = async (
+    context: RequestContext,
+    input: unknown
+  ): Promise<PreparedScannerSubmission> => {
+    if (!dependencies.deviceAdministration || !input || typeof input !== "object") {
+      return { ok: true, input };
+    }
+
+    const body = input as Record<string, unknown>;
+    const installationId = typeof body.deviceInstallationId === "string"
+      ? body.deviceInstallationId
+      : undefined;
+    if (!installationId) {
+      if (strictDevicePermissions) {
+        return {
+          ok: false,
+          statusCode: 401,
+          error: "DeviceInstallationRequired",
+          message: "An active scanner installation is required to record observations."
+        };
+      }
+      return { ok: true, input };
+    }
+
+    if (!dependencies.deviceAdministration.hasPermission) {
+      if (strictDevicePermissions) {
+        return {
+          ok: false,
+          statusCode: 503,
+          error: "DevicePermissionConfigurationMissing",
+          message: "Named scanner permissions are not configured. Ask an administrator to review the device role."
+        };
+      }
+    } else {
+      const allowed = await dependencies.deviceAdministration.hasPermission(
+        context.tenantId,
+        context.deviceId,
+        installationId,
+        "observation.create"
+      );
+      if (!allowed) {
+        return {
+          ok: false,
+          statusCode: 403,
+          error: "DevicePermissionDenied",
+          message: "This scanner is not permitted to record observations. Ask an administrator to review its device role."
+        };
+      }
+    }
+
+    const scannerEnabled = await dependencies.deviceAdministration.isScannerEnabled(
+      context.tenantId,
+      context.deviceId,
+      installationId
+    );
+    if (!scannerEnabled) {
+      return {
+        ok: false,
+        statusCode: 403,
+        error: "ScannerDisabled",
+        message: "This scanner is disabled or no longer assigned to an active installation."
+      };
+    }
+
+    if (!dependencies.deviceAdministration.assignedLocationId) {
+      return { ok: true, input };
+    }
+
+    const assignedLocationId = await dependencies.deviceAdministration.assignedLocationId(
+      context.tenantId,
+      context.deviceId,
+      installationId
+    );
+    if (!assignedLocationId) {
+      return {
+        ok: false,
+        statusCode: 403,
+        error: "ScannerAssignmentUnavailable",
+        message: "This scanner has no active operating-location assignment."
+      };
+    }
+
+    // A departure records only the location left; the receiving site is not
+    // known until a later arrival scan. The server supplies the departure
+    // origin from the device assignment and rejects spoofed origins.
+    const payload = body.payload && typeof body.payload === "object"
+      ? { ...(body.payload as Record<string, unknown>) }
+      : {};
+    if (body.eventType === "batch_out") {
+      if (payload.sourceLocationId !== undefined && payload.sourceLocationId !== assignedLocationId) {
+        return {
+          ok: false,
+          statusCode: 403,
+          error: "ScannerLocationMismatch",
+          message: "A departure must use the scanner's assigned operating location as its origin."
+        };
+      }
+      payload.sourceLocationId = assignedLocationId;
+    } else if (body.locationId !== assignedLocationId) {
+      return {
+        ok: false,
+        statusCode: 403,
+        error: "ScannerLocationMismatch",
+        message: "This scanner can only record an observation at its assigned operating location."
+      };
+    }
+
+    return { ok: true, input: { ...body, payload } };
+  };
+
   app.addHook("onSend", async (request, reply, payload) => {
-    if (localMode) {
+    if (adminRoutesEnabled) {
       const origin = firstHeader(request.headers.origin);
       if (origin && browserOrigins.includes(origin)) {
         reply.header("access-control-allow-origin", origin);
         reply.header("vary", "Origin");
         reply.header(
           "access-control-allow-headers",
-          "authorization,content-type,cache-control,x-stacktrack-tenant-id,x-stacktrack-device-id"
+          "authorization,content-type,cache-control,x-stacktrack-tenant-id,x-stacktrack-device-id,x-stacktrack-device-installation-id,x-stacktrack-role-preview"
         );
-        reply.header("access-control-allow-methods", "GET,POST,PATCH,OPTIONS");
+        reply.header("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
       }
     }
     return payload;
   });
 
-  if (localMode) {
-    app.post<{ Body: { username?: string; password?: string } }>("/api/v1/local/admin/session", {
-      config: { rateLimit: { max: 5, timeWindow: "15 minutes" } }
-    }, async (request, reply) => {
-      if (!dependencies.adminAccess || typeof request.body?.username !== "string" || typeof request.body?.password !== "string") {
-        return reply.code(400).send({ error: "InvalidSignIn" });
-      }
-      const session = await dependencies.adminAccess.signIn(request.body.username, request.body.password);
-      if (!session) return reply.code(401).send({ error: "InvalidCredentials", message: "The username or password is not valid." });
-      return reply.send(session);
-    });
+  if (adminRoutesEnabled) {
+    // Password recovery is intentionally available only to the isolated pilot
+    // bridge. Production identity providers own sign-in, MFA, and recovery.
+    if (localMode) {
+      app.post<{ Body: { username?: string; password?: string } }>("/api/v1/local/admin/session", {
+        config: { rateLimit: { max: 5, timeWindow: "15 minutes" } }
+      }, async (request, reply) => {
+        if (!dependencies.adminAccess || typeof request.body?.username !== "string" || typeof request.body?.password !== "string") {
+          return reply.code(400).send({ error: "InvalidSignIn" });
+        }
+        const session = await dependencies.adminAccess.signIn(request.body.username, request.body.password);
+        if (!session) return reply.code(401).send({ error: "InvalidCredentials", message: "The username or password is not valid." });
+        return reply.send(session);
+      });
 
-    app.post<{ Body: { username?: unknown; message?: unknown } }>("/api/v1/local/admin/access-issues", {
-      config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }
+      app.post<{ Body: { username?: unknown; message?: unknown } }>("/api/v1/local/admin/access-issues", {
+        config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }
+      }, async (request, reply) => {
+        const body = request.body ?? {};
+        if (!dependencies.adminAccess) {
+          return reply.code(503).send({ error: "AdminAccessUnavailable", message: "Sign-in help is not available right now." });
+        }
+        if ((body.username !== undefined && typeof body.username !== "string") ||
+          typeof body.message !== "string") {
+          return reply.code(400).send({ error: "InvalidAccessHelpRequest", message: "Add a short description of the sign-in problem." });
+        }
+        try {
+          const result = await dependencies.adminAccess.requestAccessHelp(
+            typeof body.username === "string" ? body.username : undefined,
+            body.message
+          );
+          return reply.code(202).send({ accepted: true, requestId: result.requestId });
+        } catch (error) {
+          return reply.code(400).send({ error: "AccessHelpRequestRejected", message: error instanceof Error ? error.message : "The request could not be recorded." });
+        }
+      });
+    }
+
+    app.post<{ Body: { role?: unknown; locationIds?: unknown } }>("/api/v1/local/admin/role-preview", {
+      config: { rateLimit: { max: 20, timeWindow: "15 minutes" } }
     }, async (request, reply) => {
-      const body = request.body ?? {};
-      if (!dependencies.adminAccess) {
-        return reply.code(503).send({ error: "AdminAccessUnavailable", message: "Sign-in help is not available right now." });
+      const principal = await requireAdmin(request, reply);
+      const sessionToken = readBearerToken(request);
+      if (!principal || !sessionToken) return;
+      if (principal.rolePreview) {
+        return reply.code(403).send({ error: "RolePreviewAlreadyActive", message: "Return to your normal view before starting another role preview." });
       }
-      if ((body.username !== undefined && typeof body.username !== "string") ||
-        typeof body.message !== "string") {
-        return reply.code(400).send({ error: "InvalidAccessHelpRequest", message: "Add a short description of the sign-in problem." });
+      if (!dependencies.adminAccess) {
+        return reply.code(503).send({ error: "AdminAccessUnavailable", message: "Role preview is not available right now." });
+      }
+      const role = request.body?.role;
+      const locationIds = request.body?.locationIds;
+      if (typeof role !== "string" || (locationIds !== undefined && (!Array.isArray(locationIds) || locationIds.some((value) => typeof value !== "string")))) {
+        return reply.code(400).send({ error: "InvalidRolePreview", message: "Choose a lower administrator role and valid locations." });
       }
       try {
-        const result = await dependencies.adminAccess.requestAccessHelp(
-          typeof body.username === "string" ? body.username : undefined,
-          body.message
+        const preview = await dependencies.adminAccess.startRolePreview(
+          principal,
+          sessionToken,
+          role,
+          Array.isArray(locationIds) ? locationIds : undefined
         );
-        return reply.code(202).send({ accepted: true, requestId: result.requestId });
+        return reply.code(201).send(preview);
       } catch (error) {
-        return reply.code(400).send({ error: "AccessHelpRequestRejected", message: error instanceof Error ? error.message : "The request could not be recorded." });
+        return reply.code(400).send({ error: "RolePreviewRejected", message: error instanceof Error ? error.message : "The role preview could not be started." });
       }
     });
 
@@ -369,33 +571,37 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     });
 
-    app.post("/api/v1/local/admin/session/revoke", {
-      config: { rateLimit: { max: 30, timeWindow: "15 minutes" } }
-    }, async (request, reply) => {
-      const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
-      const token = readBearerToken(request);
-      if (!principal || !token) return;
-      await dependencies.adminAccess!.revokeSession(principal, token);
-      return reply.code(204).send();
-    });
-
-    app.patch<{ Body: { currentPassword?: string; newPassword?: string } }>("/api/v1/local/admin/me/password", {
-      config: { rateLimit: { max: 10, timeWindow: "15 minutes" } }
-    }, async (request, reply) => {
-      const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
-      const token = readBearerToken(request);
-      const body = request.body;
-      if (!principal || !token) return;
-      if (typeof body?.currentPassword !== "string" || typeof body.newPassword !== "string") {
-        return reply.code(400).send({ error: "InvalidPasswordChange" });
-      }
-      try {
-        await dependencies.adminAccess!.changePassword(principal, token, body.currentPassword, body.newPassword);
+    // Password sessions, resets, and temporary-password changes belong to the
+    // pilot bridge. Entra/MFA-backed production identity owns these actions.
+    if (localMode) {
+      app.post("/api/v1/local/admin/session/revoke", {
+        config: { rateLimit: { max: 30, timeWindow: "15 minutes" } }
+      }, async (request, reply) => {
+        const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true, allowPreviewWrite: true });
+        const token = readBearerToken(request);
+        if (!principal || !token) return;
+        await dependencies.adminAccess!.revokeSession(principal, token);
         return reply.code(204).send();
-      } catch (error) {
-        return reply.code(400).send({ error: "PasswordChangeRejected", message: error instanceof Error ? error.message : "Password could not be changed." });
-      }
-    });
+      });
+
+      app.patch<{ Body: { currentPassword?: string; newPassword?: string } }>("/api/v1/local/admin/me/password", {
+        config: { rateLimit: { max: 10, timeWindow: "15 minutes" } }
+      }, async (request, reply) => {
+        const principal = await requireAdmin(request, reply, { allowPendingPasswordChange: true });
+        const token = readBearerToken(request);
+        const body = request.body;
+        if (!principal || !token) return;
+        if (typeof body?.currentPassword !== "string" || typeof body.newPassword !== "string") {
+          return reply.code(400).send({ error: "InvalidPasswordChange" });
+        }
+        try {
+          await dependencies.adminAccess!.changePassword(principal, token, body.currentPassword, body.newPassword);
+          return reply.code(204).send();
+        } catch (error) {
+          return reply.code(400).send({ error: "PasswordChangeRejected", message: error instanceof Error ? error.message : "Password could not be changed." });
+        }
+      });
+    }
 
     app.patch<{ Params: { userId: string }; Body: AdminUserUpdate }>("/api/v1/local/admin/users/:userId", {
       config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
@@ -414,30 +620,52 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     });
 
-    app.post<{ Params: { userId: string }; Body: { temporaryPassword?: string; reason?: string } }>(
-      "/api/v1/local/admin/users/:userId/password-reset",
-      { config: { rateLimit: { max: 20, timeWindow: "15 minutes" } } },
-      async (request, reply) => {
-        const principal = await requireAdmin(request, reply);
-        if (!principal) return;
-        if (principal.role !== "organization_owner") {
-          return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can reset administrator passwords." });
-        }
-        const temporaryPassword = request.body?.temporaryPassword;
-        const reason = request.body?.reason;
-        if (typeof temporaryPassword !== "string" || temporaryPassword.length < 12 || temporaryPassword.length > 256 || (reason !== undefined && (typeof reason !== "string" || reason.trim().length < 8 || reason.trim().length > 500))) {
-          return reply.code(400).send({ error: "InvalidTemporaryPassword", message: "Temporary password must contain 12-256 characters." });
-        }
-        try {
-          const user = reason === undefined
-            ? await dependencies.adminAccess!.resetUserPassword(principal, request.params.userId, temporaryPassword)
-            : await dependencies.adminAccess!.resetUserPassword(principal, request.params.userId, temporaryPassword, reason);
-          return reply.send({ user });
-        } catch (error) {
-          return reply.code(400).send({ error: "PasswordResetRejected", message: error instanceof Error ? error.message : "The administrator password could not be reset." });
-        }
+    app.delete<{ Params: { userId: string }; Body: { confirmation?: string } }>("/api/v1/local/admin/users/:userId", {
+      config: { rateLimit: { max: 10, timeWindow: "15 minutes" } }
+    }, async (request, reply) => {
+      const principal = await requireAdmin(request, reply);
+      if (!principal) return;
+      if (principal.role !== "organization_owner") {
+        return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can permanently remove administrator accounts." });
       }
-    );
+      const confirmation = request.body?.confirmation;
+      if (typeof confirmation !== "string" || confirmation.trim().length < 3 || confirmation.length > 64) {
+        return reply.code(400).send({ error: "RemovalConfirmationRequired", message: "Type the administrator username exactly to confirm permanent removal." });
+      }
+      try {
+        const removed = await dependencies.adminAccess!.removeUser(principal, request.params.userId, confirmation);
+        return reply.send({ removed });
+      } catch (error) {
+        return reply.code(400).send({ error: "AdminUserRemovalRejected", message: error instanceof Error ? error.message : "Administrator account could not be removed." });
+      }
+    });
+
+    if (localMode) {
+      app.post<{ Params: { userId: string }; Body: { temporaryPassword?: string; reason?: string } }>(
+        "/api/v1/local/admin/users/:userId/password-reset",
+        { config: { rateLimit: { max: 20, timeWindow: "15 minutes" } } },
+        async (request, reply) => {
+          const principal = await requireAdmin(request, reply);
+          if (!principal) return;
+          if (principal.role !== "organization_owner") {
+            return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners can reset administrator passwords." });
+          }
+          const temporaryPassword = request.body?.temporaryPassword;
+          const reason = request.body?.reason;
+          if (typeof temporaryPassword !== "string" || temporaryPassword.length < 12 || temporaryPassword.length > 256 || (reason !== undefined && (typeof reason !== "string" || reason.trim().length < 8 || reason.trim().length > 500))) {
+            return reply.code(400).send({ error: "InvalidTemporaryPassword", message: "Temporary password must contain 12-256 characters." });
+          }
+          try {
+            const user = reason === undefined
+              ? await dependencies.adminAccess!.resetUserPassword(principal, request.params.userId, temporaryPassword)
+              : await dependencies.adminAccess!.resetUserPassword(principal, request.params.userId, temporaryPassword, reason);
+            return reply.send({ user });
+          } catch (error) {
+            return reply.code(400).send({ error: "PasswordResetRejected", message: error instanceof Error ? error.message : "The administrator password could not be reset." });
+          }
+        }
+      );
+    }
 
     app.get("/api/v1/local/review-cases", {
       config: { rateLimit: { max: 120, timeWindow: "1 minute" } }
@@ -596,6 +824,211 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
 
   app.get("/health", async () => ({ status: "ok" }));
 
+  const readInstallationId = (request: FastifyRequest): string | null => {
+    const value = firstHeader(request.headers["x-stacktrack-device-installation-id"]);
+    return value && requestContextSchema.shape.deviceId.safeParse(value).success ? value : null;
+  };
+
+  const requireDevicePermission = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    context: RequestContext,
+    permissionKey: DevicePermissionKey
+  ): Promise<boolean> => {
+    if (!dependencies.deviceAdministration?.hasPermission) {
+      if (strictDevicePermissions) {
+        reply.code(503).send({
+          error: "DevicePermissionConfigurationMissing",
+          message: "Named scanner permissions are not configured. Ask an administrator to review the device role."
+        });
+        return false;
+      }
+      return true;
+    }
+    const installationId = readInstallationId(request);
+    if (!installationId) {
+      reply.code(401).send({ error: "DeviceInstallationRequired", message: "An active scanner installation is required for this action." });
+      return false;
+    }
+    const allowed = await dependencies.deviceAdministration.hasPermission(
+      context.tenantId,
+      context.deviceId,
+      installationId,
+      permissionKey
+    );
+    if (!allowed) {
+      reply.code(403).send({ error: "DevicePermissionDenied", message: `This scanner is not permitted to use ${permissionKey}. Ask an administrator to review its device role.` });
+      return false;
+    }
+    return true;
+  };
+
+  app.get<{ Params: { containerId: string } }>(
+    "/api/v1/mobile/load-code/:containerId",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const context = readContext(request);
+      if (!context) return reply.code(401).send({ error: "Unauthorized" });
+      if (!requestContextSchema.shape.deviceId.safeParse(context.deviceId).success) {
+        return reply.code(401).send({ error: "Unauthorized" });
+      }
+
+      const containerId = request.params.containerId;
+      if (!requestContextSchema.shape.deviceId.safeParse(containerId).success) {
+        return reply.code(400).send({ error: "InvalidContainerId" });
+      }
+      if (!(await requireDevicePermission(request, reply, context, "load_code.lookup"))) return;
+
+      const events = await ledger.eventsForContainer(context.tenantId, containerId);
+      const projection = projectContainer(events);
+      const synchronizedAt = now().toISOString();
+      if (!projection?.activeLoadCodeId) {
+        return reply.send({ found: false, synchronizedAt });
+      }
+
+      const loadEvent = events.find(
+        (event) =>
+          event.eventType === "load_assigned" &&
+          event.loadCodeId === projection.activeLoadCodeId
+      );
+      if (!loadEvent) return reply.send({ found: false, synchronizedAt });
+
+      return reply.send({
+        found: true,
+        synchronizedAt,
+        loadCode: {
+          loadCodeId: loadEvent.loadCodeId,
+          displayLoadCode:
+            typeof loadEvent.payload.displayLoadCode === "string"
+              ? loadEvent.payload.displayLoadCode
+              : loadEvent.loadCodeId,
+          goodsType:
+            typeof loadEvent.payload.goodsType === "string"
+              ? loadEvent.payload.goodsType
+              : "Other",
+          secondaryValue:
+            typeof loadEvent.payload.secondaryValue === "string"
+              ? loadEvent.payload.secondaryValue
+              : "Not specified",
+          generatedAt: loadEvent.effectiveAt,
+          generatingLocationId: loadEvent.locationId
+        }
+      });
+    }
+  );
+
+  // Mobile control-plane routes are available in both the synthetic pilot and
+  // the cloud API. Keeping this route outside the local-admin block prevents
+  // a production mobile build from silently receiving a 404 after login.
+  app.get("/api/v1/mobile/reference-data", async (request, reply) => {
+    const context = readContext(request);
+    if (!context) return reply.code(401).send({ error: "Unauthorized" });
+    if (!(await requireDevicePermission(request, reply, context, "reference_data.read"))) return;
+    const fixtures = dependencies.referenceData
+      ? await dependencies.referenceData(context.tenantId)
+      : context.tenantId === localFixtures.tenant.tenantId ? localFixtures : null;
+    if (!fixtures) return reply.code(404).send({ error: "NotFound" });
+    return reply.send(fixtures);
+  });
+
+  app.get("/api/v1/mobile/permissions", async (request, reply) => {
+    const context = readContext(request);
+    if (!context) return reply.code(401).send({ error: "Unauthorized" });
+    const installationId = readInstallationId(request);
+    if (!installationId) {
+      return reply.code(401).send({
+        error: "DeviceInstallationRequired",
+        message: "An active scanner installation is required to resolve device permissions."
+      });
+    }
+    const administration = dependencies.deviceAdministration;
+    if (!administration?.permissionKeys) {
+      if (strictDevicePermissions) {
+        return reply.code(503).send({
+          error: "DevicePermissionConfigurationMissing",
+          message: "Named scanner permissions are not configured. Ask an administrator to review the device role."
+        });
+      }
+      // Legacy/local test doubles do not have named roles yet. The conservative
+      // response is an empty set rather than an invented grant.
+      return reply.send({ permissionKeys: [], resolvedAt: now().toISOString(), enforced: false });
+    }
+    const permissionKeys = await administration.permissionKeys(
+      context.tenantId,
+      context.deviceId,
+      installationId
+    );
+    return reply.send({ permissionKeys, resolvedAt: now().toISOString(), enforced: strictDevicePermissions });
+  });
+
+  const handleMobileTelemetry = async (
+    request: FastifyRequest<{ Params: { deviceId?: string }; Body: DeviceTelemetryUpdate }>,
+    reply: FastifyReply
+  ) => {
+    const context = readContext(request);
+    if (!context) return reply.code(401).send({ error: "Unauthorized" });
+    // The cloud mobile endpoint derives the device from the authenticated
+    // request context; the local compatibility alias also includes it in the
+    // path.  Validate both forms when the path parameter is present.
+    const pathDeviceId = request.params?.deviceId;
+    if (pathDeviceId && context.deviceId !== pathDeviceId) {
+      return reply.code(403).send({
+        error: "DeviceIdentityMismatch",
+        message: "A scanner can only report telemetry for its own device identifier."
+      });
+    }
+    const administration = dependencies.deviceAdministration;
+    if (!administration) return reply.code(501).send({ error: "DeviceAdministrationUnavailable" });
+    const update = request.body;
+    if (
+      !update ||
+      typeof update.installationId !== "string" ||
+      !requestContextSchema.shape.deviceId.safeParse(update.installationId).success ||
+      typeof update.appVersion !== "string" ||
+      update.appVersion.trim().length < 1 ||
+      update.appVersion.trim().length > 32 ||
+      !Number.isInteger(update.pendingOfflineScanCount) ||
+      update.pendingOfflineScanCount < 0 ||
+      update.pendingOfflineScanCount > 100_000
+    ) {
+      return reply.code(400).send({ error: "InvalidDeviceTelemetry" });
+    }
+    if (!administration.hasPermission) {
+      if (strictDevicePermissions) {
+        return reply.code(503).send({
+          error: "DevicePermissionConfigurationMissing",
+          message: "Named scanner permissions are not configured. Ask an administrator to review the device role."
+        });
+      }
+    } else {
+      const permitted = await administration.hasPermission(
+        context.tenantId,
+        context.deviceId,
+        update.installationId,
+        "telemetry.report"
+      );
+      if (!permitted) {
+        return reply.code(403).send({
+          error: "DevicePermissionDenied",
+          message: "This scanner is not permitted to report telemetry. Ask an administrator to review its device role."
+        });
+      }
+    }
+    const device = await administration.reportTelemetry(
+      context.tenantId,
+      context.deviceId,
+      update
+    );
+    if (!device) return reply.code(404).send({ error: "NotFound" });
+    return reply.send({ device });
+  };
+
+  app.patch<{ Params: { deviceId: string }; Body: DeviceTelemetryUpdate }>(
+    "/api/v1/mobile/telemetry",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    handleMobileTelemetry
+  );
+
   app.get("/api/v1/time", async (request, reply) => {
     const context = readContext(request);
     if (!context) {
@@ -604,6 +1037,75 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
 
     return reply.send({ serverAt: now().toISOString() });
   });
+
+  app.post<{ Body: { items?: unknown[] } }>(
+    "/api/v1/events/batch",
+    { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const context = readContext(request);
+      if (!context) {
+        return reply.code(401).send({
+          error: "Unauthorized",
+          message: "Development authentication requires valid tenant and device UUID headers."
+        });
+      }
+
+      const items = request.body?.items;
+      if (!Array.isArray(items) || items.length < 1 || items.length > 100) {
+        return reply.code(400).send({
+          error: "InvalidBatch",
+          message: "Batch uploads must contain between 1 and 100 observations."
+        });
+      }
+
+      const results = [] as Array<Record<string, unknown>>;
+      for (const [index, item] of items.entries()) {
+        const eventId = item && typeof item === "object" && typeof (item as Record<string, unknown>).eventId === "string"
+          ? (item as Record<string, unknown>).eventId
+          : undefined;
+        const prepared = await prepareScannerSubmission(context, item);
+        if (!prepared.ok) {
+          results.push({ index, ...(eventId ? { eventId } : {}), accepted: false, status: "rejected", error: prepared.error, message: prepared.message });
+          continue;
+        }
+        try {
+          const result = await ledger.submit(prepared.input, context, now());
+          results.push({
+            index,
+            ...(eventId ? { eventId } : {}),
+            accepted: result.accepted,
+            status: result.status,
+            warnings: result.warnings,
+            ...(result.errorCode ? { error: result.errorCode } : {}),
+            ...(result.message ? { message: result.message } : {}),
+            ...(result.event ? { event: publicEvent(result.event) } : {})
+          });
+        } catch (error) {
+          // A single item must never abort the entire 1–N upload. A database
+          // constraint, stale reference, or adapter failure is reported with
+          // the item's index so the device can keep the other observations
+          // and an administrator can investigate the failed one.
+          results.push({
+            index,
+            ...(eventId ? { eventId } : {}),
+            accepted: false,
+            status: "retryable",
+            retryable: true,
+            error: "ItemProcessingFailed",
+            message: error instanceof Error ? error.message : "This observation could not be recorded."
+          });
+        }
+      }
+
+      const acceptedCount = results.filter((result) => result.accepted === true).length;
+      const status = acceptedCount === results.length
+        ? "accepted"
+        : acceptedCount === 0
+          ? "rejected"
+          : "partial";
+      return reply.code(200).send({ accepted: acceptedCount > 0, status, acceptedCount, rejectedCount: results.length - acceptedCount, results });
+    }
+  );
 
   app.post("/api/v1/events", { config: { rateLimit: { max: 600, timeWindow: "1 minute" } } }, async (request, reply) => {
     const context = readContext(request);
@@ -615,25 +1117,10 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       });
     }
 
-    const installationId =
-      typeof (request.body as { deviceInstallationId?: unknown } | undefined)?.deviceInstallationId === "string"
-        ? (request.body as { deviceInstallationId: string }).deviceInstallationId
-        : undefined;
-    if (dependencies.deviceAdministration && installationId) {
-      const scannerEnabled = await dependencies.deviceAdministration.isScannerEnabled(
-        context.tenantId,
-        context.deviceId,
-        installationId
-      );
-      if (!scannerEnabled) {
-        return reply.code(403).send({
-          error: "ScannerDisabled",
-          message: "This scanner is disabled or no longer assigned to an active installation."
-        });
-      }
-    }
+    const prepared = await prepareScannerSubmission(context, request.body);
+    if (!prepared.ok) return reply.code(prepared.statusCode).send({ error: prepared.error, message: prepared.message });
 
-    const result = await ledger.submit(request.body, context, now());
+    const result = await ledger.submit(prepared.input, context, now());
     if (!result.accepted) {
       const statusCode =
         result.errorCode === "IdempotencyKeyMismatch" ? 422 : 400;
@@ -654,8 +1141,8 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
   app.get<{ Params: { containerId: string } }>(
     "/api/v1/containers/:containerId/state",
     async (request, reply) => {
-      const principal = localMode ? await requireAdmin(request, reply) : null;
-      if (localMode && !principal) return;
+      const principal = adminRoutesEnabled ? await requireAdmin(request, reply) : null;
+      if (adminRoutesEnabled && !principal) return;
       const tenantId = principal?.tenantId ?? readTenantId(request);
       if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
 
@@ -685,8 +1172,8 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
   );
 
   app.get("/api/v1/containers/states", async (request, reply) => {
-    const principal = localMode ? await requireAdmin(request, reply) : null;
-    if (localMode && !principal) return;
+    const principal = adminRoutesEnabled ? await requireAdmin(request, reply) : null;
+    if (adminRoutesEnabled && !principal) return;
     const tenantId = principal?.tenantId ?? readTenantId(request);
     if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
     const events = await ledger.eventsForTenant(tenantId);
@@ -714,8 +1201,8 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
   });
 
   app.get("/api/v1/review-queue", async (request, reply) => {
-    const principal = localMode ? await requireAdmin(request, reply) : null;
-    if (localMode && !principal) return;
+    const principal = adminRoutesEnabled ? await requireAdmin(request, reply) : null;
+    if (adminRoutesEnabled && !principal) return;
     const tenantId = principal?.tenantId ?? readTenantId(request);
     if (!tenantId) return reply.code(401).send({ error: "Unauthorized" });
     const items = await ledger.reviewQueue(tenantId);
@@ -727,17 +1214,7 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
     return reply.send({ count: visibleItems.length, items: visibleItems });
   });
 
-  if (localMode) {
-    app.get("/api/v1/mobile/reference-data", async (request, reply) => {
-      const context = readContext(request);
-      if (!context) return reply.code(401).send({ error: "Unauthorized" });
-      const fixtures = dependencies.referenceData
-        ? await dependencies.referenceData(context.tenantId)
-        : context.tenantId === localFixtures.tenant.tenantId ? localFixtures : null;
-      if (!fixtures) return reply.code(404).send({ error: "NotFound" });
-      return reply.send(fixtures);
-    });
-
+  if (adminRoutesEnabled) {
     app.get("/api/v1/local/reference-data", async (request, reply) => {
       const principal = await requireAdmin(request, reply);
       if (!principal) return;
@@ -971,43 +1448,12 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     );
 
+    // Backwards-compatible alias for the original pilot path. New mobile
+    // builds use /api/v1/mobile/telemetry, which is also available in cloud.
     app.patch<{ Params: { deviceId: string }; Body: DeviceTelemetryUpdate }>(
       "/api/v1/local/devices/:deviceId/telemetry",
       { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
-      async (request, reply) => {
-        const context = readContext(request);
-        if (!context) return reply.code(401).send({ error: "Unauthorized" });
-        if (context.deviceId !== request.params.deviceId) {
-          return reply.code(403).send({
-            error: "DeviceIdentityMismatch",
-            message: "A scanner can only report telemetry for its own device identifier."
-          });
-        }
-        if (!dependencies.deviceAdministration) {
-          return reply.code(501).send({ error: "DeviceAdministrationUnavailable" });
-        }
-        const update = request.body;
-        if (
-          !update ||
-          typeof update.installationId !== "string" ||
-          !requestContextSchema.shape.deviceId.safeParse(update.installationId).success ||
-          typeof update.appVersion !== "string" ||
-          update.appVersion.trim().length < 1 ||
-          update.appVersion.trim().length > 32 ||
-          !Number.isInteger(update.pendingOfflineScanCount) ||
-          update.pendingOfflineScanCount < 0 ||
-          update.pendingOfflineScanCount > 100_000
-        ) {
-          return reply.code(400).send({ error: "InvalidDeviceTelemetry" });
-        }
-        const device = await dependencies.deviceAdministration.reportTelemetry(
-          context.tenantId,
-          request.params.deviceId,
-          update
-        );
-        if (!device) return reply.code(404).send({ error: "NotFound" });
-        return reply.send({ device });
-      }
+      handleMobileTelemetry
     );
   }
 

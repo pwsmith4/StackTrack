@@ -63,6 +63,19 @@ describe("classifyEventResponse", () => {
     });
   });
 
+  it("keeps an isolated batch item failure eligible for retry", () => {
+    expect(classifyEventResponse(200, {
+      accepted: false,
+      status: "retryable",
+      retryable: true,
+      error: "ItemProcessingFailed",
+      message: "Reference data is being refreshed."
+    })).toEqual({
+      kind: "retry",
+      message: "Reference data is being refreshed."
+    });
+  });
+
   it("preserves an accepted-for-review result", () => {
     expect(classifyEventResponse(201, {
       accepted: true,

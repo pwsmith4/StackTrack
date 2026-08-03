@@ -28,6 +28,9 @@ const app = await createApp({
   localMode: testMode,
   referenceData: (tenantId) => ledger.referenceData(tenantId),
   deviceAdministration: new PostgresDeviceAdministration(pool),
+  // Cloud traffic must resolve the named device-role grants from Postgres;
+  // never fall back to an implicit permission when an adapter is missing.
+  strictDevicePermissions: true,
   locationAdministration: new PostgresLocationAdministration(pool),
   adminAccess: new PostgresAdminAccess(pool, tenantId),
   reviewAdministration: new PostgresReviewAdministration(pool),

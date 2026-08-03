@@ -34,12 +34,48 @@ export const eventSubmissionSchema = z
       });
     }
 
+    // A load code is the origin-tracing record that feeds production.  Do not
+    // allow a client to create a partial record and rely on a database-side
+    // fallback such as "Other" or "Unspecified"; the mobile conditional form
+    // and every replaying client must carry the same two selected values.
+    if (value.eventType === "load_assigned") {
+      for (const [field, label] of [
+        ["goodsType", "goods type"],
+        ["secondaryValue", "quality/secondary value"]
+      ] as const) {
+        const candidate = value.payload[field];
+        if (typeof candidate !== "string" || candidate.trim().length === 0) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["payload", field],
+            message: `${label} is required for load_assigned`
+          });
+        }
+      }
+    }
+
     if (value.eventType === "emptied" && value.loadCodeId) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["loadCodeId"],
         message: "loadCodeId must be omitted for emptied"
       });
+    }
+
+    if (value.eventType === "emptied" && value.payload.processedPercentage !== undefined) {
+      const processedPercentage = value.payload.processedPercentage;
+      if (
+        typeof processedPercentage !== "number" ||
+        !Number.isInteger(processedPercentage) ||
+        processedPercentage < 1 ||
+        processedPercentage > 100
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["payload", "processedPercentage"],
+          message: "processedPercentage must be a whole number from 1 to 100"
+        });
+      }
     }
 
     // A scanner at the departure site cannot know which facility will receive

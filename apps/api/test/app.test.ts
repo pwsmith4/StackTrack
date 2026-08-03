@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { InMemoryEventLedger } from "@stacktrack/domain";
 import { createApp } from "../src/app.js";
 import type { DeviceAdministration } from "../src/device-administration.js";
 import type { AdminPrincipal, PostgresAdminAccess } from "../src/admin-access.js";
 import type { CorrectionAdministration } from "../src/correction-administration.js";
 import type { LocationAdministration } from "../src/location-administration.js";
+import { localFixtures } from "../src/local-fixtures.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const deviceId = "22222222-2222-4222-8222-222222222222";
@@ -23,7 +25,8 @@ const event = {
   loadCodeId: "55555555-5555-4555-8555-555555555555",
   locationId: "66666666-6666-4666-8666-666666666666",
   eventType: "load_assigned",
-  eventAt: "2026-07-22T12:00:00.000Z"
+  eventAt: "2026-07-22T12:00:00.000Z",
+  payload: { goodsType: "Soft", secondaryValue: "Raw" }
 };
 
 const temporaryPasswordPrincipal: AdminPrincipal = {
@@ -109,6 +112,174 @@ describe("StackTrack API foundation", () => {
     });
   });
 
+  it("looks up the active load code without writing another observation", async () => {
+    app = await createApp({ now: () => new Date("2026-07-22T12:00:01.000Z") });
+    await app.inject({ method: "POST", url: "/api/v1/events", headers, payload: event });
+
+    const lookup = await app.inject({
+      method: "GET",
+      url: `/api/v1/mobile/load-code/${containerId}`,
+      headers
+    });
+    const state = await app.inject({
+      method: "GET",
+      url: `/api/v1/containers/${containerId}/state`,
+      headers: { "x-stacktrack-tenant-id": tenantId }
+    });
+
+    expect(lookup.statusCode).toBe(200);
+    expect(lookup.json()).toMatchObject({
+      found: true,
+      synchronizedAt: "2026-07-22T12:00:01.000Z",
+      loadCode: { loadCodeId: event.loadCodeId }
+    });
+    expect(state.statusCode).toBe(200);
+    expect(state.json()).toMatchObject({
+      containerId,
+      activeLoadCodeId: event.loadCodeId
+    });
+  });
+
+  it("requires the load-code lookup permission for registered installations", async () => {
+    const restrictedScanner: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true,
+      hasPermission: async (_tenantId, _deviceId, _installationId, permissionKey) => permissionKey !== "load_code.lookup"
+    };
+    app = await createApp({ deviceAdministration: restrictedScanner });
+
+    const lookup = await app.inject({
+      method: "GET",
+      url: `/api/v1/mobile/load-code/${containerId}`,
+      headers: {
+        ...headers,
+        "x-stacktrack-device-installation-id": event.deviceInstallationId
+      }
+    });
+
+    expect(lookup.statusCode).toBe(403);
+    expect(lookup.json()).toMatchObject({ error: "DevicePermissionDenied" });
+  });
+
+  it("fails closed when production scanner permissions are not configured", async () => {
+    const administration: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true
+    };
+    app = await createApp({
+      strictDevicePermissions: true,
+      deviceAdministration: administration
+    });
+
+    const eventResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/events",
+      headers,
+      payload: event
+    });
+    const lookupResponse = await app.inject({
+      method: "GET",
+      url: `/api/v1/mobile/load-code/${containerId}`,
+      headers: {
+        ...headers,
+        "x-stacktrack-device-installation-id": event.deviceInstallationId
+      }
+    });
+    const permissionsResponse = await app.inject({
+      method: "GET",
+      url: "/api/v1/mobile/permissions",
+      headers: {
+        ...headers,
+        "x-stacktrack-device-installation-id": event.deviceInstallationId
+      }
+    });
+    const telemetryResponse = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/mobile/telemetry`,
+      headers,
+      payload: {
+        installationId: event.deviceInstallationId,
+        appVersion: "0.3.3",
+        pendingOfflineScanCount: 0
+      }
+    });
+
+    expect(eventResponse.statusCode).toBe(503);
+    expect(eventResponse.json()).toMatchObject({ error: "DevicePermissionConfigurationMissing" });
+    expect(lookupResponse.statusCode).toBe(503);
+    expect(lookupResponse.json()).toMatchObject({ error: "DevicePermissionConfigurationMissing" });
+    expect(permissionsResponse.statusCode).toBe(503);
+    expect(permissionsResponse.json()).toMatchObject({ error: "DevicePermissionConfigurationMissing" });
+    expect(telemetryResponse.statusCode).toBe(503);
+    expect(telemetryResponse.json()).toMatchObject({ error: "DevicePermissionConfigurationMissing" });
+  });
+
+  it("accepts valid items in a batch while reporting invalid items individually", async () => {
+    app = await createApp({ now: () => new Date("2026-07-22T12:00:01.000Z") });
+    const invalidItem = {
+      ...event,
+      eventId: "99999999-9999-4999-8999-999999999999",
+      eventType: "emptied",
+      loadCodeId: event.loadCodeId
+    };
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/events/batch",
+      headers,
+      payload: { items: [event, invalidItem] }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      accepted: true,
+      status: "partial",
+      acceptedCount: 1,
+      rejectedCount: 1,
+      results: [
+        { index: 0, eventId: event.eventId, accepted: true },
+        { index: 1, eventId: invalidItem.eventId, accepted: false, error: "InvalidPayload" }
+      ]
+    });
+  });
+
+  it("keeps a batch alive when one ledger item fails unexpectedly", async () => {
+    const ledger = new InMemoryEventLedger();
+    const originalSubmit = ledger.submit.bind(ledger);
+    vi.spyOn(ledger, "submit")
+      .mockImplementationOnce((input, context, receivedAt) => originalSubmit(input, context, receivedAt))
+      .mockImplementationOnce(() => {
+        throw new Error("stale reference data");
+      });
+    app = await createApp({ ledger });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/events/batch",
+      headers,
+      payload: {
+        items: [
+          event,
+          { ...event, eventId: "99999999-9999-4999-8999-999999999998", deviceSequence: 1 }
+        ]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      accepted: true,
+      status: "partial",
+      acceptedCount: 1,
+      rejectedCount: 1,
+      results: [
+        { index: 0, accepted: true },
+        { index: 1, accepted: false, error: "ItemProcessingFailed", message: "stale reference data" }
+      ]
+    });
+  });
+
   it("returns a stable response for an idempotent replay", async () => {
     app = await createApp({ now: () => new Date("2026-07-22T12:00:01.000Z") });
 
@@ -148,6 +319,90 @@ describe("StackTrack API foundation", () => {
     expect(response.json()).toMatchObject({ error: "ScannerDisabled" });
   });
 
+  it("rejects observations when the scanner role does not grant observation permission", async () => {
+    const restrictedScanner: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true,
+      hasPermission: async (_tenantId, _deviceId, _installationId, permissionKey) => permissionKey !== "observation.create"
+    };
+    app = await createApp({ deviceAdministration: restrictedScanner });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/events",
+      headers,
+      payload: event
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "DevicePermissionDenied" });
+  });
+
+  it("derives a departure origin from the scanner assignment", async () => {
+    const assignedLocationId = "66666666-6666-4666-8666-666666666666";
+    const administration: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true,
+      assignedLocationId: async () => assignedLocationId
+    };
+    app = await createApp({ deviceAdministration: administration });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/events",
+      headers,
+      payload: {
+        ...event,
+        eventType: "batch_out",
+        loadCodeId: null,
+        locationId: "20000000-0000-4000-8000-000000000004",
+        payload: {}
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({
+      event: { payload: { sourceLocationId: assignedLocationId } }
+    });
+  });
+
+  it("rejects a scanner payload that claims another origin or location", async () => {
+    const assignedLocationId = "66666666-6666-4666-8666-666666666666";
+    const administration: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true,
+      assignedLocationId: async () => assignedLocationId
+    };
+    app = await createApp({ deviceAdministration: administration });
+
+    const departure = await app.inject({
+      method: "POST",
+      url: "/api/v1/events",
+      headers,
+      payload: {
+        ...event,
+        eventType: "batch_out",
+        loadCodeId: null,
+        locationId: "20000000-0000-4000-8000-000000000004",
+        payload: { sourceLocationId: "77777777-7777-4777-8777-777777777777" }
+      }
+    });
+    const wrongSite = await app.inject({
+      method: "POST",
+      url: "/api/v1/events",
+      headers,
+      payload: { ...event, locationId: "77777777-7777-4777-8777-777777777777" }
+    });
+
+    expect(departure.statusCode).toBe(403);
+    expect(departure.json()).toMatchObject({ error: "ScannerLocationMismatch" });
+    expect(wrongSite.statusCode).toBe(403);
+    expect(wrongSite.json()).toMatchObject({ error: "ScannerLocationMismatch" });
+  });
+
   it("does not trust unscoped requests", async () => {
     app = await createApp();
     const response = await app.inject({
@@ -180,6 +435,101 @@ describe("StackTrack API foundation", () => {
     });
     expect(mobileReferenceData.statusCode).toBe(200);
     expect(mobileReferenceData.json().containers).toHaveLength(11);
+  });
+
+  it("authenticates administrative requests through the replaceable identity provider", async () => {
+    const principal: AdminPrincipal = {
+      ...ownerPrincipal,
+      tenantId: "10000000-0000-4000-8000-000000000001"
+    };
+    const authenticateAccessToken = vi.fn().mockResolvedValue(principal);
+    app = await createApp({
+      localMode: true,
+      identityProvider: { authenticateAccessToken }
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/reference-data",
+      headers: { authorization: `Bearer ${"e".repeat(32)}` }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().tenant.tenantId).toBe(principal.tenantId);
+    expect(authenticateAccessToken).toHaveBeenCalledWith("e".repeat(32));
+  });
+
+  it("exposes governed admin reads in cloud mode without exposing the pilot password bridge", async () => {
+    const principal: AdminPrincipal = {
+      ...ownerPrincipal,
+      tenantId: "10000000-0000-4000-8000-000000000001"
+    };
+    const authenticateAccessToken = vi.fn().mockResolvedValue(principal);
+    app = await createApp({
+      identityProvider: { authenticateAccessToken },
+      referenceData: async () => localFixtures
+    });
+
+    const unauthenticated = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/reference-data"
+    });
+    const authenticated = await app.inject({
+      method: "GET",
+      url: "/api/v1/local/reference-data",
+      headers: { authorization: `Bearer ${"c".repeat(32)}` }
+    });
+    const passwordBridge = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/admin/session",
+      payload: { username: "root", password: "password" }
+    });
+
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(authenticated.statusCode).toBe(200);
+    expect(authenticated.json().tenant.tenantId).toBe(principal.tenantId);
+    expect(passwordBridge.statusCode).toBe(404);
+    expect(authenticateAccessToken).toHaveBeenCalledWith("c".repeat(32));
+  });
+
+  it("keeps the mobile control plane available when the API is not in local-admin mode", async () => {
+    const administration: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true,
+      hasPermission: async () => true,
+      permissionKeys: async () => ["reference_data.read", "load_code.lookup"]
+    };
+    app = await createApp({
+      referenceData: async () => localFixtures,
+      deviceAdministration: administration,
+      strictDevicePermissions: true
+    });
+
+    const referenceData = await app.inject({
+      method: "GET",
+      url: "/api/v1/mobile/reference-data",
+      headers: {
+        ...headers,
+        "x-stacktrack-device-installation-id": event.deviceInstallationId
+      }
+    });
+    const permissions = await app.inject({
+      method: "GET",
+      url: "/api/v1/mobile/permissions",
+      headers: {
+        ...headers,
+        "x-stacktrack-device-installation-id": event.deviceInstallationId
+      }
+    });
+
+    expect(referenceData.statusCode).toBe(200);
+    expect(referenceData.json().containers).toHaveLength(11);
+    expect(permissions.statusCode).toBe(200);
+    expect(permissions.json()).toMatchObject({
+      permissionKeys: ["reference_data.read", "load_code.lookup"],
+      enforced: true
+    });
   });
 
   it("scopes a read-only reviewer to explicitly assigned locations", async () => {
@@ -529,6 +879,112 @@ describe("StackTrack API foundation", () => {
       temporaryPasswordPrincipal.userId,
       "a-new-temporary-password"
     );
+  });
+
+  it("requires an owner and exact confirmation for permanent administrator removal", async () => {
+    const removeUser = vi.fn().mockResolvedValue({
+      userId: temporaryPasswordPrincipal.userId,
+      username: temporaryPasswordPrincipal.username,
+      displayName: temporaryPasswordPrincipal.displayName,
+      role: temporaryPasswordPrincipal.role
+    });
+    app = await createApp({
+      localMode: true,
+      adminAccess: {
+        authenticate: vi.fn().mockResolvedValue(ownerPrincipal),
+        removeUser
+      } as unknown as PostgresAdminAccess
+    });
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/local/admin/users/${temporaryPasswordPrincipal.userId}`,
+      headers: { authorization: `Bearer ${"r".repeat(32)}` },
+      payload: { confirmation: temporaryPasswordPrincipal.username }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ removed: { username: "new-admin" } });
+    expect(removeUser).toHaveBeenCalledWith(ownerPrincipal, temporaryPasswordPrincipal.userId, "new-admin");
+  });
+
+  it("starts a lower-role preview without changing the real administrator session", async () => {
+    const sessionToken = "p".repeat(32);
+    const previewLocationId = "66666666-6666-4666-8666-666666666666";
+    const preview = {
+      previewToken: "preview-token-which-is-long-enough-for-the-client",
+      expiresAt: "2026-08-03T20:30:00.000Z",
+      preview: {
+        sourceRole: "organization_owner" as const,
+        previewRole: "location_manager" as const,
+        locationIds: [previewLocationId],
+        expiresAt: "2026-08-03T20:30:00.000Z"
+      },
+      principal: {
+        ...ownerPrincipal,
+        role: "location_manager" as const,
+        locationIds: [previewLocationId],
+        rolePreview: {
+          sourceRole: "organization_owner" as const,
+          previewRole: "location_manager" as const,
+          locationIds: [previewLocationId],
+          expiresAt: "2026-08-03T20:30:00.000Z"
+        }
+      }
+    };
+    const startRolePreview = vi.fn().mockResolvedValue(preview);
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(ownerPrincipal), startRolePreview } as unknown as PostgresAdminAccess
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/admin/role-preview",
+      headers: { authorization: `Bearer ${sessionToken}` },
+      payload: { role: "location_manager", locationIds: [previewLocationId] }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ preview: { previewRole: "location_manager", locationIds: [previewLocationId] } });
+    expect(startRolePreview).toHaveBeenCalledWith(ownerPrincipal, sessionToken, "location_manager", [previewLocationId]);
+  });
+
+  it("blocks all write routes while a lower-role preview is active", async () => {
+    const previewLocationId = "66666666-6666-4666-8666-666666666666";
+    const previewPrincipal: AdminPrincipal = {
+      ...ownerPrincipal,
+      role: "location_manager",
+      locationIds: [previewLocationId],
+      rolePreview: {
+        sourceRole: "organization_owner",
+        previewRole: "location_manager",
+        locationIds: [previewLocationId],
+        expiresAt: "2026-08-03T20:30:00.000Z"
+      }
+    };
+    const resolveRolePreview = vi.fn().mockResolvedValue(previewPrincipal);
+    app = await createApp({
+      localMode: true,
+      adminAccess: {
+        authenticate: vi.fn().mockResolvedValue(ownerPrincipal),
+        resolveRolePreview
+      } as unknown as PostgresAdminAccess
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/admin/users",
+      headers: {
+        authorization: `Bearer ${"q".repeat(32)}`,
+        "x-stacktrack-role-preview": "preview-capability-token-that-is-long-enough"
+      },
+      payload: { username: "new-user", displayName: "New User", role: "read_only_reviewer", temporaryPassword: "a-long-temporary-password" }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "RolePreviewReadOnly" });
+    expect(resolveRolePreview).toHaveBeenCalled();
   });
 
   it("rate limits repeated administrator sign-in attempts", async () => {

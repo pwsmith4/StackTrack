@@ -5,7 +5,7 @@ on:
   push:
     branches: ["main", "test"]
     paths:
-      - "apps/admin/**"
+      - "apps/**"
       - "packages/**"
       - "package.json"
       - "package-lock.json"
@@ -37,6 +37,12 @@ jobs:
         with:
           ref: test
           path: preview
+      - name: Record branch revisions
+        id: revisions
+        shell: bash
+        run: |
+          echo "production=$(git -C production rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "preview=$(git -C preview rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -55,6 +61,8 @@ jobs:
           # added without putting any credential in source control.
           VITE_API_URL: ${{ vars.STACKTRACK_MAIN_API_URL || 'https://stacktrack-api-main.livelyrock-97a45fca.westus3.azurecontainerapps.io' }}
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_BUILD_ID: ${{ steps.revisions.outputs.production }}
+          VITE_BUILD_TIME: ${{ github.run_number }}
         run: |
           npm run check --workspace @stacktrack/admin
           npm run build:admin
@@ -66,6 +74,8 @@ jobs:
         env:
           VITE_API_URL: ${{ vars.STACKTRACK_TEST_API_URL || vars.STACKTRACK_API_URL || 'https://stacktrack-api-test.livelyrock-97a45fca.westus3.azurecontainerapps.io' }}
           VITE_BASE_PATH: /${{ github.event.repository.name }}/testing/
+          VITE_BUILD_ID: ${{ steps.revisions.outputs.preview }}
+          VITE_BUILD_TIME: ${{ github.run_number }}
         run: |
           npm run check --workspace @stacktrack/admin
           npm run build:admin

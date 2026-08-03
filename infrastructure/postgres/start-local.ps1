@@ -13,6 +13,8 @@ $migrationPath = Join-Path $PSScriptRoot "migrations\001_accuracy_foundation.sql
 $deviceOperationsMigrationPath = Join-Path $PSScriptRoot "migrations\002_device_operations.sql"
 $adminAccessMigrationPath = Join-Path $PSScriptRoot "migrations\003_admin_access.sql"
 $locationManagerMigrationPath = Join-Path $PSScriptRoot "migrations\004_location_manager_access.sql"
+$processedLoadsMigrationPath = Join-Path $PSScriptRoot "migrations\005_processed_loads.sql"
+$devicePermissionsMigrationPath = Join-Path $PSScriptRoot "migrations\006_device_permissions.sql"
 $port = if ($env:STACKTRACK_POSTGRES_PORT) {
   [int]$env:STACKTRACK_POSTGRES_PORT
 } else {
@@ -138,6 +140,28 @@ if ($LASTEXITCODE -ne 0) {
   throw "The StackTrack location manager migration failed."
 }
 
+& $psql `
+  --host=127.0.0.1 `
+  --port=$port `
+  --username=postgres `
+  --dbname=stacktrack `
+  --set=ON_ERROR_STOP=1 `
+  --file=$processedLoadsMigrationPath
+if ($LASTEXITCODE -ne 0) {
+  throw "The StackTrack processed-load migration failed."
+}
+
+& $psql `
+  --host=127.0.0.1 `
+  --port=$port `
+  --username=postgres `
+  --dbname=stacktrack `
+  --set=ON_ERROR_STOP=1 `
+  --file=$devicePermissionsMigrationPath
+if ($LASTEXITCODE -ne 0) {
+  throw "The StackTrack device-permissions migration failed."
+}
+
 $grantSql = @"
 GRANT CONNECT ON DATABASE stacktrack TO stacktrack;
 GRANT USAGE ON SCHEMA public TO stacktrack;
@@ -150,6 +174,8 @@ GRANT SELECT, INSERT ON device_assignment_history TO stacktrack;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack;
 GRANT SELECT, INSERT, DELETE ON admin_user_locations TO stacktrack;
+GRANT SELECT, INSERT ON processed_loads TO stacktrack;
+GRANT SELECT ON device_roles, device_role_permissions TO stacktrack;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack;
 "@
 

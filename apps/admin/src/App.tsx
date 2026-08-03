@@ -15,6 +15,7 @@ import {
   Cloud,
   Container as ContainerIcon,
   Download,
+  Eye,
   ExternalLink,
   FileClock,
   FilePenLine,
@@ -25,7 +26,6 @@ import {
   Link2,
   MapPin,
   Menu,
-  MessageSquare,
   MonitorSmartphone,
   PackageCheck,
   Plus,
@@ -49,6 +49,8 @@ import {
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   API_URL,
+  BUILD_ID,
+  BUILD_TIME,
   ApiRequestError,
   changeOwnPassword,
   correctionRequestAction,
@@ -58,12 +60,14 @@ import {
   getLocationDependencies,
   listAdminUsers,
   loadOperationsData,
+  removeAdminUser,
   resetAdminPassword,
   requestAccessHelp,
   reviewCaseAction,
   revokeAdminSession,
   searchAuditEntries,
   signIn,
+  startRolePreview,
   updateAdminUser,
   updateDevice,
   retireLocation,
@@ -297,6 +301,33 @@ function canAccessPage(role: AdminPrincipal["role"], page: Page): boolean {
   return pagesForRole[role]?.includes(page) ?? false;
 }
 
+const rolePreviewOrder: readonly AdminPrincipal["role"][] = [
+  "organization_owner",
+  "operations_administrator",
+  "location_manager",
+  "read_only_reviewer"
+];
+
+function canPreviewRole(sourceRole: AdminPrincipal["role"], targetRole: AdminPrincipal["role"]): boolean {
+  const sourceIndex = rolePreviewOrder.indexOf(sourceRole);
+  const targetIndex = rolePreviewOrder.indexOf(targetRole);
+  return sourceIndex >= 0 && targetIndex >= 0 && targetIndex > sourceIndex;
+}
+
+function readStoredAdminSession(): AdminSession | null {
+  try {
+    const stored = sessionStorage.getItem("stacktrack.admin.session");
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as AdminSession;
+    // A preview is intentionally browser-memory only. If a browser was closed
+    // while previewing, always start back in the real administrator view.
+    if (!parsed.rolePreviewToken && !parsed.rolePreview) return parsed;
+    const { rolePreviewToken: _previewToken, rolePreview: _preview, ...base } = parsed;
+    const { rolePreview: _principalPreview, ...principal } = parsed.principal;
+    return { ...base, principal };
+  } catch { return null; }
+}
+
 function isScopedPrincipal(principal: AdminPrincipal): boolean {
   return principal.role === "location_manager" ||
     (principal.role === "read_only_reviewer" && (principal.locationIds?.length ?? 0) > 0);
@@ -325,7 +356,7 @@ interface LocationInventoryFilter {
   bucket?: LocationInventoryBucket | undefined;
 }
 
-type AppRoute = { page: Page; locationId?: string; locationFilter?: LocationInventoryFilter; focus?: string };
+type AppRoute = { page: Page; locationId?: string; locationFilter?: LocationInventoryFilter; containerMovement?: ContainerMovement; focus?: string };
 
 function routeFromHash(): AppRoute {
   // GitHub Pages can append a verification query to the hash during deploys.
@@ -336,6 +367,8 @@ function routeFromHash(): AppRoute {
   const raw = rawPath ?? "";
   const params = new URLSearchParams(rawQuery);
   const focus = params.get("focus") || undefined;
+  const movement = params.get("movement");
+  const containerMovement = movement === "stationary" || movement === "in_transit" || movement === "not_observed" ? movement : undefined;
   const parts = raw.split("/").filter(Boolean).map((part) => {
     try { return decodeURIComponent(part); } catch { return part; }
   });
@@ -354,7 +387,7 @@ function routeFromHash(): AppRoute {
   }
   const value = parts[0] as Page;
   return [...nav.map((item) => item.page), "settings"].includes(value)
-    ? { page: value, ...(focus ? { focus } : {}) }
+    ? { page: value, ...(containerMovement ? { containerMovement } : {}), ...(focus ? { focus } : {}) }
     : { page: "dashboard" };
 }
 
@@ -444,7 +477,7 @@ function relativeTime(value?: string | null) {
 
 function eventLabel(type: StoredEvent["eventType"]) {
   return {
-    load_assigned: "Marked full",
+    load_assigned: "Load code generated",
     batch_out: "In transit",
     batch_in: "Received",
     emptied: "Marked empty"
@@ -491,12 +524,15 @@ function eventNarrative(event: StoredEvent, data: OperationsData) {
   const subject = containerTypeLabel(container?.type);
   const locationFor = (locationId: string | null | undefined) => data.fixtures.locations.find((item) => item.locationId === locationId)?.name;
   const location = locationFor(event.locationId) ?? "an unconfirmed location";
-  if (event.eventType === "load_assigned") return `${subject} marked full at ${location}.`;
+  if (event.eventType === "load_assigned") return `Load code generated for ${subject} at ${location}.`;
   if (event.eventType === "batch_in") {
     const source = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
     return `${subject} received at ${location}${source ? ` from ${source}` : ""}.`;
   }
-  if (event.eventType === "emptied") return `${subject} marked empty at ${location}.`;
+  if (event.eventType === "emptied") {
+    const processed = typeof event.payload.processedPercentage === "number" ? ` (${event.payload.processedPercentage}% processed)` : "";
+    return `${subject} marked empty at ${location}${processed}.`;
+  }
   if (event.eventType === "batch_out") {
     const origin = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
     return inTransitEventSummary(subject, origin);
@@ -614,11 +650,9 @@ function humanizeDetailKey(key: string) {
     displayLoadCode: "Load code",
     goodsType: "Goods category",
     secondaryValue: "Classification",
+    processedPercentage: "Load processed",
     sourceLocationId: "Departure origin",
     destinationLocationId: "Received at",
-    notes: "Message for operations",
-    message: "Message for operations",
-    operatorMessage: "Message for operations"
   };
   if (aliases[key]) return aliases[key];
   return key
@@ -708,21 +742,89 @@ function eventPayloadFacts(event: StoredEvent, data: OperationsData): [string, R
     .map(([key, value]) => [humanizeDetailKey(key), humanizeDetailValue(key, value, data)] as [string, ReactNode]);
 }
 
-function eventMessage(event: StoredEvent): string | null {
-  const candidates = [event.payload.notes, event.payload.message, event.payload.operatorMessage];
-  const message = candidates.find((value): value is string => typeof value === "string" && value.trim().length > 0);
-  return message?.trim() ?? null;
-}
-
 function EventEvidence({ events, data }: { events: StoredEvent[]; data: OperationsData }) {
   return <div className="detail-events">{events.length ? events.map((event) => <article key={event.eventId}>
     <div><span className="detail-event__label"><Pill tone={event.accuracyFlags.length ? "warn" : "blue"}>{eventLabel(event.eventType)}</Pill>{event.accuracyFlags.length ? <span className="detail-event__warning-count">{event.accuracyFlags.length} warning{event.accuracyFlags.length === 1 ? "" : "s"}</span> : <span className="detail-event__verified"><CheckCircle2 size={12} /> no warnings</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div>
     <strong>{eventNarrative(event, data)}</strong>
     <span className="detail-event__id">{event.eventId} <CopyValueButton value={event.eventId} label="Copy" /></span>
-    {eventMessage(event) && <div className="detail-event__message"><MessageSquare size={14} /><span><b>Message for operations</b><em>{eventMessage(event)}</em></span></div>}
     <small>{event.accuracyFlags.length ? event.accuracyFlags.map(accuracyFlagDetail).join(" · ") : "No data-quality warnings were recorded."}</small>
     <details className="detail-event__more"><summary>View scan details</summary><DetailFacts items={[["Device", `${scannerNumber(event.deviceId)} · ${data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}`], ["Scanner record number", String(event.deviceSequence)], ["Observed", new Date(event.eventAt).toLocaleString()], ["Received", new Date(event.receivedAt).toLocaleString()], ["Effective", new Date(event.effectiveAt).toLocaleString()]]}/>{eventPayloadFacts(event, data).length > 0 ? <><span className="readable-details__label">Scan information</span><DetailFacts items={eventPayloadFacts(event, data)} /></> : <p className="detail-empty-note">No additional scan information was recorded.</p>}</details>
   </article>) : <EmptyState>No observations have been recorded for this item.</EmptyState>}</div>;
+}
+
+interface RolePreviewLauncherProps {
+  sourceRole: AdminPrincipal["role"];
+  sourceLocationIds: readonly string[];
+  locations: Location[];
+  busy: boolean;
+  error: string | null;
+  onStart: (role: AdminPrincipal["role"], locationIds: string[]) => Promise<boolean>;
+}
+
+/**
+ * A deliberately small control in the top bar. It is a preview, not an
+ * impersonation: the API keeps the real session and signs a short-lived,
+ * read-only capability for the lower role.
+ */
+function RolePreviewLauncher({ sourceRole, sourceLocationIds, locations, busy, error, onStart }: RolePreviewLauncherProps) {
+  const availableRoles = rolePreviewOrder.filter((role) => canPreviewRole(sourceRole, role));
+  const [open, setOpen] = useState(false);
+  const [targetRole, setTargetRole] = useState<AdminPrincipal["role"]>(availableRoles[0] ?? "read_only_reviewer");
+  const [locationIds, setLocationIds] = useState<string[]>(sourceRole === "location_manager" ? [...sourceLocationIds] : []);
+  const requiresLocations = targetRole === "location_manager";
+  const operatingLocations = locations.filter((location) => location.isActive !== false && location.type !== "in_transit");
+
+  useEffect(() => {
+    if (!availableRoles.includes(targetRole)) setTargetRole(availableRoles[0] ?? "read_only_reviewer");
+    if (sourceRole === "location_manager") setLocationIds([...sourceLocationIds]);
+    else if (targetRole !== "location_manager" && targetRole !== "read_only_reviewer") setLocationIds([]);
+  }, [availableRoles.join("|"), sourceLocationIds.join("|"), sourceRole, targetRole]);
+
+  if (!availableRoles.length) return null;
+
+  const toggleLocation = (locationId: string) => {
+    setLocationIds((current) => current.includes(locationId)
+      ? current.filter((value) => value !== locationId)
+      : [...current, locationId]);
+  };
+  const submit = async () => {
+    if (requiresLocations && locationIds.length === 0) return;
+    if (await onStart(targetRole, locationIds)) setOpen(false);
+  };
+
+  return <div className="role-preview-control">
+    <button className="secondary role-preview-trigger" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog">
+      <Eye size={16} /> View as
+    </button>
+    {open && <div className="role-preview-popover" role="dialog" aria-label="Preview a lower access role">
+      <div className="role-preview-popover__header"><div><span className="eyebrow">Safe read-only preview</span><strong>See the console as another role</strong></div><button className="icon-button icon-button--small" type="button" onClick={() => setOpen(false)} aria-label="Close role preview"><X size={15} /></button></div>
+      <p>Nothing is changed and your Organization Owner/Operations Administrator session stays intact. The API disables all write actions while previewing.</p>
+      <label className="field-label" htmlFor="role-preview-role">Preview role</label>
+      <select id="role-preview-role" value={targetRole} onChange={(event) => { setTargetRole(event.target.value as AdminPrincipal["role"]); setLocationIds([]); }}>
+        {availableRoles.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
+      </select>
+      {(targetRole === "location_manager" || targetRole === "read_only_reviewer") && <fieldset className="role-preview-locations">
+        <legend>{requiresLocations ? "Assigned locations (required)" : "Limit to locations (optional)"}</legend>
+        <div className="role-preview-locations__list">
+          {operatingLocations.map((location) => <label key={location.locationId} className="checkbox-row"><input type="checkbox" checked={locationIds.includes(location.locationId)} disabled={sourceRole === "location_manager"} onChange={() => toggleLocation(location.locationId)} /><span><strong>{location.name}</strong><small>{location.type === "warehouse" ? "Warehouse" : location.type === "donation_express" ? "Donation Xpress" : "Store"}</small></span></label>)}
+          {!operatingLocations.length && <span className="detail-empty-note">No active operating locations are available.</span>}
+        </div>
+      </fieldset>}
+      <div className="role-preview-popover__footer"><span>{requiresLocations ? `${locationIds.length} location${locationIds.length === 1 ? "" : "s"} selected` : targetRole === "read_only_reviewer" && locationIds.length ? `${locationIds.length} location${locationIds.length === 1 ? "" : "s"} selected` : "Network view"}</span><div><button className="secondary" type="button" onClick={() => setOpen(false)}>Cancel</button><button className="primary" type="button" disabled={busy || (requiresLocations && locationIds.length === 0)} onClick={() => void submit()}>{busy ? "Starting…" : "Start preview"}</button></div></div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </div>}
+  </div>;
+}
+
+function RolePreviewBanner({ preview, onExit }: { preview: NonNullable<AdminSession["rolePreview"]>; onExit: () => void }) {
+  const scope = preview.locationIds.length
+    ? `Limited to ${preview.locationIds.length} assigned location${preview.locationIds.length === 1 ? "" : "s"}.`
+    : "Showing the network scope for this role.";
+  return <div className="role-preview-banner" role="status">
+    <span className="role-preview-banner__icon"><Eye size={18} /></span>
+    <div className="role-preview-banner__copy"><strong>Previewing the {roleLabel(preview.previewRole)} view</strong><span>You are still signed in as an {roleLabel(preview.sourceRole)}. This is read-only; no changes can be saved. {scope} Preview ends {new Date(preview.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.</span></div>
+    <button className="primary role-preview-banner__exit" type="button" onClick={onExit}>Return to normal view</button>
+  </div>;
 }
 
 export function App() {
@@ -737,12 +839,13 @@ export function App() {
   const [query, setQuery] = useState("");
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [detail, setDetail] = useState<DetailView | null>(null);
-  const [session, setSession] = useState<AdminSession | null>(() => {
-    try {
-      const stored = sessionStorage.getItem("stacktrack.admin.session");
-      return stored ? JSON.parse(stored) as AdminSession : null;
-    } catch { return null; }
-  });
+  // Keep the real administrator session separate from the effective preview
+  // principal. Preview state is memory-only and can never replace the bearer
+  // token persisted in sessionStorage.
+  const [baseSession, setBaseSession] = useState<AdminSession | null>(() => readStoredAdminSession());
+  const [session, setSession] = useState<AdminSession | null>(() => readStoredAdminSession());
+  const [rolePreviewBusy, setRolePreviewBusy] = useState(false);
+  const [rolePreviewError, setRolePreviewError] = useState<string | null>(null);
   // The pilot console opens on the sign-in surface. A user may close it only
   // to inspect read-only operational data; all administrative writes stay
   // locked until the API verifies a session.
@@ -763,15 +866,22 @@ export function App() {
       setLastRefresh(new Date());
     } catch (caught) {
       if (caught instanceof ApiRequestError && caught.status === 401) {
+        if (session.rolePreview && baseSession) {
+          setSession(baseSession);
+          setData(null);
+          setError("This lower-role preview expired. You have been returned to your normal administrator view.");
+          return;
+        }
         sessionStorage.removeItem("stacktrack.admin.session");
+        setBaseSession(null);
         setSession(null); setData(null); setError(null);
         return;
       }
-      setError(caught instanceof Error ? caught.message : "Could not connect to the local API.");
+      setError(caught instanceof Error ? caught.message : "Could not connect to the operations service.");
     } finally {
       setLoading(false);
     }
-  }, [session]);
+  }, [baseSession, session]);
 
   useEffect(() => {
     void refresh();
@@ -831,6 +941,62 @@ export function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const beginRolePreview = async (targetRole: AdminPrincipal["role"], locationIds: string[]): Promise<boolean> => {
+    if (!baseSession || session?.rolePreview) return false;
+    setRolePreviewBusy(true);
+    setRolePreviewError(null);
+    try {
+      const result = await startRolePreview(baseSession, targetRole, locationIds);
+      const previewSession: AdminSession = {
+        ...baseSession,
+        principal: result.principal,
+        rolePreviewToken: result.previewToken,
+        rolePreview: result.preview
+      };
+      setSession(previewSession);
+      setData(null);
+      setDetail(null);
+      window.location.hash = "/dashboard";
+      setRoute({ page: "dashboard" });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return true;
+    } catch (caught) {
+      setRolePreviewError(caught instanceof Error ? caught.message : "The role preview could not be started.");
+      return false;
+    } finally {
+      setRolePreviewBusy(false);
+    }
+  };
+
+  const endRolePreview = () => {
+    if (!baseSession) return;
+    setSession(baseSession);
+    setData(null);
+    setError(null);
+    setRolePreviewError(null);
+    const target = canAccessPage(baseSession.principal.role, page) ? page : "dashboard";
+    window.location.hash = `/${target}`;
+    setRoute({ page: target });
+    setDetail(null);
+    setMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const openContainers = (movement?: ContainerMovement) => {
+    const params = new URLSearchParams();
+    if (movement) {
+      params.set("movement", movement);
+      params.set("focus", "container-filters");
+    }
+    const queryString = params.toString();
+    window.location.hash = `/containers${queryString ? `?${queryString}` : ""}`;
+    setRoute({ page: "containers", ...(movement ? { containerMovement: movement, focus: "container-filters" } : {}) });
+    setQuery("");
+    setDetail(null);
+    setMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const openLocation = (nextLocationId: string, nextFilter?: LocationInventoryFilter) => {
     if (!nextLocationId) return;
     const params = new URLSearchParams();
@@ -849,17 +1015,22 @@ export function App() {
 
   const establishSession = (next: AdminSession) => {
     sessionStorage.setItem("stacktrack.admin.session", JSON.stringify(next));
+    setBaseSession(next);
     setSession(next);
+    setRolePreviewError(null);
     setSignInOpen(false);
   };
   const signOut = async () => {
-    try { if (session) await revokeAdminSession(session); }
+    const realSession = baseSession ?? session;
+    try { if (realSession) await revokeAdminSession(realSession); }
     catch { /* Clearing this browser session is still the safe client outcome. */ }
-    finally { sessionStorage.removeItem("stacktrack.admin.session"); setSession(null); setData(null); }
+    finally { sessionStorage.removeItem("stacktrack.admin.session"); setBaseSession(null); setSession(null); setData(null); }
   };
   const markPasswordChanged = () => {
     if (!session) return;
     const next = { ...session, principal: { ...session.principal, mustChangePassword: false } };
+    const nextBase = baseSession ? { ...baseSession, principal: { ...baseSession.principal, mustChangePassword: false } } : next;
+    setBaseSession(nextBase);
     sessionStorage.setItem("stacktrack.admin.session", JSON.stringify(next));
     setSession(next);
   };
@@ -909,6 +1080,10 @@ export function App() {
         : API_URL.includes("127.0.0.1") || API_URL.includes("localhost")
           ? "API connected"
            : "Cloud API connected";
+
+  const previewableRoles = baseSession && session && !session.rolePreview
+    ? rolePreviewOrder.filter((targetRole) => canPreviewRole(baseSession.principal.role, targetRole))
+    : [];
 
   // Keep this safe while the sign-in screen is being shown.  Session state is
   // intentionally cleared before the API request is made, so rendering must
@@ -1011,6 +1186,7 @@ export function App() {
           <Mark compact />
           <div className="topbar__right">
             <span className={`scope-chip ${isScopedPrincipal(session.principal) ? "scope-chip--local" : ""}`}><MapPin size={13} /> {scopeLabel(session.principal)}</span>
+            {previewableRoles.length > 0 && <RolePreviewLauncher sourceRole={baseSession!.principal.role} sourceLocationIds={baseSession!.principal.locationIds ?? []} locations={data?.fixtures.locations ?? []} busy={rolePreviewBusy} error={rolePreviewError} onStart={beginRolePreview} />}
             <span className={`connection connection--${connectionState}`}>
               <i /> {connectionLabel}
             </span>
@@ -1019,6 +1195,8 @@ export function App() {
             </button>
           </div>
         </header>
+
+        {session.rolePreview && <RolePreviewBanner preview={session.rolePreview} onExit={endRolePreview} />}
 
         <div className="content">
           <section className="page-heading">
@@ -1064,13 +1242,13 @@ export function App() {
           {loading && !data ? (
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
-             <PageContent page={page} {...(locationId ? { locationId } : {})} {...(locationFilter ? { locationFilter } : {})} data={data} query={query} setQuery={setQuery} setPage={setPage} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
+             <PageContent page={page} {...(locationId ? { locationId } : {})} {...(locationFilter ? { locationFilter } : {})} {...(route.containerMovement ? { containerMovement: route.containerMovement } : {})} data={data} query={query} setQuery={setQuery} setPage={setPage} openContainers={openContainers} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
           ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
           <span><ShieldCheck size={15} /> Governed operations console · append-only audit foundation</span>
           <span>Goodwill operations · immutable event history</span>
-          <span>Last refreshed {lastRefresh.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+          <span>Build {BUILD_ID === "local" ? "local" : BUILD_ID.slice(0, 8)}{BUILD_TIME ? ` · ${BUILD_TIME}` : ""} · Last refreshed {lastRefresh.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
         </footer>
       </main>
       {detail && <DetailDrawer detail={detail} onClose={() => setDetail(null)} />}
@@ -1119,10 +1297,12 @@ function PageContent({
   page,
   locationId,
   locationFilter,
+  containerMovement,
   data,
   query,
   setQuery,
   setPage,
+  openContainers,
   openLocation,
   openDetail,
   refresh,
@@ -1134,10 +1314,12 @@ function PageContent({
   page: Page;
   locationId?: string | undefined;
   locationFilter?: LocationInventoryFilter;
+  containerMovement?: ContainerMovement;
   data: OperationsData;
   query: string;
   setQuery: (query: string) => void;
   setPage: (page: Page) => void;
+  openContainers: (movement?: ContainerMovement) => void;
   openLocation: (locationId: string, filter?: LocationInventoryFilter) => void;
   openDetail: OpenDetail;
   refresh: () => Promise<void>;
@@ -1150,9 +1332,9 @@ function PageContent({
   if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} session={session!} />;
   if (page === "service") return <ServicePlanPage data={data} openLocation={openLocation} />;
   if (page === "forecast") return <WarehouseForecastPage data={data} openLocation={openLocation} />;
-  if (page === "containers") return <ContainersPage data={data} query={query} openDetail={openDetail} openLocation={openLocation} setPage={setPage} session={session!} />;
+  if (page === "containers") return <ContainersPage data={data} query={query} {...(containerMovement ? { initialMovement: containerMovement } : {})} openDetail={openDetail} openLocation={openLocation} setPage={setPage} session={session!} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
-  if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} {...(locationFilter ? { focusedLocationFilter: locationFilter } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
+  if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} {...(locationFilter ? { focusedLocationFilter: locationFilter } : {})} openContainers={openContainers} openLocation={openLocation} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
   if (page === "corrections") return <CorrectionsPage data={data} query={query} session={session!} refresh={refresh} />;
   if (page === "activity") return <ActivityPage data={data} query={query} openDetail={openDetail} setPage={setPage} session={session!} />;
@@ -2198,13 +2380,11 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
   return <div className="service-plan-page">
     <section className="panel service-plan__intro">
       <div className="service-plan__intro-head"><div><span className="eyebrow">Transportation dispatch</span><h2>Daily pickup and delivery priorities</h2><p>Turn each location’s crate targets into a ranked service queue. Full crates above the pickup limit are ready to collect; empty-crate shortages are delivery priorities.</p></div><div className="service-plan__date"><label><span>Service date</span><input type="date" value={serviceDate} onChange={(event) => setServiceDate(event.target.value)} /></label><button type="button" className="secondary" onClick={exportServicePlan} disabled={!visibleRows.length}><Download size={15} /> Export current plan</button></div></div>
-      <div className="service-plan__truth"><Target size={17} /><span><strong>Planning layer, not a correction</strong><small>Counts come from the latest accepted scanner projections. The service date labels the report; scheduled route and arrival data will be needed before future dates can be simulated. Planning targets are stored in this browser for this workspace and never rewrite scan history.</small></span><Pill tone="blue">Review before dispatch</Pill></div>
     </section>
     <section className="panel service-plan__filters"><div className="service-plan__section-heading"><div><span className="eyebrow">Report scope</span><strong>Choose the locations and crate mix</strong></div><button type="button" className="secondary" onClick={() => { setLocationFilter("all"); setLocationSearch(""); setGoodsFilter("all"); setContainerFilter("all"); setPriorityFilter("action"); }}>Clear filters</button></div><div className="service-plan__filter-grid"><label className="service-plan__location-search"><span>Find a location</span><span className="service-plan__location-search-input"><Search size={13} /><input type="search" value={locationSearch} onChange={(event) => setLocationSearch(event.target.value)} placeholder="Search location" aria-label="Search service plan location" />{locationSearch && <button type="button" onClick={() => setLocationSearch("")} aria-label="Clear location search"><X size={13} /></button>}</span></label><label><span>Location</span><select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="all">All locations</option>{locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label><span>Goods category</span><select value={goodsFilter} onChange={(event) => setGoodsFilter(event.target.value)}><option value="all">All categories</option>{availableGoodsTypes.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Crate type</span><select value={containerFilter} onChange={(event) => setContainerFilter(event.target.value as "all" | ServiceContainerType)}><option value="all">All crate types</option>{serviceContainerTypes.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><label><span>Queue status</span><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as ServicePriorityFilter)}><option value="action">Needs service</option><option value="all">All target rows</option><option value="critical">Critical only</option><option value="pickup">Pickup ready</option><option value="delivery">Delivery needed</option><option value="watch">Verify data</option><option value="on_target">On target</option></select></label></div></section>
     <section className="service-plan__summary"><article><span><Truck size={16} />Pickup stops</span><strong>{pickupStops}</strong><small>{pickupTotal} full crate{pickupTotal === 1 ? "" : "s"} ready to collect</small></article><article><span><PackageCheck size={16} />Delivery stops</span><strong>{deliveryStops}</strong><small>{deliveryTotal} empty crate{deliveryTotal === 1 ? "" : "s"} needed</small></article><article><span><AlertTriangle size={16} />Critical shortages</span><strong>{criticalRows.length}</strong><small>Locations with no safe empty-crate buffer</small></article><article><span><CircleHelp size={16} />Data to verify</span><strong>{unknownRows.length}</strong><small>Target rows with an unknown crate state</small></article></section>
     <section className="panel service-plan__workspace"><div className="service-plan__workspace-head"><div><span className="eyebrow">Dispatch worklist</span><h2>{mode === "queue" ? "What transportation should review first" : "Location target setup"}</h2><p>{mode === "queue" ? `${visibleRows.length} matching target row${visibleRows.length === 1 ? "" : "s"} · sorted by shortage and pickup urgency.` : "Set the operating limits that create pickup and delivery recommendations. Start with the targets Goodwill already uses on paper."}</p></div><div className="service-plan__mode-tabs" role="tablist" aria-label="Service plan view"><button type="button" className={mode === "queue" ? "active" : ""} onClick={() => setMode("queue")}>Dispatch queue</button><button type="button" className={mode === "targets" ? "active" : ""} onClick={() => setMode("targets")}>Target setup</button></div></div>
       {mode === "queue" ? <ServicePlanQueue groups={visibleQueueGroups} totalGroups={queueGroups.length} pageSize={queuePageSize} page={safeQueuePage} pageCount={queuePageCount} onPageSizeChange={(size) => { setQueuePageSize(size); setQueuePage(0); }} onPageChange={setQueuePage} openLocation={openLocation} /> : <div className="service-plan__targets"><form className="service-plan__add-target" onSubmit={addTarget}><div><span className="eyebrow">Add a target row</span><strong>Plan another location / goods / crate combination</strong><small>Use this when a location needs a rule before it has produced a scan.</small></div><label><span>Location</span><select value={targetLocation} onChange={(event) => setTargetLocation(event.target.value)}>{locations.map((location) => <option value={location.locationId} key={location.locationId}>{location.name}</option>)}</select></label><label><span>Goods category</span><select value={targetGoods} onChange={(event) => setTargetGoods(event.target.value)}>{availableGoodsTypes.map((goodsType) => <option value={goodsType} key={goodsType}>{goodsType}</option>)}</select></label><label><span>Crate type</span><select value={targetContainer} onChange={(event) => setTargetContainer(event.target.value as ServiceContainerType)}>{serviceContainerTypes.map((containerType) => <option value={containerType} key={containerType}>{containerTypeLabel(containerType)}</option>)}</select></label><button type="submit" className="primary"><Plus size={15} /> Add target</button></form><div className="table-wrap service-plan__target-table-wrap"><table className="service-plan__table service-plan__target-table"><thead><tr><th>Location</th><th>Goods</th><th>Crate</th><th>Minimum on hand</th><th>Maximum on hand</th><th>Minimum empty</th><th>Maximum full</th><th></th></tr></thead><tbody>{visibleRows.length ? visibleRows.map((row) => <tr key={row.key}><th><strong>{row.location.name}</strong><small>{locationTypeLabel(row.location.type)}</small></th><td>{row.goodsType}</td><td>{containerTypeLabel(row.containerType)}</td>{(["minimumOnHand", "maximumOnHand", "minimumEmpty", "maximumFull"] as const).map((field) => <td key={field}><input aria-label={`${field} for ${row.location.name} ${row.goodsType} ${containerTypeLabel(row.containerType)}`} type="number" min="0" max="999" value={row.target[field]} onChange={(event) => updateTarget(row, field, event.target.value)} /></td>)}<td><button type="button" className="service-plan__reset" onClick={() => resetTarget(row)} disabled={!targetOverrides[row.key]}>{targetOverrides[row.key] ? "Reset default" : "Default"}</button></td></tr>) : <tr><td colSpan={8}><div className="service-plan__empty"><Target size={22} /><strong>No target rows match these filters.</strong><span>Add a target above or broaden the location, goods, and crate filters.</span></div></td></tr>}</tbody></table></div></div>}
-      <p className="service-plan__note">Starting targets are conservative defaults. Organization Owners should confirm minimums, pickup thresholds, truck capacity, route timing, and whether full crates can be swapped for empties on the same stop before this becomes an automated dispatch instruction.</p>
     </section>
   </div>;
 }
@@ -2275,42 +2455,42 @@ function Dashboard({ data, setPage, openLocation, session }: { data: OperationsD
         <Metric icon={<AlertTriangle />} label="Needs attention" value={attentionCount} detail={attentionCount ? `${review} history issue${review === 1 ? "" : "s"} · ${pendingCorrections.length} approval${pendingCorrections.length === 1 ? "" : "s"}` : "No open exceptions"} tone={attentionCount ? "orange" : "green"} onClick={() => setPage("exceptions")} />
       </div>
 
-      <section className={`dashboard-scope-banner ${scoped ? "dashboard-scope-banner--local" : ""}`}>
+      {scoped && <section className="dashboard-scope-banner dashboard-scope-banner--local">
         <span className="dashboard-scope-banner__icon"><MapPin size={17} /></span>
-        <div><strong>{scoped ? `Showing ${scopeLabel(session.principal).toLowerCase()}` : "Company-wide live view"}</strong><span>{scoped ? "The API has limited this workspace to the locations assigned to your account. Cross-location records remain protected." : "Counts and actions below include every active Goodwill operating location visible to your account."}</span></div>
-        <Pill tone={scoped ? "blue" : "good"}>{scoped ? "Scoped access" : "Network view"}</Pill>
-      </section>
+        <div><strong>Showing {scopeLabel(session.principal).toLowerCase()}</strong><span>Your workspace is limited to the locations assigned to your account. Cross-location records remain protected.</span></div>
+        <Pill tone="blue">Assigned scope</Pill>
+      </section>}
 
       <section className="dashboard-start panel" aria-labelledby="dashboard-start-title">
         <div className="dashboard-start__heading">
           <div><span className="eyebrow">Start here</span><h2 id="dashboard-start-title">{session.principal.role === "organization_owner" ? "Keep the network governed" : session.principal.role === "operations_administrator" ? "Prioritize today’s operations" : session.principal.role === "location_manager" ? "Run your assigned locations" : "Review your assigned operations"}</h2><p>{session.principal.role === "organization_owner" ? "Use the live signals below to protect data quality, access, and operational continuity." : session.principal.role === "operations_administrator" ? "Use the queue, devices, and activity feed together when deciding what needs attention first." : session.principal.role === "location_manager" ? "Your changes stay within your assigned locations; official history decisions remain with corporate review." : "Open a work area to inspect evidence. Your account is view-only."}</p></div>
-          <Pill tone={scoped ? "blue" : "good"}>{scoped ? "Assigned scope" : "Network scope"}</Pill>
+          {scoped && <Pill tone="blue">Assigned scope</Pill>}
         </div>
         <div className="dashboard-start__actions">
           {session.principal.role === "organization_owner" && <>
-            <button type="button" onClick={() => setPage("exceptions")}><span><AlertTriangle size={16} /></span><strong>Review attention items</strong><small>{attentionCount ? `${attentionCount} open item${attentionCount === 1 ? "" : "s"}` : "Nothing waiting"}</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("settings")}><span><Settings size={16} /></span><strong>Manage access</strong><small>Users, locations, and policies</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("audit")}><span><ScrollText size={16} /></span><strong>Audit decisions</strong><small>Search administrative history</small><ChevronRight size={15} /></button>
+            <DashboardStartAction icon={<AlertTriangle size={16} />} title="Review attention items" detail="History conflicts and approvals" count={attentionCount ? `${attentionCount} open` : "Clear"} tone="blue" onClick={() => setPage("exceptions")} />
+            <DashboardStartAction icon={<Settings size={16} />} title="Manage access" detail="Users, locations, and policies" tone="green" onClick={() => setPage("settings")} />
+            <DashboardStartAction icon={<ScrollText size={16} />} title="Audit decisions" detail="Search administrative history" tone="navy" onClick={() => setPage("audit")} />
           </>}
           {session.principal.role === "operations_administrator" && <>
-            <button type="button" onClick={() => setPage("exceptions")}><span><AlertTriangle size={16} /></span><strong>Review exceptions</strong><small>{attentionCount ? `${attentionCount} need attention` : "Queue is clear"}</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("service")}><span><Truck size={16} /></span><strong>Plan service stops</strong><small>Prioritize pickups and deliveries</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("devices")}><span><Smartphone size={16} /></span><strong>Check scanners</strong><small>{staleDevices.length ? `${staleDevices.length} stale report${staleDevices.length === 1 ? "" : "s"}` : "All reports current"}</small><ChevronRight size={15} /></button>
+            <DashboardStartAction icon={<AlertTriangle size={16} />} title="Review exceptions" detail="History conflicts and approvals" count={attentionCount ? `${attentionCount} open` : "Clear"} tone="blue" onClick={() => setPage("exceptions")} />
+            <DashboardStartAction icon={<Truck size={16} />} title="Plan service stops" detail="Prioritize pickups and deliveries" tone="green" onClick={() => setPage("service")} />
+            <DashboardStartAction icon={<Smartphone size={16} />} title="Check scanners" detail="Availability and app version" count={staleDevices.length ? `${staleDevices.length} stale` : "Current"} tone="navy" onClick={() => setPage("devices")} />
           </>}
           {session.principal.role === "location_manager" && <>
-            <button type="button" onClick={() => setPage("activity")}><span><Activity size={16} /></span><strong>Review recent scans</strong><small>{observationsLastDay} in the last 24 hours</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("devices")}><span><Smartphone size={16} /></span><strong>Check local scanners</strong><small>Availability and app version</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("corrections")}><span><FilePenLine size={16} /></span><strong>Request a correction</strong><small>Explain the issue for corporate review</small><ChevronRight size={15} /></button>
+            <DashboardStartAction icon={<Activity size={16} />} title="Review recent scans" detail="Physical observations from your site" count={`${observationsLastDay} today`} tone="blue" onClick={() => setPage("activity")} />
+            <DashboardStartAction icon={<Smartphone size={16} />} title="Check local scanners" detail="Availability and app version" tone="green" onClick={() => setPage("devices")} />
+            <DashboardStartAction icon={<FilePenLine size={16} />} title="Request a correction" detail="Explain the issue for corporate review" tone="navy" onClick={() => setPage("corrections")} />
           </>}
           {session.principal.role === "read_only_reviewer" && <>
-            <button type="button" onClick={() => setPage("containers")}><span><ContainerIcon size={16} /></span><strong>Inspect containers</strong><small>Open history and current state</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("activity")}><span><Activity size={16} /></span><strong>Trace scanner activity</strong><small>Follow physical observations</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={openAssignedLocation}><span><MapPin size={16} /></span><strong>{assignedLocationId ? "Open assigned location" : "Open a location"}</strong><small>{assignedLocationId ? "Jump straight to your assigned site" : "Review assigned operating sites"}</small><ChevronRight size={15} /></button>
+            <DashboardStartAction icon={<ContainerIcon size={16} />} title="Inspect containers" detail="Open history and current state" tone="blue" onClick={() => setPage("containers")} />
+            <DashboardStartAction icon={<Activity size={16} />} title="Trace scanner activity" detail="Follow physical observations" tone="green" onClick={() => setPage("activity")} />
+            <DashboardStartAction icon={<MapPin size={16} />} title={assignedLocationId ? "Open assigned location" : "Open a location"} detail={assignedLocationId ? "Jump straight to your assigned site" : "Review assigned operating sites"} tone="navy" onClick={openAssignedLocation} />
           </>}
           {session.principal.role === "support" && <>
-            <button type="button" onClick={() => setPage("devices")}><span><Smartphone size={16} /></span><strong>Check scanner reports</strong><small>Availability and app versions</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("activity")}><span><Activity size={16} /></span><strong>Trace observations</strong><small>Read-only operational feed</small><ChevronRight size={15} /></button>
-            <button type="button" onClick={() => setPage("locations")}><span><MapPin size={16} /></span><strong>Open locations</strong><small>Review current assignments</small><ChevronRight size={15} /></button>
+            <DashboardStartAction icon={<Smartphone size={16} />} title="Check scanner reports" detail="Availability and app versions" tone="blue" onClick={() => setPage("devices")} />
+            <DashboardStartAction icon={<Activity size={16} />} title="Trace observations" detail="Read-only operational feed" tone="green" onClick={() => setPage("activity")} />
+            <DashboardStartAction icon={<MapPin size={16} />} title="Open locations" detail="Review current assignments" tone="navy" onClick={() => setPage("locations")} />
           </>}
         </div>
       </section>
@@ -2532,6 +2712,17 @@ interface DashboardRoute {
 function Metric({ icon, label, value, detail, tone, onClick }: { icon: ReactNode; label: string; value: number; detail: string; tone: string; onClick?: () => void }) {
   const content = <><div className={`metric__icon metric__icon--${tone}`}>{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div></>;
   return onClick ? <button type="button" className="metric metric--action" onClick={onClick} aria-label={`${label}: ${value}. ${detail}`}>{content}</button> : <div className="metric">{content}</div>;
+}
+
+function DashboardStartAction({ icon, title, detail, count, tone, onClick }: { icon: ReactNode; title: string; detail: string; count?: string; tone: "blue" | "green" | "navy"; onClick: () => void }) {
+  return <button type="button" className="dashboard-start__action" onClick={onClick}>
+    <span className={`dashboard-start__icon dashboard-start__icon--${tone}`}>{icon}</span>
+    <span className="dashboard-start__copy">
+      <strong>{title}{count && <em className="dashboard-start__count">{count}</em>}</strong>
+      <small>{detail}</small>
+    </span>
+    <ChevronRight size={16} aria-hidden="true" />
+  </button>;
 }
 
 function PanelTitle({ title, subtitle, action, onClick }: { title: string; subtitle: string; action?: string; onClick?: () => void }) {
@@ -2814,15 +3005,12 @@ type ContainerTimeWindow = "all" | "today" | "7d" | "30d";
 type ContainerSort = "newest" | "oldest" | "label" | "location" | "health";
 type ContainerMovement = "stationary" | "in_transit" | "not_observed";
 type ContainerHealth = "clean" | "warning" | "needs_review" | "corrected" | "no_history";
-type ContainerMessageFilter = "with_message" | "without_message";
-
 interface ContainerFilters {
   states: Projection["loadState"][];
   types: Container["type"][];
   locations: string[];
   movement: ContainerMovement[];
   health: ContainerHealth[];
-  messages: ContainerMessageFilter[];
   timeWindow: ContainerTimeWindow;
   from: string;
   to: string;
@@ -2830,7 +3018,7 @@ interface ContainerFilters {
 }
 
 const emptyContainerFilters: ContainerFilters = {
-  states: [], types: [], locations: [], movement: [], health: [], messages: [], timeWindow: "all", from: "", to: "", sort: "newest"
+  states: [], types: [], locations: [], movement: [], health: [], timeWindow: "all", from: "", to: "", sort: "newest"
 };
 
 interface ContainerFilterRow {
@@ -2842,8 +3030,6 @@ interface ContainerFilterRow {
   locationIds: string[];
   locationLabel: string;
   lastObservedAt: string | null;
-  latestMessage: string | null;
-  messageCount: number;
   events: StoredEvent[];
 }
 
@@ -2864,9 +3050,16 @@ function containerHealthLabel(value: ContainerHealth) {
   return ({ clean: "Clean", warning: "Warning", needs_review: "Needs review", corrected: "Corrected", no_history: "No history" } as Record<ContainerHealth, string>)[value];
 }
 
-function ContainersPage({ data, query, openDetail, openLocation, setPage, session }: { data: OperationsData; query: string; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void; session: AdminSession }) {
-  const [draft, setDraft] = useState<ContainerFilters>(emptyContainerFilters);
-  const [applied, setApplied] = useState<ContainerFilters>(emptyContainerFilters);
+function ContainersPage({ data, query, initialMovement, openDetail, openLocation, setPage, session }: { data: OperationsData; query: string; initialMovement?: ContainerMovement; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void; session: AdminSession }) {
+  const routeFilters = initialMovement ? { ...emptyContainerFilters, movement: [initialMovement] as ContainerMovement[] } : emptyContainerFilters;
+  const [draft, setDraft] = useState<ContainerFilters>(routeFilters);
+  const [applied, setApplied] = useState<ContainerFilters>(routeFilters);
+  useEffect(() => {
+    const next = initialMovement ? { ...emptyContainerFilters, movement: [initialMovement] as ContainerMovement[] } : emptyContainerFilters;
+    setDraft(next);
+    setApplied(next);
+    setPageIndex(0);
+  }, [initialMovement]);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   useEffect(() => setPageIndex(0), [query, applied]);
@@ -2876,7 +3069,6 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage, sessio
     const projection = data.projections[container.containerId];
     const route = getContainerRouteContext(container.containerId, data);
     const events = data.events.filter((event) => event.containerId === container.containerId).sort((left, right) => eventSortTimestamp(left) - eventSortTimestamp(right));
-    const messages = events.map(eventMessage).filter((message): message is string => Boolean(message));
     const lastObservedAt = projection?.lastObservedAt ?? events.at(-1)?.effectiveAt ?? null;
     const movement: ContainerMovement = !projection ? "not_observed" : route.inTransit ? "in_transit" : "stationary";
     const locationIds = Array.from(new Set([
@@ -2890,7 +3082,7 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage, sessio
     const locationLabel = route.inTransit
       ? inTransitDepartureSummary(route.origin?.name)
       : route.currentLocation?.name ?? "Not yet observed";
-    return { container, projection, route, movement, health: containerHealthKey(projection), locationIds, locationLabel, lastObservedAt, latestMessage: messages.at(-1) ?? null, messageCount: messages.length, events };
+    return { container, projection, route, movement, health: containerHealthKey(projection), locationIds, locationLabel, lastObservedAt, events };
   }), [data]);
 
   const locationOptions = data.fixtures.locations
@@ -2923,14 +3115,13 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage, sessio
     return (quickStart === null || timestamp >= quickStart) && (fromTimestamp === null || timestamp >= fromTimestamp) && (toTimestamp === null || timestamp <= toTimestamp);
   };
   const filteredRows = allRows.filter((row) => {
-    const searchable = [row.container.label, row.container.containerId, row.container.type, row.locationLabel, row.latestMessage ?? "", ...row.events.map((event) => eventNarrative(event, data))].join(" ").toLowerCase();
+    const searchable = [row.container.label, row.container.containerId, row.container.type, row.locationLabel, ...row.events.map((event) => eventNarrative(event, data))].join(" ").toLowerCase();
     return (!searchTerm || searchable.includes(searchTerm))
       && (!applied.states.length || applied.states.includes(row.projection?.loadState ?? "unknown"))
       && (!applied.types.length || applied.types.includes(row.container.type))
       && (!applied.locations.length || applied.locations.some((locationId) => row.locationIds.includes(locationId)))
       && (!applied.movement.length || applied.movement.includes(row.movement))
       && (!applied.health.length || applied.health.includes(row.health))
-      && (!applied.messages.length || applied.messages.includes(row.latestMessage ? "with_message" : "without_message"))
       && matchesDate(row);
   }).sort((left, right) => {
     if (applied.sort === "label") return left.container.label.localeCompare(right.container.label);
@@ -2945,9 +3136,9 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage, sessio
   });
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const visibleRows = filteredRows.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize);
-  const activeFilterCount = draft.states.length + draft.types.length + draft.locations.length + draft.movement.length + draft.health.length + draft.messages.length + (draft.timeWindow !== "all" ? 1 : 0) + (draft.from ? 1 : 0) + (draft.to ? 1 : 0);
+  const activeFilterCount = draft.states.length + draft.types.length + draft.locations.length + draft.movement.length + draft.health.length + (draft.timeWindow !== "all" ? 1 : 0) + (draft.from ? 1 : 0) + (draft.to ? 1 : 0);
   const clearFilters = () => { setDraft(emptyContainerFilters); setApplied(emptyContainerFilters); setPageIndex(0); };
-  const toggleContainerFilter = (key: "states" | "types" | "locations" | "movement" | "health" | "messages", value: string) => setDraft((current) => {
+  const toggleContainerFilter = (key: "states" | "types" | "locations" | "movement" | "health", value: string) => setDraft((current) => {
     const selected = current[key] as string[];
     return { ...current, [key]: selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value] } as ContainerFilters;
   });
@@ -2956,13 +3147,12 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage, sessio
     const projection = data.projections[container.containerId];
     const route = getContainerRouteContext(container.containerId, data);
     const events = data.events.filter((event) => event.containerId === container.containerId).sort((left, right) => eventSortTimestamp(right) - eventSortTimestamp(left));
-    const messageEvents = events.filter((event) => eventMessage(event));
     openDetail({
       eyebrow: `${containerTypeLabel(container.type)} record`,
       title: container.label,
       icon: <ContainerIcon size={18} />,
       status: projection?.health === "needs_review" ? { label: "Needs review", tone: "warn" } : { label: projection?.loadState === "loaded" ? "Loaded" : projection?.loadState === "empty" ? "Empty" : "Not observed", tone: projection?.loadState === "loaded" ? "blue" : projection?.loadState === "empty" ? "good" : "muted" },
-      summary: "Current container state, recorded movement, scanner messages, and the complete observation history.",
+      summary: "Current container state, recorded movement, and the complete observation history.",
       recordId: container.containerId,
       recordIdLabel: "Container UUID",
       actions: projection?.health === "needs_review" ? <button className="secondary" onClick={() => setPage("exceptions")}><AlertTriangle size={15} /> Open review queue</button> : undefined,
@@ -2972,9 +3162,8 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage, sessio
         ["Movement", humanRouteSummary(route)],
         ["Last known location", route.inTransit ? inTransitDepartureSummary(route.origin?.name ?? route.lastConfirmedLocation?.name) : locationName(projection?.locationId)],
         ["History health", projectionHealthLabel(projection?.health)],
-        ["Messages", messageEvents.length ? `${messageEvents.length} message${messageEvents.length === 1 ? "" : "s"} from scanners` : "No scanner messages"],
         ["Official correction", projection?.administrativeCorrection ? `Approved ${new Date(projection.administrativeCorrection.approvedAt).toLocaleString()}` : "None applied"]
-      ]}/><ContainerRouteSummary containerId={container.containerId} data={data} onOpenLocation={openLocation}/>{messageEvents.length > 0 && <section className="container-message-panel"><div className="container-message-panel__heading"><MessageSquare size={17} /><div><h3>Messages from scanners</h3><p>Notes entered on the mobile app are kept with the observation so operations can see the context.</p></div></div><div className="container-message-list">{messageEvents.map((event) => <article key={event.eventId}><div><strong>{eventNarrative(event, data)}</strong><time>{new Date(event.eventAt).toLocaleString()}</time></div><p>{eventMessage(event)}</p><small>{scannerNumber(event.deviceId)} · {data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? "Unknown scanner"}</small></article>)}</div></section>}{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={events} data={data}/></>
+      ]}/><ContainerRouteSummary containerId={container.containerId} data={data} onOpenLocation={openLocation}/>{projection?.administrativeCorrection && <div className="detail-callout"><FilePenLine size={20}/><span><strong>Approved correction by {projection.administrativeCorrection.approvedByDisplayName}:</strong> {projection.administrativeCorrection.reason}. A newer physical scan will automatically supersede this official-state override.</span></div>}<h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={events} data={data}/></>
     });
   };
   const movementRows = filteredRows.filter((row) => row.movement === "in_transit");
@@ -2986,27 +3175,26 @@ function ContainersPage({ data, query, openDetail, openLocation, setPage, sessio
     return { ...group, rows, count: rows.length, labels: rows.slice(0, 3).map((row) => row.container.label) };
   });
   const exportRows = () => downloadCsv("stacktrack-containers.csv", [
-    ["Label", "Type", "State", "Position or route", "Last observed", "History health", "Messages", "Latest message"],
-    ...filteredRows.map((row) => [row.container.label, containerTypeLabel(row.container.type), loadStateLabel(row.projection?.loadState), row.locationLabel, row.lastObservedAt ?? "", containerHealthLabel(row.health), String(row.messageCount), row.latestMessage ?? ""])
+    ["Label", "Type", "State", "Position or route", "Last observed", "History health"],
+    ...filteredRows.map((row) => [row.container.label, containerTypeLabel(row.container.type), loadStateLabel(row.projection?.loadState), row.locationLabel, row.lastObservedAt ?? "", containerHealthLabel(row.health)])
   ]);
   return (
     <>
     <RoleScopeNotice principal={session.principal} pageLabel="Containers" />
     <section className="panel containers-panel">
-      <div className="container-filter-panel"><div className="container-filter-panel__header"><div><span className="eyebrow">Detailed container filters</span><h2>Find the exact assets to review</h2><p>Each filter updates immediately.</p></div><div className="container-filter-panel__actions"><button className="secondary" onClick={exportRows} disabled={!filteredRows.length}><Download size={15} /> Export filtered CSV</button><span>{filteredRows.length} matching</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button></div></div><div className="container-filter-grid">
-        <AuditMultiSelect label="Current state" options={[{ value: "loaded", label: "Loaded" }, { value: "empty", label: "Empty" }, { value: "unknown", label: "Not observed" }]} selected={draft.states} onToggle={(value) => toggleContainerFilter("states", value)} onClear={() => setDraft((current) => ({ ...current, states: [] }))} emptyLabel="All states" />
-        <AuditMultiSelect label="Container type" options={[{ value: "bin", label: "Bin" }, { value: "cart", label: "Cart" }, { value: "gaylord", label: "Gaylord" }]} selected={draft.types} onToggle={(value) => toggleContainerFilter("types", value)} onClear={() => setDraft((current) => ({ ...current, types: [] }))} emptyLabel="All types" />
-        <AuditMultiSelect label="Locations involved" options={locationOptions} selected={draft.locations} onToggle={(value) => toggleContainerFilter("locations", value)} onClear={() => setDraft((current) => ({ ...current, locations: [] }))} emptyLabel="All locations" />
-        <AuditMultiSelect label="Movement" options={[{ value: "stationary", label: "At confirmed location" }, { value: "in_transit", label: "In transit" }, { value: "not_observed", label: "Not observed" }]} selected={draft.movement} onToggle={(value) => toggleContainerFilter("movement", value)} onClear={() => setDraft((current) => ({ ...current, movement: [] }))} emptyLabel="All movement" />
-        <AuditMultiSelect label="History health" options={[{ value: "clean", label: "Clean" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }, { value: "corrected", label: "Corrected" }, { value: "no_history", label: "No history" }]} selected={draft.health} onToggle={(value) => toggleContainerFilter("health", value)} onClear={() => setDraft((current) => ({ ...current, health: [] }))} emptyLabel="All health" />
-        <AuditMultiSelect label="Scanner messages" options={[{ value: "with_message", label: "Has a message" }, { value: "without_message", label: "No message" }]} selected={draft.messages} onToggle={(value) => toggleContainerFilter("messages", value)} onClear={() => setDraft((current) => ({ ...current, messages: [] }))} emptyLabel="Any message status" />
+      <div className="container-filter-panel" data-route-focus="container-filters"><div className="container-filter-panel__header"><div><span className="eyebrow">Detailed container filters</span><h2>Find the exact assets to review</h2><p>Each filter updates immediately.</p></div><div className="container-filter-panel__actions"><button className="secondary" onClick={exportRows} disabled={!filteredRows.length}><Download size={15} /> Export filtered CSV</button><span>{filteredRows.length} matching</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button></div></div><div className="container-filter-grid">
+        <AuditMultiSelect stacked label="Current state" options={[{ value: "loaded", label: "Loaded" }, { value: "empty", label: "Empty" }, { value: "unknown", label: "Not observed" }]} selected={draft.states} onToggle={(value) => toggleContainerFilter("states", value)} onClear={() => setDraft((current) => ({ ...current, states: [] }))} emptyLabel="All states" />
+        <AuditMultiSelect stacked label="Container type" options={[{ value: "bin", label: "Bin" }, { value: "cart", label: "Cart" }, { value: "gaylord", label: "Gaylord" }]} selected={draft.types} onToggle={(value) => toggleContainerFilter("types", value)} onClear={() => setDraft((current) => ({ ...current, types: [] }))} emptyLabel="All types" />
+        <AuditMultiSelect stacked label="Locations involved" options={locationOptions} selected={draft.locations} onToggle={(value) => toggleContainerFilter("locations", value)} onClear={() => setDraft((current) => ({ ...current, locations: [] }))} emptyLabel="All locations" />
+        <AuditMultiSelect stacked label="Movement" options={[{ value: "stationary", label: "At confirmed location" }, { value: "in_transit", label: "In transit" }, { value: "not_observed", label: "Not observed" }]} selected={draft.movement} onToggle={(value) => toggleContainerFilter("movement", value)} onClear={() => setDraft((current) => ({ ...current, movement: [] }))} emptyLabel="All movement" />
+        <AuditMultiSelect stacked label="History health" options={[{ value: "clean", label: "Clean" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }, { value: "corrected", label: "Corrected" }, { value: "no_history", label: "No history" }]} selected={draft.health} onToggle={(value) => toggleContainerFilter("health", value)} onClear={() => setDraft((current) => ({ ...current, health: [] }))} emptyLabel="All health" />
         <label>Time window<select value={draft.timeWindow} onChange={(event) => setDraft((current) => ({ ...current, timeWindow: event.target.value as ContainerTimeWindow }))}><option value="all">Any time</option><option value="today">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
         <label>Sort results<select value={draft.sort} onChange={(event) => setDraft((current) => ({ ...current, sort: event.target.value as ContainerSort }))}><option value="newest">Most recently observed</option><option value="oldest">Least recently observed</option><option value="label">Container label A–Z</option><option value="location">Location A–Z</option><option value="health">Health status</option></select></label>
         <label>From date<input type="date" value={draft.from} onChange={(event) => setDraft((current) => ({ ...current, from: event.target.value }))} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))} /></label>
       </div>{draftDateError && <p className="container-filter-error">{draftDateError}</p>}</div>
       {movementRows.length > 0 && <div className="container-movement-summary"><div className="container-movement-summary__intro"><span className="container-movement-summary__icon"><Truck size={20} /></span><div><span className="eyebrow">Movement monitor</span><strong>{movementRows.length} container{movementRows.length === 1 ? "" : "s"} currently in transit</strong><p>Each item shows the confirmed location it left. The next arrival scan records where it was received.</p></div></div><div className="container-movement-summary__routes">{movementGroups.slice(0, 3).map((group) => <button className="container-movement-summary__route" key={group.key} onClick={() => showContainer(group.rows[0]!.container)}><span className="container-movement-summary__route-icon"><i /><Truck size={14} /></span><span><strong title={inTransitDepartureSummary(group.origin?.name)}>{inTransitDepartureSummary(group.origin?.name)}</strong><small>{group.count} moving · {group.labels.join(", ")}{group.count > group.labels.length ? ` +${group.count - group.labels.length} more` : ""}</small></span><ChevronRight size={15} /></button>)}{movementGroups.length > 3 && <small className="container-movement-summary__more">+ {movementGroups.length - 3} additional departure{movementGroups.length - 3 === 1 ? "" : "s"} in the table below</small>}</div></div>}
-      <div className="table-wrap"><table className="container-table"><thead><tr><th>Container label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>Messages</th><th>History health</th></tr></thead><tbody>{visibleRows.map((row) => <tr className="clickable-row" role="button" tabIndex={0} aria-label={`Open details for ${row.container.label}`} key={row.container.containerId} onClick={() => showContainer(row.container)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showContainer(row.container); } }}><td><strong className="asset-label" title="Unique container label">{row.container.label}</strong></td><td className="capitalize">{containerTypeLabel(row.container.type)}</td><td><Pill tone={row.projection?.loadState === "loaded" ? "blue" : row.projection?.loadState === "empty" ? "good" : "muted"}>{loadStateLabel(row.projection?.loadState)}</Pill></td><td><ContainerRouteCell route={row.route} /></td><td>{relativeTime(row.lastObservedAt)}</td><td>{row.messageCount ? <span className="container-message-count"><MessageSquare size={13} /> {row.messageCount}</span> : <span className="container-message-none">None</span>}</td><td>{row.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : row.health === "corrected" ? <Pill tone="blue">Corrected</Pill> : row.health === "clean" ? <Pill tone="good">Clean</Pill> : row.health === "warning" ? <Pill tone="warn">Warning</Pill> : <Pill tone="muted">No history</Pill>}</td></tr>)}</tbody></table>{filteredRows.length === 0 && <EmptyState>No containers match the current filters. Clear a filter or broaden the global search.</EmptyState>}</div>
+      <div className="table-wrap"><table className="container-table"><thead><tr><th>Container label</th><th>Container type</th><th>Current state</th><th>Position / movement</th><th>Last observed</th><th>History health</th></tr></thead><tbody>{visibleRows.map((row) => <tr className="clickable-row" role="button" tabIndex={0} aria-label={`Open details for ${row.container.label}`} key={row.container.containerId} onClick={() => showContainer(row.container)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showContainer(row.container); } }}><td><strong className="asset-label" title="Unique container label">{row.container.label}</strong></td><td className="capitalize">{containerTypeLabel(row.container.type)}</td><td><Pill tone={row.projection?.loadState === "loaded" ? "blue" : row.projection?.loadState === "empty" ? "good" : "muted"}>{loadStateLabel(row.projection?.loadState)}</Pill></td><td><ContainerRouteCell route={row.route} /></td><td>{relativeTime(row.lastObservedAt)}</td><td>{row.health === "needs_review" ? <Pill tone="warn">Needs review</Pill> : row.health === "corrected" ? <Pill tone="blue">Corrected</Pill> : row.health === "clean" ? <Pill tone="good">Clean</Pill> : row.health === "warning" ? <Pill tone="warn">Warning</Pill> : <Pill tone="muted">No history</Pill>}</td></tr>)}</tbody></table>{filteredRows.length === 0 && <EmptyState>No containers match the current filters. Clear a filter or broaden the global search.</EmptyState>}</div>
       <PaginationControls pageIndex={pageIndex} pageCount={pageCount} pageSize={pageSize} total={filteredRows.length} ariaLabel="Container pagination" onPageChange={setPageIndex} onPageSizeChange={(nextSize) => { setPageSize(nextSize); setPageIndex(0); }} />
     </section>
     </>
@@ -3082,7 +3270,7 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
   const exportLoads = () => {
     if (!loads.length) return;
     downloadCsv("stacktrack-load-codes.csv", [
-      ["Load code", "Container", "Location", "Status", "Goods type", "Classification", "Message for operations", "Created at", "Scanner"],
+      ["Load code", "Container", "Location", "Status", "Goods type", "Classification", "Created at", "Scanner"],
       ...loads.map((event) => [
         codeFor(event),
         containerName(event.containerId),
@@ -3090,7 +3278,6 @@ function LoadsPage({ data, query, openDetail }: { data: OperationsData; query: s
         isActive(event) ? "Available" : "Used",
         String(event.payload.goodsType ?? ""),
         String(event.payload.secondaryValue ?? ""),
-        eventMessage(event) ?? "",
         event.eventAt,
         data.fixtures.devices.find((device) => device.deviceId === event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`
       ])
@@ -3182,6 +3369,34 @@ function wasReceivedAtLocation(projection: Projection, locationId: string, data:
 
 type RouteRecord = { container: Container; projection: Projection | null; route: ContainerRouteContext };
 
+type LocationTypeFilter = "all" | Location["type"];
+type LocationHealthFilter = "all" | "attention";
+type LocationSort = "work" | "containers" | "activity" | "alphabetical";
+type LocationPageSize = 12 | 24 | 50 | "all";
+
+type LocationDirectoryControls = {
+  query: string;
+  typeFilter: LocationTypeFilter;
+  healthFilter: LocationHealthFilter;
+  sort: LocationSort;
+  pageSize: LocationPageSize;
+  page: number;
+  pageCount: number;
+  matchingCount: number;
+  totalCount: number;
+  filteredContainerCount: number;
+  filteredReviewCount: number;
+  onQueryChange: (value: string) => void;
+  onTypeFilterChange: (value: LocationTypeFilter) => void;
+  onHealthFilterChange: (value: LocationHealthFilter) => void;
+  onSortChange: (value: LocationSort) => void;
+  onPageSizeChange: (value: LocationPageSize) => void;
+  onPageChange: (value: number) => void;
+  onClear: () => void;
+  onExport: () => void;
+  onViewTransit: () => void;
+};
+
 function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, routeRecords, onSelect, onOpen }: { metrics: LocationMetric[]; movingCount: number; movingReviewCount: number; routeRecords: RouteRecord[]; onSelect: (locationId: string) => void; onOpen: (record: RouteRecord) => void }) {
   const sortByWork = (left: LocationMetric, right: LocationMetric) => (right.current.length + right.arriving.length + right.leaving.length + right.needsReview) - (left.current.length + left.arriving.length + left.leaving.length + left.needsReview);
   const currentCount = metrics.reduce((total, metric) => total + metric.current.length, 0);
@@ -3205,7 +3420,7 @@ function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, rout
   </section>;
 }
 
-function LocationNetworkMap({ metrics, movingCount, movingReviewCount, routeRecords, onSelect, onOpen }: { metrics: LocationMetric[]; movingCount: number; movingReviewCount: number; routeRecords: RouteRecord[]; onSelect: (locationId: string) => void; onOpen: (record: RouteRecord) => void }) {
+function LocationNetworkMap({ metrics, movingCount, movingReviewCount, routeRecords, onSelect, onOpen, directory }: { metrics: LocationMetric[]; movingCount: number; movingReviewCount: number; routeRecords: RouteRecord[]; onSelect: (locationId: string) => void; onOpen: (record: RouteRecord) => void; directory: LocationDirectoryControls }) {
   const sortByWork = (left: LocationMetric, right: LocationMetric) => (right.current.length + right.arriving.length + right.leaving.length + right.needsReview) - (left.current.length + left.arriving.length + left.leaving.length + left.needsReview);
   const currentCount = metrics.reduce((total, metric) => total + metric.current.length, 0);
   const attentionCount = metrics.reduce((total, metric) => total + metric.needsReview + metric.flaggedEvents + metric.staleScanners, movingReviewCount);
@@ -3213,15 +3428,24 @@ function LocationNetworkMap({ metrics, movingCount, movingReviewCount, routeReco
   const activeSegments = routeRecords.flatMap((record) => record.route.activeSegment ? [{ record, segment: record.route.activeSegment }] : []).sort((left, right) => Date.parse(right.segment.departedAt) - Date.parse(left.segment.departedAt));
   const renderLocationNode = (metric: LocationMetric) => <button className="location-flow-node" key={metric.location.locationId} onClick={() => onSelect(metric.location.locationId)}>
     <span className={`location-flow-node__icon location-flow-node__icon--${metric.location.type}`}><LocationTypeIcon location={metric.location} size={16} /></span>
-    <span className="location-flow-node__body"><strong>{metric.location.name}</strong><small>{locationTypeLabel(metric.location.type)} · {metric.current.length} here · {metric.arriving.length} received here</small></span>
+    <span className="location-flow-node__body"><strong>{metric.location.name}</strong><small>{locationTypeLabel(metric.location.type)}</small><span className="location-flow-node__details"><span><b>{metric.current.length}</b> here</span><span><b>{metric.arriving.length}</b> received</span><span><b>{metric.leaving.length}</b> leaving</span></span></span>
     <span className="location-flow-node__stats"><b>{metric.eventsLastDay}</b><small>24h scans</small></span>
     <span className="location-flow-node__actions">{metric.needsReview > 0 ? <Pill tone="warn">{metric.needsReview} review</Pill> : metric.flaggedEvents > 0 ? <Pill tone="warn">{metric.flaggedEvents} flagged</Pill> : metric.staleScanners > 0 ? <Pill tone="warn">{metric.staleScanners} stale</Pill> : null}<ChevronRight size={15} /></span>
   </button>;
   return <section className="location-network panel">
-     <div className="location-network__header"><div><span className="eyebrow">Location network</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. Open departures show the location they left; the next arrival scan records where they were received." /></div><span className="location-network__hint">Select a location to focus its containers, scanners, and recent activity below. Use the directory filters to narrow this map and its export.</span></div>
+    <div className="location-network__header"><div><span className="eyebrow">Location directory</span><PanelTitle title="Operating locations" subtitle="Search every store, Donation Xpress site, and warehouse, then open a location for its full operating picture." /></div></div>
+    <div className="location-network__controls">
+      <label className="location-search"><Search size={17} /><input value={directory.query} onChange={(event) => directory.onQueryChange(event.target.value)} placeholder="Search locations" aria-label="Search locations" /></label>
+      <select value={directory.typeFilter} onChange={(event) => directory.onTypeFilterChange(event.target.value as LocationTypeFilter)} aria-label="Filter by location type"><option value="all">All location types</option><option value="store_backroom">Stores</option><option value="donation_express">Donation Xpress</option><option value="warehouse">Warehouses</option></select>
+      <select value={directory.healthFilter} onChange={(event) => directory.onHealthFilterChange(event.target.value as LocationHealthFilter)} aria-label="Filter locations needing attention"><option value="all">All locations</option><option value="attention">Needs attention</option></select>
+      <select value={directory.sort} onChange={(event) => directory.onSortChange(event.target.value as LocationSort)} aria-label="Sort locations"><option value="work">Sort by active work</option><option value="containers">Sort by containers here</option><option value="activity">Sort by 24h activity</option><option value="alphabetical">Sort A–Z</option></select>
+      <span className="location-network__control-actions"><button type="button" className="secondary" onClick={directory.onClear} disabled={!directory.query && directory.typeFilter === "all" && directory.healthFilter === "all" && directory.sort === "work"}>Clear</button><button type="button" className="secondary" onClick={directory.onExport} disabled={!directory.matchingCount}><Download size={15} /> Export CSV</button></span>
+    </div>
+    <div className="location-directory-summary"><span>Showing <b>{directory.matchingCount}</b> of {directory.totalCount} locations</span><span><b>{directory.filteredContainerCount}</b> containers at filtered locations</span><span><b>{directory.filteredReviewCount}</b> need review</span></div>
     <div className="location-network__summary"><span><b>{metrics.length}</b><small>locations in view</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>open departures</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>attention items</small></span></div>
-    <div className="location-network__nodes">{[...metrics].sort(sortByWork).map(renderLocationNode)}</div>
-      <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Open departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit in this view"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>{inTransitDepartureSummary(segment.origin?.name)}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan appears here with its confirmed departure location. The next arrival scan records where the container was received.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} more in-transit containers are available by filtering the location directory below.</small>}</div>
+    {directory.matchingCount > 0 ? <div className="location-network__nodes">{[...metrics].sort(sortByWork).map(renderLocationNode)}</div> : <div className="location-network__empty"><EmptyState>No locations match the current search and filters.</EmptyState></div>}
+    {directory.matchingCount > 0 && <div className="location-directory-pagination"><span>Showing {directory.pageSize === "all" ? directory.matchingCount : directory.page * directory.pageSize + 1}–{directory.pageSize === "all" ? directory.matchingCount : Math.min(directory.matchingCount, (directory.page + 1) * directory.pageSize)} of {directory.matchingCount}</span><label><span>Locations per page</span><select value={directory.pageSize} onChange={(event) => directory.onPageSizeChange(event.target.value === "all" ? "all" : Number(event.target.value) as LocationPageSize)} aria-label="Locations per page"><option value={12}>12</option><option value={24}>24</option><option value={50}>50</option><option value="all">All</option></select></label><button type="button" className="secondary" disabled={directory.page === 0} title={directory.page === 0 ? "Already showing the first page" : "Show the previous locations"} onClick={() => directory.onPageChange(Math.max(0, directory.page - 1))}>Previous</button><strong>Page {directory.page + 1} of {directory.pageCount}</strong><button type="button" className="secondary" disabled={directory.page >= directory.pageCount - 1} title={directory.page >= directory.pageCount - 1 ? "Already showing the last page" : "Show the next locations"} onClick={() => directory.onPageChange(Math.min(directory.pageCount - 1, directory.page + 1))}>Next</button></div>}
+    <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Open departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit in this view"}</h3></div><div className="location-network__active-actions"><button type="button" className="secondary" onClick={directory.onViewTransit} disabled={!movingCount} title={movingCount ? "Open Containers filtered to every in-transit container" : "There are no in-transit containers to view"}><Truck size={14} /> View all in transit</button><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>{inTransitDepartureSummary(segment.origin?.name)}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">Containers appear here after a departure scan. Their receiving location is added when they are scanned at the next site.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} more open departures are available by filtering the locations above.</small>}</div>
   </section>;
 }
 
@@ -3368,7 +3592,7 @@ function LocationWorkspacePage({ data, locationId, locationFilter, openLocation,
   </div>;
 }
 
-function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLocation, openDetail, setPage, refresh, session }: { data: OperationsData; focusedLocationId?: string; focusedLocationFilter?: LocationInventoryFilter; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; openDetail: OpenDetail; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null }) {
+function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openContainers, openLocation, openDetail, setPage, refresh, session }: { data: OperationsData; focusedLocationId?: string; focusedLocationFilter?: LocationInventoryFilter; openContainers: (movement?: ContainerMovement) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; openDetail: OpenDetail; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null }) {
   const scoped = Boolean(session && isScopedPrincipal(session.principal));
   const allowedLocationIds = scoped ? new Set(session?.principal.locationIds ?? []) : null;
   const physicalLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location) && (!allowedLocationIds || allowedLocationIds.has(location.locationId)));
@@ -3502,7 +3726,28 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
 
   return <>
     {session && <RoleScopeNotice principal={session.principal} pageLabel="Locations" />}
-    <LocationNetworkMap metrics={visibleLocationMetrics} movingCount={visibleMovingCount} movingReviewCount={visibleMovingReviewCount} routeRecords={visibleRouteRecords} onSelect={openLocation} onOpen={openRouteRecord} />
+    <LocationNetworkMap metrics={visibleLocationMetrics} movingCount={visibleMovingCount} movingReviewCount={visibleMovingReviewCount} routeRecords={visibleRouteRecords} onSelect={openLocation} onOpen={openRouteRecord} directory={{
+      query: locationQuery,
+      typeFilter: locationTypeFilter,
+      healthFilter: locationHealthFilter,
+      sort: locationSort,
+      pageSize: locationPageSize,
+      page: safeLocationPage,
+      pageCount: locationPageCount,
+      matchingCount: matchingMetrics.length,
+      totalCount: physicalLocations.length,
+      filteredContainerCount: matchingMetrics.reduce((total, metric) => total + metric.current.length, 0),
+      filteredReviewCount: matchingMetrics.reduce((total, metric) => total + metric.needsReview, 0),
+      onQueryChange: setLocationQuery,
+      onTypeFilterChange: setLocationTypeFilter,
+      onHealthFilterChange: setLocationHealthFilter,
+      onSortChange: setLocationSort,
+      onPageSizeChange: (value) => { setLocationPageSize(value); setLocationPage(0); },
+      onPageChange: setLocationPage,
+      onClear: clearLocationFilters,
+      onExport: exportFilteredLocations,
+      onViewTransit: () => openContainers("in_transit")
+    }} />
     {false && <LocationLifecycleExplorer routeRecords={routeRecords} focusLocationId={selected.locationId} onOpen={(record) => {
       const projection = record.projection;
       if (projection) openContainer(projection);
@@ -3514,7 +3759,8 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
         body: <><DetailFacts items={[["Container type", record.container.type], ["Recorded handoffs", String(record.route.segments.length)], ["Journey", routeLocationNames(record.route).join(" → ") || "Locations not recorded"]]} /><h3 className="detail-section-title">Immutable observation history</h3><EventEvidence events={eventsFor(record.container.containerId)} data={data}/></>
       });
     }} />}
-    <section className="location-selector panel">
+    {/* The standalone directory was consolidated into the network directory above.
+    {false && <section className="location-selector panel">
       <div className="location-selector__heading"><PanelTitle title="Location directory" subtitle="Search, sort, and filter every physical location before opening its operating picture." /><div className="location-directory-tools"><label className="location-search"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="Search locations" aria-label="Search locations" /></label><select value={locationTypeFilter} onChange={(event) => setLocationTypeFilter(event.target.value as typeof locationTypeFilter)} aria-label="Filter by location type"><option value="all">All location types</option><option value="store_backroom">Stores</option><option value="donation_express">Donation Xpress</option><option value="warehouse">Warehouses</option></select><select value={locationHealthFilter} onChange={(event) => setLocationHealthFilter(event.target.value as typeof locationHealthFilter)} aria-label="Filter locations needing attention"><option value="all">All locations</option><option value="attention">Needs attention</option></select><select value={locationSort} onChange={(event) => setLocationSort(event.target.value as typeof locationSort)} aria-label="Sort locations"><option value="work">Sort by active work</option><option value="containers">Sort by containers here</option><option value="activity">Sort by 24h activity</option><option value="alphabetical">Sort A–Z</option></select></div></div>
       <div className="location-directory-summary"><span>Showing <b>{matchingMetrics.length}</b> of {physicalLocations.length} locations</span><span>{matchingMetrics.reduce((total, metric) => total + metric.current.length, 0)} containers in the filtered view</span><span>{matchingMetrics.reduce((total, metric) => total + metric.needsReview, 0)} need review</span></div>
       <div className="location-directory-export"><span>Filters apply to the map and directory page. Export includes every matching location, not only the visible page.</span><span className="location-directory-export__actions"><button type="button" className="secondary" onClick={clearLocationFilters} disabled={!locationQuery && locationTypeFilter === "all" && locationHealthFilter === "all" && locationSort === "work"}>Clear filters</button><button type="button" className="secondary" onClick={exportFilteredLocations} disabled={!matchingMetrics.length}><Download size={15} /> Export filtered CSV</button></span></div>
@@ -3523,7 +3769,7 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openLoc
         return <button key={location.locationId} className={`location-directory-card ${location.locationId === selected.locationId ? "active" : ""}`} onClick={() => setSelectedLocationId(location.locationId)}><span className={`location-type-icon location-type-icon--${location.type}`}><LocationTypeIcon location={location} /></span><span className="location-directory-card__body"><b>{location.name}</b><small>{locationTypeLabel(location.type)} · {metric.scanners.length} scanner{metric.scanners.length === 1 ? "" : "s"}</small><span className="location-directory-card__stats"><span><strong>{metric.current.length}</strong> here</span><span><strong>{metric.arriving.length}</strong> received</span><span><strong>{metric.leaving.length}</strong> out</span><span><strong>{metric.eventsLastDay}</strong> scans</span></span></span><span className="location-directory-card__status">{metric.needsReview > 0 ? <Pill tone="warn">{metric.needsReview} review</Pill> : metric.staleScanners > 0 ? <Pill tone="warn">{metric.staleScanners} stale</Pill> : <Pill tone="good">Operating</Pill>}<ChevronRight size={17} /></span></button>;
       })}{matchingMetrics.length === 0 && <div className="location-selector__empty">No locations match the current search and filters.</div>}</div>
        {matchingMetrics.length > 0 && <div className="location-directory-pagination"><span>Showing {safeLocationPage * (locationPageSize === "all" ? 0 : locationPageSize) + 1}–{Math.min(matchingMetrics.length, locationPageSize === "all" ? matchingMetrics.length : (safeLocationPage + 1) * locationPageSize)} of {matchingMetrics.length} locations</span><label><span>Locations per page</span><select value={locationPageSize} onChange={(event) => { const value = event.target.value === "all" ? "all" : Number(event.target.value) as 12 | 24 | 50; setLocationPageSize(value); setLocationPage(0); }} aria-label="Locations per page"><option value={12}>12</option><option value={24}>24</option><option value={50}>50</option><option value="all">All</option></select></label><button type="button" className="secondary" disabled={safeLocationPage === 0} title={safeLocationPage === 0 ? "Already showing the first page" : "Show the previous locations"} onClick={() => setLocationPage((current) => Math.max(0, current - 1))}>Previous</button><strong>Page {safeLocationPage + 1} of {locationPageCount}</strong><button type="button" className="secondary" disabled={safeLocationPage >= locationPageCount - 1} title={safeLocationPage >= locationPageCount - 1 ? "Already showing the last page" : "Show the next locations"} onClick={() => setLocationPage((current) => Math.min(locationPageCount - 1, current + 1))}>Next</button></div>}
-    </section>
+    </section>} */}
 
      {false && <section className="location-workspace panel">
       <div className="location-workspace__head">
@@ -4186,7 +4432,7 @@ function ActivityPage({ data, query, openDetail, setPage, session }: { data: Ope
   const locationOptions = data.fixtures.locations.map((location) => ({ value: location.locationId, label: location.name }));
   const deviceOptions = data.fixtures.devices.map((device) => ({ value: device.deviceId, label: `${scannerNumber(device.deviceId)} · ${device.label}` }));
   const actionOptions = [
-    { value: "load_assigned", label: "Container marked full" },
+    { value: "load_assigned", label: "Load code generated" },
     { value: "batch_out", label: "Departure recorded" },
     { value: "batch_in", label: "Arrival recorded" },
     { value: "emptied", label: "Container marked empty" }
@@ -4279,8 +4525,8 @@ function ActivityPage({ data, query, openDetail, setPage, session }: { data: Ope
         recordId: event.eventId,
         recordIdLabel: "Event UUID",
         title: `${container?.label ?? "Unknown container"} · ${eventLabel(event.eventType)}`,
-         body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Handoff", routeText ?? "Not a location handoff"], ["Message for operations", eventMessage(event) ?? "No message recorded"], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
-         })}><div className={`timeline__rail ${adjacentSameContainer ? "timeline__rail--linked" : ""}`}><span>{index + 1}</span>{adjacentSameContainer && <i aria-hidden="true" />}</div><div className="timeline__card"><div className="timeline__card-heading"><span><span className={`timeline__event-pill timeline__event-pill--${event.eventType}`}>{eventLabel(event.eventType)}</span>{event.accuracyFlags.length > 0 && <span className="timeline__warning">Needs review</span>}{relationship && <span className={`timeline__relationship ${relationshipClass}`}><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"}</h3><p className="timeline__narrative">{eventNarrative(event, data)}</p>{eventMessage(event) && <p className="timeline__message"><MessageSquare size={11} />Message for operations: {eventMessage(event)}</p>}<p className="timeline__meta"><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />Route: {routeText}</span>}<span>received {relativeTime(event.receivedAt)}</span>{event.accuracyFlags.length > 0 && <span>{event.accuracyFlags.length} data-quality warning{event.accuracyFlags.length === 1 ? "" : "s"}</span>}</p></div></article>;
+         body: <><DetailFacts items={[["Observed at", new Date(event.eventAt).toLocaleString()], ["Received at", new Date(event.receivedAt).toLocaleString()], ["Location", location], ["Scanner", `${scannerNumber(event.deviceId)} · ${deviceFor(event.deviceId)?.label ?? "Unknown"}`], ["Handoff", routeText ?? "Not a location handoff"], ["Load code", String(event.payload.displayLoadCode ?? event.loadCodeId ?? "Not assigned")]]}/><h3 className="detail-section-title">Observation evidence</h3><EventEvidence events={[event]} data={data}/></>
+         })}><div className={`timeline__rail ${adjacentSameContainer ? "timeline__rail--linked" : ""}`}><span>{index + 1}</span>{adjacentSameContainer && <i aria-hidden="true" />}</div><div className="timeline__card"><div className="timeline__card-heading"><span><span className={`timeline__event-pill timeline__event-pill--${event.eventType}`}>{eventLabel(event.eventType)}</span>{event.accuracyFlags.length > 0 && <span className="timeline__warning">Needs review</span>}{relationship && <span className={`timeline__relationship ${relationshipClass}`}><Link2 size={11} />{relationship}</span>}</span><time>{new Date(event.eventAt).toLocaleString()}</time></div><h3>{container?.label ?? "Unknown container"}</h3><p className="timeline__narrative">{eventNarrative(event, data)}</p><p className="timeline__meta"><span className="timeline__scanner"><Smartphone size={11} />{deviceFor(event.deviceId)?.label ?? `Scanner ${scannerNumber(event.deviceId)}`}</span>{routeText && <span className="timeline__route"><GitBranch size={11} />Route: {routeText}</span>}<span>received {relativeTime(event.receivedAt)}</span>{event.accuracyFlags.length > 0 && <span>{event.accuracyFlags.length} data-quality warning{event.accuracyFlags.length === 1 ? "" : "s"}</span>}</p></div></article>;
      })}</div>{pageCount > 1 && <div className="activity-pagination"><button type="button" className="secondary" disabled={safePageIndex === 0} title={safePageIndex === 0 ? "Already showing the first page" : "Show older observations"} aria-label={safePageIndex === 0 ? "Previous observations unavailable: first page" : "Show older observations"} onClick={() => setPageIndex((current) => Math.max(0, current - 1))}>Previous</button><strong>Page {safePageIndex + 1} of {pageCount}</strong><button type="button" className="secondary" disabled={safePageIndex >= pageCount - 1} title={safePageIndex >= pageCount - 1 ? "Already showing the last page" : "Show newer observations"} aria-label={safePageIndex >= pageCount - 1 ? "Next observations unavailable: last page" : "Show newer observations"} onClick={() => setPageIndex((current) => Math.min(pageCount - 1, current + 1))}>Next</button></div>}</div> : <EmptyState>No scanner observations match these filters. Try another location, scanner, time window, or search term.</EmptyState>}
   </section></>;
 }
@@ -4661,7 +4907,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
         <AuditMultiSelect label="Locations" options={reportLocationOptions} selected={draft.locationIds} onToggle={(value) => setDraft((current) => ({ ...current, locationIds: current.locationIds.includes(value) ? current.locationIds.filter((item) => item !== value) : [...current.locationIds, value] }))} onClear={() => updateDraft("locationIds", [])} emptyLabel="All locations" />
         <AuditMultiSelect label="Scanners" options={reportDeviceOptions} selected={draft.deviceIds} onToggle={(value) => setDraft((current) => ({ ...current, deviceIds: current.deviceIds.includes(value) ? current.deviceIds.filter((item) => item !== value) : [...current.deviceIds, value] }))} onClear={() => updateDraft("deviceIds", [])} emptyLabel="All scanners" />
         <AuditMultiSelect label="Users" options={actorOptions.map((actor) => ({ value: actor, label: actor }))} selected={draft.actors} onToggle={(value) => setDraft((current) => ({ ...current, actors: current.actors.includes(value) ? current.actors.filter((item) => item !== value) : [...current.actors, value] }))} onClear={() => updateDraft("actors", [])} emptyLabel="All users" />
-        <AuditMultiSelect label="Observation types" options={[{ value: "load_assigned", label: "Marked full" }, { value: "batch_out", label: "In transit" }, { value: "batch_in", label: "Arrived here" }, { value: "emptied", label: "Marked empty" }]} selected={draft.eventTypes} onToggle={(value) => setDraft((current) => ({ ...current, eventTypes: current.eventTypes.includes(value as StoredEvent["eventType"]) ? current.eventTypes.filter((item) => item !== value) : [...current.eventTypes, value as StoredEvent["eventType"]] }))} onClear={() => updateDraft("eventTypes", [])} emptyLabel="All observations" />
+        <AuditMultiSelect label="Observation types" options={[{ value: "load_assigned", label: "Load code generated" }, { value: "batch_out", label: "In transit" }, { value: "batch_in", label: "Arrived here" }, { value: "emptied", label: "Marked empty" }]} selected={draft.eventTypes} onToggle={(value) => setDraft((current) => ({ ...current, eventTypes: current.eventTypes.includes(value as StoredEvent["eventType"]) ? current.eventTypes.filter((item) => item !== value) : [...current.eventTypes, value as StoredEvent["eventType"]] }))} onClear={() => updateDraft("eventTypes", [])} emptyLabel="All observations" />
         <AuditMultiSelect label="Data health" options={[{ value: "clean", label: "Clean projection" }, { value: "warning", label: "Warning" }, { value: "needs_review", label: "Needs review" }]} selected={draft.healthValues} onToggle={(value) => setDraft((current) => ({ ...current, healthValues: current.healthValues.includes(value as Projection["health"]) ? current.healthValues.filter((item) => item !== value) : [...current.healthValues, value as Projection["health"]] }))} onClear={() => updateDraft("healthValues", [])} emptyLabel="All projection health" />
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateDraft("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateDraft("to", event.target.value)} /></label>
@@ -4724,19 +4970,22 @@ type AuditFilterOption = { value: string; label: string };
  * for one page to drift into a different interaction model (or leave a stale
  * previous choice visible after a new one is selected).
  */
-function AuditMultiSelect({ label, options, selected, onToggle, onClear, emptyLabel }: { label: string; options: readonly AuditFilterOption[]; selected: readonly string[]; onToggle: (value: string) => void; onClear: () => void; emptyLabel: string }) {
+function AuditMultiSelect({ label, options, selected, onToggle, onClear, emptyLabel, stacked = false }: { label: string; options: readonly AuditFilterOption[]; selected: readonly string[]; onToggle: (value: string) => void; onClear: () => void; emptyLabel: string; stacked?: boolean }) {
   const selectionLabel = selected.length === 0
     ? emptyLabel
     : selected.length === 1
       ? options.find((option) => option.value === selected[0])?.label ?? "1 selected"
       : `${selected.length} selected`;
-  return <details className="audit-multi-select">
-    <summary><span>{label}</span><span className="audit-multi-select__summary">{selectionLabel}</span><ChevronDown size={15} /></summary>
+  const control = <details className="audit-multi-select">
+    <summary>{!stacked && <span>{label}</span>}<span className="audit-multi-select__summary">{selectionLabel}</span><ChevronDown size={15} /></summary>
     <div className="audit-multi-select__menu">
       <div className="audit-multi-select__menu-head"><small>{selected.length ? `${selected.length} selected · matches any selected option` : "No restriction applied"}</small><button type="button" onClick={onClear} disabled={!selected.length}>Clear</button></div>
       {options.map((option) => <label key={option.value}><input type="checkbox" checked={selected.includes(option.value)} onChange={() => onToggle(option.value)} /><span>{option.label}</span></label>)}
     </div>
   </details>;
+  return stacked
+    ? <div className="audit-multi-select audit-multi-select--stacked"><span className="audit-multi-select__label">{label}</span>{control}</div>
+    : control;
 }
 
 function auditActionLabel(action: string) {
@@ -4965,7 +5214,7 @@ function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPass
     <section className="settings-actions panel">
       <PanelTitle title="Administrator workspace" subtitle="Direct controls for the work administrators perform every day." />
       <div className="settings-action-grid">
-        <button className="settings-action-card settings-action-card--access" onClick={openAdminDirectory} disabled={Boolean(session && session.principal.role !== "organization_owner")}><span className="settings-action-card__icon"><UserRound size={19} /></span><span><strong>Manage administrators</strong><small>{session?.principal.role === "organization_owner" ? "Add users, change roles, disable access, or reset passwords." : session ? "Only Organization Owners can manage administrator accounts." : "Sign in to manage administrator accounts."}</small></span><span className="settings-action-card__go">{session?.principal.role === "organization_owner" ? "Manage" : session ? "Owner only" : "Sign in"}<ChevronRight size={15} /></span></button>
+        <button className="settings-action-card settings-action-card--access" onClick={openAdminDirectory} disabled={Boolean(session && session.principal.role !== "organization_owner")}><span className="settings-action-card__icon"><UserRound size={19} /></span><span><strong>Manage administrators</strong><small>{session?.principal.role === "organization_owner" ? "Add users, change roles, disable access, reset passwords, or remove accounts." : session ? "Only Organization Owners can manage administrator accounts." : "Sign in to manage administrator accounts."}</small></span><span className="settings-action-card__go">{session?.principal.role === "organization_owner" ? "Manage" : session ? "Owner only" : "Sign in"}<ChevronRight size={15} /></span></button>
          {actions.map((action) => <button className="settings-action-card" key={action.title} onClick={() => { if (action.anchor) { document.querySelector(`.${action.anchor}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; } setPage(action.page); }}><span className="settings-action-card__icon"><action.icon size={19} /></span><span><strong>{action.title}</strong><small>{action.text}</small></span><span className="settings-action-card__go">Open<ChevronRight size={15} /></span></button>)}
       </div>
     </section>
@@ -5120,16 +5369,22 @@ function AdminDirectory({ session, locations }: { session: AdminSession; locatio
     catch (caught) { throw caught instanceof Error ? caught : new Error("Could not reset account password."); }
     finally { setBusy(false); }
   };
+  const removeUser = async (userId: string, confirmation: string) => {
+    setBusy(true); setError(null);
+    try { await removeAdminUser(session, userId, confirmation); await refreshUsers(); }
+    catch (caught) { throw caught instanceof Error ? caught : new Error("Could not permanently remove the administrator."); }
+    finally { setBusy(false); }
+  };
   return <section className="admin-directory">
     <PanelTitle title="Administrator directory" subtitle="Organization Owners have full control. Every other account is explicit about its operating scope, and no administrator can view another person’s stored password." />
-    <div className="admin-directory__owner-callout"><ShieldCheck size={20} /><div><strong>Signed in as Organization Owner</strong><span>You can add, scope, disable, and reset administrator accounts. Passwords are stored only as one-way hashes; a reset issues a one-time temporary password that the user must replace.</span></div></div>
+    <div className="admin-directory__owner-callout"><ShieldCheck size={20} /><div><strong>Signed in as Organization Owner</strong><span>You can add, scope, disable, reset, or permanently remove administrator accounts. Passwords are stored only as one-way hashes; a reset issues a one-time temporary password that the user must replace.</span></div></div>
     <div className="admin-role-legend">
       <article><Pill tone="blue">Full control</Pill><strong>Organization Owner</strong><span>Users, locations, devices, corrections, approvals, and settings across Goodwill.</span></article>
       <article><Pill tone="good">Network operations</Pill><strong>Operations Administrator</strong><span>Daily scanner, exception, correction-request, and data workflows across locations.</span></article>
       <article><Pill tone="blue">Location-scoped</Pill><strong>Location Manager</strong><span>Only assigned stores, Donation Xpress sites, or warehouses; changes remain reasoned and reviewable.</span></article>
       <article><Pill tone="muted">View only</Pill><strong>Read-only Reviewer</strong><span>Can investigate evidence and reports without changing operational state.</span></article>
     </div>
-    <div className="admin-directory__users">{users?.map((user) => <ManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} locations={activeLocations} busy={busy} onSave={save} onReset={resetPassword} />) ?? <div className="skeleton" />}</div>
+    <div className="admin-directory__users">{users?.map((user) => <ManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} locations={activeLocations} busy={busy} onSave={save} onReset={resetPassword} onRemove={removeUser} />) ?? <div className="skeleton" />}</div>
     {error && <div className="sign-in-error">{error}</div>}
     <form className="admin-user-form admin-user-form--owner" onSubmit={(event) => void addUser(event)}>
       <div><span className="eyebrow">Create access</span><h3>Add an administrator</h3><p>Give each person the least access needed. The temporary password is never retrievable after this form is cleared; the user replaces it privately on first sign-in.</p></div>
@@ -5145,7 +5400,7 @@ function LocationScopePicker({ locations, value, onChange, optional = false }: {
   return <fieldset className="admin-scope-picker"><legend>{optional ? "Optional location scope" : "Assigned locations"} <small>{optional ? "Leave empty for a network-wide read-only reviewer, or select only the sites they should see." : "Select every site this manager is responsible for."}</small></legend><div>{locations.map((location) => <label key={location.locationId} className={value.includes(location.locationId) ? "admin-scope-picker__option admin-scope-picker__option--selected" : "admin-scope-picker__option"}><input type="checkbox" checked={value.includes(location.locationId)} onChange={() => toggle(location.locationId)} /><span><strong>{location.name}</strong><small>{location.type === "donation_express" ? "Donation Xpress" : location.type === "warehouse" ? "Warehouse" : "Store"}</small></span></label>)}</div>{value.length === 0 && <small className="admin-scope-picker__empty">{optional ? "No scope selected — network-wide read-only access." : "No locations selected yet."}</small>}</fieldset>;
 }
 
-function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onReset }: { user: AdminPrincipal; currentUserId: string; locations: Location[]; busy: boolean; onSave: (userId: string, update: AdminDirectoryUpdate) => Promise<void>; onReset: (userId: string, temporaryPassword: string, reason: string) => Promise<void> }) {
+function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onReset, onRemove }: { user: AdminPrincipal; currentUserId: string; locations: Location[]; busy: boolean; onSave: (userId: string, update: AdminDirectoryUpdate) => Promise<void>; onReset: (userId: string, temporaryPassword: string, reason: string) => Promise<void>; onRemove: (userId: string, confirmation: string) => Promise<void> }) {
   const [displayName, setDisplayName] = useState(user.displayName);
   const [role, setRole] = useState<EditableAdminRole>(user.role === "support" ? "read_only_reviewer" : user.role);
   const [locationIds, setLocationIds] = useState<string[]>(user.locationIds ?? []);
@@ -5153,6 +5408,7 @@ function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onRes
   const [temporaryPassword, setTemporaryPassword] = useState("");
   const [resetReason, setResetReason] = useState("");
   const [resetError, setResetError] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   useEffect(() => { setDisplayName(user.displayName); setRole(user.role === "support" ? "read_only_reviewer" : user.role); setLocationIds(user.locationIds ?? []); }, [user.displayName, user.role, (user.locationIds ?? []).join(",")]);
   const self = user.userId === currentUserId;
   const changed = displayName.trim() !== user.displayName || role !== user.role || ((role === "location_manager" || role === "read_only_reviewer") ? locationIds.join(",") !== (user.locationIds ?? []).join(",") : (user.locationIds ?? []).length > 0);
@@ -5164,10 +5420,20 @@ function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onRes
     try { await onReset(user.userId, temporaryPassword, resetReason.trim()); setTemporaryPassword(""); setResetReason(""); setResetOpen(false); }
     catch (caught) { setResetError(caught instanceof Error ? caught.message : "Could not reset this password."); }
   };
+  const confirmRemoval = () => {
+    setRemoveError(null);
+    if (!window.confirm(`Permanently remove ${user.displayName} (@${user.username})? This cannot be undone. Their active sessions will end, while operational and audit history remains.`)) return;
+    const confirmation = window.prompt(`Type ${user.username} to confirm permanent removal.`) ?? "";
+    if (confirmation.trim().toLowerCase() !== user.username) {
+      setRemoveError(`Removal cancelled. Type ${user.username} exactly to confirm.`);
+      return;
+    }
+    void onRemove(user.userId, confirmation.trim()).catch((caught) => setRemoveError(caught instanceof Error ? caught.message : "Could not permanently remove the administrator."));
+  };
   return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}>
     <span className="avatar">{initials(user.displayName)}</span>
     <div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={adminRoleTone(user.role)}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">First password change pending</Pill>}</div><small className="admin-account__scope">{user.role === "location_manager" ? (user.locationIds?.length ? "Assigned to " + user.locationIds.length + " location" + (user.locationIds.length === 1 ? "" : "s") : "No locations assigned") : user.role === "read_only_reviewer" ? (user.locationIds?.length ? "Read-only at " + user.locationIds.length + " assigned location" + (user.locationIds.length === 1 ? "" : "s") : "Network-wide read-only") : "Network-wide access"}</small></div>
-    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...((role === "location_manager" || role === "read_only_reviewer") || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" || role === "read_only_reviewer" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button></div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}
+    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...((role === "location_manager" || role === "read_only_reviewer") || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" || role === "read_only_reviewer" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setRemoveError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button><button type="button" className="admin-account__remove" disabled={busy} onClick={confirmRemoval}>Remove permanently</button>{removeError && <small className="admin-account__remove-error">{removeError}</small>}</div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}
   </article>;
 }
 

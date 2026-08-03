@@ -27,6 +27,9 @@ export interface EventResponseBody {
   readonly status?: string;
   readonly message?: string;
   readonly error?: string;
+  /** Per-item outcomes returned by the batch upload endpoint. */
+  readonly results?: readonly (EventResponseBody & { readonly index?: number; readonly eventId?: string })[];
+  readonly retryable?: boolean;
 }
 
 export type EventResponseOutcome =
@@ -39,6 +42,12 @@ export function classifyEventResponse(
   body: EventResponseBody
 ): EventResponseOutcome {
   const detail = body.message ?? body.error;
+  if (body.retryable === true || body.error === "ItemProcessingFailed" || body.status === "retryable") {
+    return {
+      kind: "retry",
+      message: detail ?? "This observation will be retried automatically."
+    };
+  }
   if ([408, 425, 429].includes(httpStatus) || httpStatus >= 500) {
     return {
       kind: "retry",
