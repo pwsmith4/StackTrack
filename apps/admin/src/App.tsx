@@ -52,6 +52,7 @@ import {
   BUILD_ID,
   BUILD_TIME,
   ApiRequestError,
+  checkForNewBuild,
   changeOwnPassword,
   correctionRequestAction,
   createLocation,
@@ -89,7 +90,8 @@ import {
   type Projection,
   type ReviewCase,
   type ReviewAction,
-  type StoredEvent
+  type StoredEvent,
+  type SiteBuildInfo
 } from "./api";
 import stacktrackLogo from "./assets/stacktrack-logo-tight.png";
 import goodwillLogo from "./assets/goodwill-logo.png";
@@ -851,6 +853,36 @@ export function App() {
   // locked until the API verifies a session.
   const [signInOpen, setSignInOpen] = useState(() => !session);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [newBuild, setNewBuild] = useState<SiteBuildInfo | null>(null);
+
+  // GitHub Pages may briefly serve an older index.html or hashed asset after a
+  // successful deployment. Poll a cache-busted manifest so an open console can
+  // tell the administrator exactly when a newer revision is available.
+  useEffect(() => {
+    if (BUILD_ID === "local") return;
+    let cancelled = false;
+    const check = async () => {
+      const manifest = await checkForNewBuild();
+      if (!cancelled && manifest && manifest.buildId !== BUILD_ID) setNewBuild(manifest);
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") void check(); };
+    void check();
+    const timer = window.setInterval(check, 90_000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  const reloadForNewBuild = () => {
+    if (!newBuild) return;
+    // A build-specific query key bypasses the Pages HTML cache while keeping
+    // the current hash route (and therefore the administrator's current page).
+    const hash = window.location.hash;
+    window.location.replace(`${window.location.pathname}?stacktrack_build=${encodeURIComponent(newBuild.buildId)}${hash}`);
+  };
 
   const refresh = useCallback(async () => {
     if (!session) {
@@ -1195,6 +1227,13 @@ export function App() {
             </button>
           </div>
         </header>
+
+        {newBuild && <div className="site-update-banner" role="status" aria-live="polite">
+          <RefreshCw size={18} />
+          <span><strong>A newer StackTrack version is available.</strong> This tab is using build {BUILD_ID.slice(0, 8)}; the newest test build is {newBuild.buildId.slice(0, 8)}.</span>
+          <button className="primary" type="button" onClick={reloadForNewBuild}>Refresh to update</button>
+          <button className="secondary site-update-banner__later" type="button" onClick={() => setNewBuild(null)}>Later</button>
+        </div>}
 
         {session.rolePreview && <RolePreviewBanner preview={session.rolePreview} onExit={endRolePreview} />}
 

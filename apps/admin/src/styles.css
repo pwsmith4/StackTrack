@@ -2103,10 +2103,19 @@ footer > span:first-child { display: none; }
 .role-preview-banner__copy strong { color: #164b63; font-size: 11px; }
 .role-preview-banner__copy span { color: #587787; font-size: 9px; line-height: 1.45; }
 .role-preview-banner__exit { min-height: 36px; flex: none; }
+.site-update-banner { position: relative; z-index: 8; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 9px 32px; border-bottom: 1px solid #b8dce8; border-left: 4px solid #159ec4; background: #eefafd; color: #416d7b; }
+.site-update-banner > svg { flex: none; color: #087da8; }
+.site-update-banner > span { min-width: 0; flex: 1; font-size: 10px; line-height: 1.4; }
+.site-update-banner > span strong { color: #164b63; }
+.site-update-banner > button { flex: none; min-height: 34px; }
+.site-update-banner__later { color: #466b78; }
 @media (max-width: 700px) {
   .role-preview-control { position: static; }
   .role-preview-popover { position: fixed; left: 16px; right: 16px; top: 74px; width: auto; max-height: calc(100vh - 90px); overflow: auto; }
   .role-preview-banner { align-items: flex-start; flex-wrap: wrap; padding: 12px 16px; }
   .role-preview-banner__copy { flex-basis: calc(100% - 48px); }
   .role-preview-banner__exit { width: 100%; justify-content: center; margin-left: 44px; }
+  .site-update-banner { align-items: flex-start; flex-wrap: wrap; padding: 11px 16px; }
+  .site-update-banner > span { flex-basis: calc(100% - 32px); }
+  .site-update-banner > button { margin-left: 28px; }
 }

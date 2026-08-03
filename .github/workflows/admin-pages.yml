@@ -79,6 +79,15 @@ jobs:
         run: |
           npm run check --workspace @stacktrack/admin
           npm run build:admin
+      - name: Write cache-busted deployment manifests
+        shell: bash
+        run: |
+          mkdir -p site site/testing
+          generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf '{"buildId":"%s","buildTime":"%s","branch":"main","generatedAt":"%s"}\n' \
+            "${{ steps.revisions.outputs.production }}" "${{ github.run_number }}" "$generated_at" > site/version.json
+          printf '{"buildId":"%s","buildTime":"%s","branch":"test","generatedAt":"%s"}\n' \
+            "${{ steps.revisions.outputs.preview }}" "${{ github.run_number }}" "$generated_at" > site/testing/version.json
       - name: Combine production and preview sites
         run: |
           mkdir -p site/testing

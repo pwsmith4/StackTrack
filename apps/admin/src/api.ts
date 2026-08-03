@@ -1,11 +1,50 @@
 export const API_URL =
   import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:3000";
 
+/** The URL prefix Vite emitted for this deployment ("/" locally, "/StackTrack/testing/" on Pages). */
+export const SITE_BASE_PATH = import.meta.env.BASE_URL ?? "/";
+
 // The deployment workflow injects the commit SHA so a reviewer can verify
 // which build is actually being served by GitHub Pages.  Keeping the fallback
 // deterministic makes local development equally clear.
 export const BUILD_ID = import.meta.env.VITE_BUILD_ID ?? "local";
 export const BUILD_TIME = import.meta.env.VITE_BUILD_TIME ?? "";
+
+export interface SiteBuildInfo {
+  buildId: string;
+  buildTime?: string;
+  branch?: string;
+  generatedAt?: string;
+}
+
+/**
+ * Read the tiny deployment manifest with a unique query string. GitHub Pages
+ * caches index.html for a short period, so the manifest gives an already-open
+ * console a reliable way to notice that its hashed JavaScript is no longer
+ * current. A missing manifest is normal during local development and older
+ * deployments, so callers can safely treat null as "not available".
+ */
+export async function checkForNewBuild(): Promise<SiteBuildInfo | null> {
+  if (BUILD_ID === "local") return null;
+  const base = SITE_BASE_PATH.endsWith("/") ? SITE_BASE_PATH : `${SITE_BASE_PATH}/`;
+  try {
+    const response = await fetch(`${base}version.json?refresh=${Date.now()}`, {
+      cache: "no-store",
+      headers: { "cache-control": "no-cache" }
+    });
+    if (!response.ok) return null;
+    const manifest = await response.json() as Partial<SiteBuildInfo>;
+    if (typeof manifest.buildId !== "string" || manifest.buildId.trim().length < 7) return null;
+    return {
+      buildId: manifest.buildId,
+      ...(typeof manifest.buildTime === "string" ? { buildTime: manifest.buildTime } : {}),
+      ...(typeof manifest.branch === "string" ? { branch: manifest.branch } : {}),
+      ...(typeof manifest.generatedAt === "string" ? { generatedAt: manifest.generatedAt } : {})
+    };
+  } catch {
+    return null;
+  }
+}
 
 export const TENANT_ID = "10000000-0000-4000-8000-000000000001";
 
