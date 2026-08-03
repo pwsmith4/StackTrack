@@ -222,6 +222,38 @@ describe("StackTrack API foundation", () => {
     expect(signIn).toHaveBeenCalledTimes(5);
   });
 
+  it("records a non-enumerating sign-in help request for administrators", async () => {
+    const requestAccessHelp = vi.fn().mockResolvedValue({
+      requestId: "99999999-9999-4999-8999-999999999999",
+      occurredAt: "2026-07-31T12:00:00.000Z"
+    });
+    app = await createApp({ localMode: true, adminAccess: { requestAccessHelp } as unknown as PostgresAdminAccess });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/admin/access-issues",
+      payload: { username: "new-admin", message: "My scanner console password is not working." }
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ accepted: true, requestId: "99999999-9999-4999-8999-999999999999" });
+    expect(requestAccessHelp).toHaveBeenCalledWith("new-admin", "My scanner console password is not working.");
+  });
+
+  it("validates sign-in help messages without accepting account probing fields", async () => {
+    const requestAccessHelp = vi.fn();
+    app = await createApp({ localMode: true, adminAccess: { requestAccessHelp } as unknown as PostgresAdminAccess });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/admin/access-issues",
+      payload: { username: 17, message: "short" }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(requestAccessHelp).not.toHaveBeenCalled();
+  });
+
   it("requires a temporary administrator password to be changed before operational data is returned", async () => {
     const changePassword = vi.fn().mockResolvedValue(undefined);
     const access = {

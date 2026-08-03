@@ -252,6 +252,28 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       return reply.send(session);
     });
 
+    app.post<{ Body: { username?: unknown; message?: unknown } }>("/api/v1/local/admin/access-issues", {
+      config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }
+    }, async (request, reply) => {
+      const body = request.body ?? {};
+      if (!dependencies.adminAccess) {
+        return reply.code(503).send({ error: "AdminAccessUnavailable", message: "Sign-in help is not available right now." });
+      }
+      if ((body.username !== undefined && typeof body.username !== "string") ||
+        typeof body.message !== "string") {
+        return reply.code(400).send({ error: "InvalidAccessHelpRequest", message: "Add a short description of the sign-in problem." });
+      }
+      try {
+        const result = await dependencies.adminAccess.requestAccessHelp(
+          typeof body.username === "string" ? body.username : undefined,
+          body.message
+        );
+        return reply.code(202).send({ accepted: true, requestId: result.requestId });
+      } catch (error) {
+        return reply.code(400).send({ error: "AccessHelpRequestRejected", message: error instanceof Error ? error.message : "The request could not be recorded." });
+      }
+    });
+
     app.get("/api/v1/local/admin/users", {
       config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
     }, async (request, reply) => {

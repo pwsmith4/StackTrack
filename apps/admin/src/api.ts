@@ -259,13 +259,25 @@ export async function retireLocation(
 
 export async function signIn(username: string, password: string): Promise<AdminSession> {
   const response = await fetch(`${API_URL}/api/v1/local/admin/session`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password })
+    method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ username, password })
   });
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { message?: string } | null;
     throw new Error(detail?.message ?? "Sign-in failed.");
   }
   return response.json() as Promise<AdminSession>;
+}
+
+export async function requestAccessHelp(username: string, message: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/v1/local/admin/access-issues`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ username: username.trim() || undefined, message })
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? "The sign-in help request could not be sent.");
+  }
 }
 
 async function postJson<T>(path: string, body: unknown, session: AdminSession): Promise<T> {

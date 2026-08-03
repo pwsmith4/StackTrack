@@ -139,6 +139,20 @@ function validateAdminActionReason(reasonInput: string): string {
   return reason;
 }
 
+function validateAccessHelpMessage(messageInput: string): string {
+  const message = messageInput.trim();
+  if (message.length < 8 || message.length > 500) {
+    throw new Error("Tell the administrator what is preventing sign-in (8-500 characters).");
+  }
+  return message;
+}
+
+function normalizeAccessHelpUsername(usernameInput: string | undefined): string | null {
+  const username = usernameInput?.trim().toLowerCase() ?? "";
+  if (!username) return null;
+  return username.slice(0, 64);
+}
+
 function normalizeLocationIds(locationIds: readonly string[] | undefined): string[] {
   const values = [...new Set((locationIds ?? []).map((value) => String(value).trim()).filter(Boolean))];
   if (values.some((value) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))) {
@@ -365,6 +379,7 @@ export class PostgresAdminAccess {
                 COALESCE(target_device.device_label, target_container.container_label, target_review_container.container_label, target_correction_container.container_label,
                   CASE a.target_type
                     WHEN 'admin_user' THEN 'Administrator account'
+                    WHEN 'admin_access' THEN 'Sign-in help request'
                     WHEN 'device' THEN 'Scanner'
                     WHEN 'container' THEN 'Container'
                     WHEN 'review_case' THEN 'Review case'
@@ -446,6 +461,28 @@ export class PostgresAdminAccess {
         locationIds
       });
       return user;
+    });
+  }
+
+  /**
+   * Record a sign-in help request without revealing whether the account exists.
+   * The request is deliberately an append-only system audit event so corporate
+   * administrators can find it after signing in, while no password or session
+   * data is ever accepted from the public form.
+   */
+  public async requestAccessHelp(usernameInput: string | undefined, messageInput: string): Promise<{ requestId: string; occurredAt: string }> {
+    const username = normalizeAccessHelpUsername(usernameInput);
+    const message = validateAccessHelpMessage(messageInput);
+    return this.transaction(async (client) => {
+      const result = await client.query<{ audit_id: string; occurred_at: Date | string }>(
+        `INSERT INTO audit_log (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
+         VALUES ($1,'system',NULL,'admin.access_issue_requested','admin_access',NULL,$2::jsonb)
+         RETURNING audit_id, occurred_at`,
+        [this.tenantId, JSON.stringify({ username, message, source: "sign_in" })]
+      );
+      const row = result.rows[0];
+      if (!row) throw new Error("The sign-in help request could not be recorded.");
+      return { requestId: String(row.audit_id), occurredAt: new Date(row.occurred_at).toISOString() };
     });
   }
 

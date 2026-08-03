@@ -108,6 +108,46 @@ Access/MFA for Organization Owners and administrators; the local reset flow is
 already separated so that an Entra-backed step-up check can be required before
 issuing a temporary password.
 
+### Sign-in recovery and MFA decisions
+
+The signed-out console intentionally exposes only the Goodwill operations
+identity and the username/password fields. It does not reveal whether a
+username exists, whether an account is disabled, or whether a password was
+close to correct. Failed attempts receive the same generic response and are
+rate-limited. This prevents account discovery while still giving an employee a
+clear next step.
+
+The **Can't sign in?** action accepts a short, password-free description and
+records an `admin.access_issue_requested` system event in the append-only audit
+trail. Organization Owners and Operations Administrators can filter the Audit
+trail for **Sign-in help request** and contact the employee or correct their
+account. The pilot deliberately does not promise email or SMS delivery until
+Goodwill chooses an owner for that notification channel (for example, a
+corporate service desk mailbox or Teams queue). A production deployment should
+add that notification as a server-side integration, never from the browser.
+
+Password recovery is intentionally two-step:
+
+1. An Organization Owner verifies the request and issues a one-time temporary
+   password with an audit reason.
+2. The employee signs in and chooses a private password. The temporary value
+   is hashed immediately, is never shown again, and all other active sessions
+   are revoked.
+
+Do not add a public “reset by username” endpoint. Without a verified Goodwill
+identity, it would let an attacker probe accounts or take over a scanner
+operator. If Goodwill wants self-service recovery, use Entra's verified email,
+phone, or help-desk flow and return to StackTrack only with a verified token.
+
+For two-factor authentication, the recommended production policy is Entra ID
+with Conditional Access requiring phishing-resistant MFA (security key or
+passkey where available) for Organization Owners and Operations Administrators,
+and MFA for Location Managers according to Goodwill's device policy. Require a
+fresh step-up before adding owners, disabling accounts, issuing password resets,
+retiring locations, approving material corrections, or changing authentication
+policy. The local pilot remains password-only so it is explicit about its
+security boundary; it must not be treated as production authentication.
+
 ## Governed correction policy implemented for the pilot
 
 StackTrack never edits or deletes a scanner observation. An Operations

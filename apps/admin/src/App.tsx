@@ -59,6 +59,7 @@ import {
   listAdminUsers,
   loadOperationsData,
   resetAdminPassword,
+  requestAccessHelp,
   reviewCaseAction,
   revokeAdminSession,
   searchAuditEntries,
@@ -1082,20 +1083,34 @@ function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((pa
 function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", location_manager: "Location Manager", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
 
 function SignInDialog({ fullPage = false, onClose: _onClose, onSuccess }: { fullPage?: boolean; onClose: () => void; onSuccess: (session: AdminSession) => void }) {
-  const [username, setUsername] = useState("root"); const [password, setPassword] = useState(""); const [showPassword, setShowPassword] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
-  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { onSuccess(await signIn(username, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Sign-in failed."); } finally { setBusy(false); } };
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpMessage, setHelpMessage] = useState("I cannot sign in and need my Goodwill operations access checked.");
+  const [helpBusy, setHelpBusy] = useState(false);
+  const [helpSent, setHelpSent] = useState(false);
+  const [helpError, setHelpError] = useState<string | null>(null);
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(null); setHelpError(null); try { onSuccess(await signIn(username, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "The username or password is not valid."); } finally { setBusy(false); } };
+  const submitHelp = async () => {
+    setHelpBusy(true); setHelpError(null);
+    try { await requestAccessHelp(username, helpMessage); setHelpSent(true); }
+    catch (caught) { setHelpError(caught instanceof Error ? caught.message : "The sign-in help request could not be sent."); }
+    finally { setHelpBusy(false); }
+  };
   return <section className={`sign-in-dialog ${fullPage ? "sign-in-dialog--full-page" : "sign-in-dialog--overlay"}`} role="dialog" aria-modal="true" aria-labelledby="sign-in-title" aria-describedby="sign-in-description">
     <div className="sign-in-dialog__story">
       <div className="sign-in-dialog__partner-mark"><img src={goodwillLogo} alt="Goodwill" /><span>GOODWILL<br />OPERATIONS</span></div>
-      <div className="sign-in-dialog__story-copy"><span className="eyebrow">GOODWILL OPERATIONS CONSOLE</span><h1>Know where every container is.</h1><p>One shared view for the people who receive, move, and care for reusable assets across the network.</p><div className="sign-in-dialog__story-points"><span><ContainerIcon size={16} /><strong>Container history</strong><small>Every scan stays traceable.</small></span><span><Truck size={16} /><strong>Movement clarity</strong><small>See what left and where it was last confirmed.</small></span><span><ShieldCheck size={16} /><strong>Accountable access</strong><small>Every administrative action is recorded.</small></span></div></div>
-      <div className="sign-in-dialog__story-footer"><img src={stacktrackLogo} alt="StackTrack" /><span>Reusable asset operations</span></div>
+      <div className="sign-in-dialog__story-copy"><span className="eyebrow">GOODWILL OPERATIONS CONSOLE</span><h1>Sign in to Goodwill operations.</h1><p>Manage reusable containers, scanners, and location activity from one shared console.</p></div>
+      <div className="sign-in-dialog__story-footer"><img src={stacktrackLogo} alt="StackTrack" /></div>
     </div>
     <div className="sign-in-dialog__form-panel">
-      <div className="sign-in-dialog__form-heading"><div className="sign-in-dialog__icon"><ShieldCheck size={23}/></div><span className="eyebrow">GOODWILL OPERATIONS ACCESS</span><h2 id="sign-in-title">Sign in to the operations console.</h2><p id="sign-in-description">Use your approved Goodwill account. Container and scanner data stays private until StackTrack verifies your access.</p></div>
-      <div className="sign-in-dialog__trust"><span><CheckCircle2 size={14}/> Server-verified access</span><span><ShieldCheck size={14}/> Audit-ready changes</span></div>
-      <div className="sign-in-dialog__audience"><MapPin size={15}/><span><strong>Built for corporate teams and local site staff</strong><small>Your role determines which locations, records, and actions are available after sign-in.</small></span></div>
+      <div className="sign-in-dialog__form-heading"><span className="eyebrow">GOODWILL OPERATIONS ACCESS</span><h2 id="sign-in-title">Sign in</h2><p id="sign-in-description">Use your Goodwill account to continue.</p></div>
       <form onSubmit={(event) => void submit(event)}><label>Username<input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<span className="sign-in-dialog__password-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-pressed={showPassword}>{showPassword ? "Hide" : "Show"}</button></span></label>{error && <div className="sign-in-error" role="alert">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form>
-      <div className="sign-in-dialog__privacy"><ShieldCheck size={14}/><span>Access expires automatically. Sign out when you leave a shared workstation.</span></div>
+      <button className="sign-in-help-toggle" type="button" onClick={() => { setHelpOpen((current) => !current); setHelpError(null); }} aria-expanded={helpOpen}>Can’t sign in?</button>
+      {helpOpen && <div className="sign-in-help" aria-live="polite"><strong>Request sign-in help</strong><p>Goodwill administrators can review this request and verify your access. Never include a password.</p>{helpSent ? <div className="sign-in-help__success">Request sent. An administrator can review the sign-in issue from the operations console.</div> : <><label>What is happening?<textarea rows={3} maxLength={500} value={helpMessage} onChange={(event) => setHelpMessage(event.target.value)} /></label><button className="secondary" type="button" disabled={helpBusy || helpMessage.trim().length < 8} onClick={() => void submitHelp()}>{helpBusy ? "Sending…" : "Send request"}</button>{helpError && <div className="sign-in-error" role="alert">{helpError}</div>}</>}</div>}
     </div>
   </section>;
 }
@@ -2246,6 +2261,7 @@ function Dashboard({ data, setPage, openLocation, session }: { data: OperationsD
   const coveragePercent = data.fixtures.containers.length ? Math.round((observedContainers / data.fixtures.containers.length) * 100) : 0;
   const loadedPercent = data.fixtures.containers.length ? Math.round((loaded / data.fixtures.containers.length) * 100) : 0;
   const attentionCount = review + pendingCorrections.length;
+  const signInHelpCount = data.auditEntries.filter((entry) => entry.action === "admin.access_issue_requested").length;
   const reviewItems = projections.filter((item) => item.health === "needs_review");
   const assignedLocationId = session.principal.locationIds?.[0] ?? null;
   const openAssignedLocation = () => assignedLocationId ? openLocation(assignedLocationId) : setPage("locations");
@@ -2306,6 +2322,7 @@ function Dashboard({ data, setPage, openLocation, session }: { data: OperationsD
           <button className="pulse-card pulse-card--cyan" onClick={() => setPage("activity")}><span className="pulse-card__icon"><Activity size={18} /></span><span><small>Recent observations</small><strong>{observationsLastDay} in the last 24 hours</strong><em>{observationsLastDay ? "Open Activity to trace movement and scanner timing" : "No accepted observations in the last 24 hours"}</em></span><ChevronRight size={16} /></button>
           {canAccessPage(session.principal.role, "loads") && <button className="pulse-card pulse-card--navy" onClick={() => setPage("loads")}><span className="pulse-card__icon"><PackageCheck size={18} /></span><span><small>Load codes ready</small><strong>{availableLoadCodes} available for handoff</strong><em>{availableLoadCodes ? "Open Load codes to select a validated handoff." : "No validated handoff codes are ready."}</em></span><ChevronRight size={16} /></button>}
           <button className="pulse-card pulse-card--green" onClick={() => setPage("containers")}><span className="pulse-card__icon"><ContainerIcon size={18} /></span><span><small>Observation coverage</small><strong>{observedContainers} of {data.fixtures.containers.length} observed</strong><em>{unobservedContainers ? `${unobservedContainers} container${unobservedContainers === 1 ? " has" : "s have"} no confirmed history` : `All registered containers have history · ${coveragePercent}% coverage`}</em></span><ChevronRight size={16} /></button>
+          {signInHelpCount > 0 && canAccessPage(session.principal.role, "audit") && <button className="pulse-card pulse-card--cyan" onClick={() => setPage("audit")}><span className="pulse-card__icon"><CircleHelp size={18} /></span><span><small>Sign-in help log</small><strong>{signInHelpCount} request{signInHelpCount === 1 ? "" : "s"} recorded</strong><em>Open Audit trail to verify access and follow up.</em></span><ChevronRight size={16} /></button>}
         </div>
       </section>
 
@@ -4733,6 +4750,7 @@ function auditActionLabel(action: string) {
 const auditActionVerbs: Record<string, string> = {
   "admin.signed_in": "signed in",
   "admin.signed_out": "signed out",
+  "admin.access_issue_requested": "requested sign-in help",
   "admin.password_changed": "changed their password",
   "admin.user_created": "added an administrator",
   "admin.user_updated": "updated an administrator",
@@ -4765,7 +4783,8 @@ const auditTargetTypeLabels: Record<string, string> = {
   container: "Container",
   review_case: "Review case",
   correction_request: "Correction request",
-  location: "Location"
+  location: "Location",
+  admin_access: "Sign-in help request"
 };
 
 const auditTechnicalIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -4794,9 +4813,10 @@ function auditLocationDescription(entry: AuditEntry) {
 
 function auditDetailSummary(details: Record<string, unknown>) {
   const reason = typeof details.reason === "string" ? details.reason : typeof details.assignmentReason === "string" ? details.assignmentReason : null;
+  const message = typeof details.message === "string" ? details.message : null;
   const source = typeof details.source === "string" ? details.source.replaceAll("_", " ") : null;
   const changed = details.before && details.after ? "State changed" : null;
-  return [changed, reason ? `Reason: ${reason}` : null, source ? `Source: ${source}` : null].filter(Boolean).join(" · ");
+  return [changed, reason ? `Reason: ${reason}` : null, message ? `Message: ${message}` : null, source ? `Source: ${source}` : null].filter(Boolean).join(" · ");
 }
 
 function auditEntryDetail(entry: AuditEntry, data: OperationsData): DetailView {
@@ -4902,7 +4922,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
         <AuditMultiSelect label="Operating locations" options={data.fixtures.locations.map((location) => ({ value: location.locationId, label: location.name }))} selected={draft.locationIds} onToggle={(value) => setDraft((current) => ({ ...current, locationIds: current.locationIds.includes(value) ? current.locationIds.filter((item) => item !== value) : [...current.locationIds, value] }))} onClear={() => setDraft((current) => ({ ...current, locationIds: [] }))} emptyLabel="All locations" />
         <AuditMultiSelect label="Scanners" options={data.fixtures.devices.map((device) => ({ value: device.deviceId, label: `${scannerNumber(device.deviceId)} · ${device.label}` }))} selected={draft.deviceIds} onToggle={(value) => setDraft((current) => ({ ...current, deviceIds: current.deviceIds.includes(value) ? current.deviceIds.filter((item) => item !== value) : [...current.deviceIds, value] }))} onClear={() => setDraft((current) => ({ ...current, deviceIds: [] }))} emptyLabel="All scanners" />
         <AuditMultiSelect label="Action groups" options={[{ value: "admin", label: "Administrator access" }, { value: "device", label: "Scanner administration" }, { value: "review", label: "Review decisions" }, { value: "correction", label: "Corrections" }]} selected={draft.actionPrefixes} onToggle={(value) => toggleAuditFilter("actionPrefixes", value)} onClear={() => setDraft((current) => ({ ...current, actionPrefixes: [] }))} emptyLabel="All action groups" />
-        <AuditMultiSelect label="Action applies to" options={[{ value: "device", label: "Scanner" }, { value: "container", label: "Container" }, { value: "review_case", label: "Review case" }, { value: "correction_request", label: "Correction request" }, { value: "admin_user", label: "Administrator account" }]} selected={draft.targetTypes} onToggle={(value) => toggleAuditFilter("targetTypes", value)} onClear={() => setDraft((current) => ({ ...current, targetTypes: [] }))} emptyLabel="All subjects" />
+        <AuditMultiSelect label="Action applies to" options={[{ value: "device", label: "Scanner" }, { value: "container", label: "Container" }, { value: "review_case", label: "Review case" }, { value: "correction_request", label: "Correction request" }, { value: "admin_user", label: "Administrator account" }, { value: "admin_access", label: "Sign-in help request" }]} selected={draft.targetTypes} onToggle={(value) => toggleAuditFilter("targetTypes", value)} onClear={() => setDraft((current) => ({ ...current, targetTypes: [] }))} emptyLabel="All subjects" />
         <label>From date<input type="date" value={draft.from} onChange={(event) => updateFilter("from", event.target.value)} /></label>
         <label>To date<input type="date" value={draft.to} onChange={(event) => updateFilter("to", event.target.value)} /></label>
       </div>
