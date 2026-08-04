@@ -22,6 +22,7 @@ $psql = Join-Path $postgresBin "psql.exe"
 $migrationPath = Join-Path $PSScriptRoot "migrations\002_device_operations.sql"
 $adminAccessMigrationPath = Join-Path $PSScriptRoot "migrations\003_admin_access.sql"
 $locationManagerMigrationPath = Join-Path $PSScriptRoot "migrations\004_location_manager_access.sql"
+$devicePermissionsMigrationPath = Join-Path $PSScriptRoot "migrations\006_device_permissions.sql"
 $securePassword = Read-Host -AsSecureString "Azure PostgreSQL administrator password"
 $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
 try {
@@ -33,6 +34,8 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack admin access migration failed." }
   & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$locationManagerMigrationPath
   if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack location manager migration failed." }
+  & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$devicePermissionsMigrationPath
+  if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack device-permissions migration failed." }
   @"
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
@@ -44,6 +47,7 @@ GRANT SELECT, INSERT ON device_assignment_history TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE ON admin_sessions TO stacktrack_app;
 GRANT SELECT, INSERT, DELETE ON admin_user_locations TO stacktrack_app;
+GRANT SELECT ON device_roles, device_role_permissions TO stacktrack_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO stacktrack_app;
 "@ | & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1
   if ($LASTEXITCODE -ne 0) { throw "Granting StackTrack device administration permission failed." }

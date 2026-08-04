@@ -46,6 +46,20 @@ revision (or wait for the next revision health check) and refresh the admin
 site. The full bootstrap remains the right command for a brand-new database;
 the repair command is safer for an existing pilot database.
 
+If the mobile API reports a 500 from `/api/v1/mobile/permissions` or
+`/api/v1/mobile/reference-data` because the named scanner-role tables are
+missing, apply migration `006` without reseeding the database:
+
+```powershell
+npm.cmd run db:azure:device-permissions -- -ServerName "testserv5.postgres.database.azure.com" -AdminLogin "theparkersmith"
+```
+
+This repair creates the `field_scanner` role and its least-privilege grants,
+adds the installation role column, and verifies the `stacktrack_app` read
+permissions. It does not reset containers, observations, users, or scanner
+assignments. Restart the API after it completes so the next permission request
+uses the persisted role.
+
 `db:seed` deliberately resets this isolated development database, then creates a
 repeatable simulation with 120 containers, 8 locations, 7 shared scanners, four
 goods types, roughly 300 observations, completed movement histories, active

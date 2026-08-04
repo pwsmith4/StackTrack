@@ -532,6 +532,42 @@ describe("StackTrack API foundation", () => {
     });
   });
 
+  it("turns a missing device-role migration into a safe configuration response", async () => {
+    const missingSchema = Object.assign(new Error("relation device_roles does not exist"), { code: "42P01" });
+    const administration: DeviceAdministration = {
+      update: async () => null,
+      reportTelemetry: async () => null,
+      isScannerEnabled: async () => true,
+      hasPermission: async () => { throw missingSchema; },
+      permissionKeys: async () => { throw missingSchema; }
+    };
+    app = await createApp({
+      referenceData: async () => localFixtures,
+      deviceAdministration: administration,
+      strictDevicePermissions: true
+    });
+
+    const headersWithInstallation = {
+      ...headers,
+      "x-stacktrack-device-installation-id": event.deviceInstallationId
+    };
+    const permissions = await app.inject({
+      method: "GET",
+      url: "/api/v1/mobile/permissions",
+      headers: headersWithInstallation
+    });
+    const referenceData = await app.inject({
+      method: "GET",
+      url: "/api/v1/mobile/reference-data",
+      headers: headersWithInstallation
+    });
+
+    expect(permissions.statusCode).toBe(503);
+    expect(permissions.json()).toMatchObject({ error: "DevicePermissionConfigurationMissing" });
+    expect(referenceData.statusCode).toBe(503);
+    expect(referenceData.json()).toMatchObject({ error: "DevicePermissionConfigurationMissing" });
+  });
+
   it("scopes a read-only reviewer to explicitly assigned locations", async () => {
     const reviewer: AdminPrincipal = {
       ...ownerPrincipal,

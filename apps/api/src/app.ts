@@ -95,6 +95,13 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** Keep a partially migrated cloud control plane fail-closed and diagnosable. */
+function isMissingDevicePermissionSchema(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  return code === "42P01" || code === "42703";
+}
+
 function readContext(request: FastifyRequest): RequestContext | null {
   const parsed = requestContextSchema.safeParse({
     tenantId: firstHeader(request.headers["x-stacktrack-tenant-id"]),
@@ -850,12 +857,24 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       reply.code(401).send({ error: "DeviceInstallationRequired", message: "An active scanner installation is required for this action." });
       return false;
     }
-    const allowed = await dependencies.deviceAdministration.hasPermission(
-      context.tenantId,
-      context.deviceId,
-      installationId,
-      permissionKey
-    );
+    let allowed: boolean;
+    try {
+      allowed = await dependencies.deviceAdministration.hasPermission(
+        context.tenantId,
+        context.deviceId,
+        installationId,
+        permissionKey
+      );
+    } catch (error) {
+      if (isMissingDevicePermissionSchema(error)) {
+        reply.code(503).send({
+          error: "DevicePermissionConfigurationMissing",
+          message: "Named scanner permissions are not configured. Ask an administrator to finish the device-role setup."
+        });
+        return false;
+      }
+      throw error;
+    }
     if (!allowed) {
       reply.code(403).send({ error: "DevicePermissionDenied", message: `This scanner is not permitted to use ${permissionKey}. Ask an administrator to review its device role.` });
       return false;
@@ -959,17 +978,30 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         : true;
       return reply.send({ permissionKeys: [], resolvedAt: now().toISOString(), enforced: false, ...(assignedLocationId ? { assignedLocationId } : {}), isActive });
     }
-    const permissionKeys = await administration.permissionKeys(
-      context.tenantId,
-      context.deviceId,
-      installationId
-    );
-    const assignedLocationId = administration.assignedLocationId
-      ? await administration.assignedLocationId(context.tenantId, context.deviceId, installationId)
-      : null;
-    const isActive = administration.isScannerEnabled
-      ? await administration.isScannerEnabled(context.tenantId, context.deviceId, installationId)
-      : true;
+    let permissionKeys: readonly DevicePermissionKey[];
+    let assignedLocationId: string | null = null;
+    let isActive = true;
+    try {
+      permissionKeys = await administration.permissionKeys(
+        context.tenantId,
+        context.deviceId,
+        installationId
+      );
+      assignedLocationId = administration.assignedLocationId
+        ? await administration.assignedLocationId(context.tenantId, context.deviceId, installationId)
+        : null;
+      isActive = administration.isScannerEnabled
+        ? await administration.isScannerEnabled(context.tenantId, context.deviceId, installationId)
+        : true;
+    } catch (error) {
+      if (isMissingDevicePermissionSchema(error)) {
+        return reply.code(503).send({
+          error: "DevicePermissionConfigurationMissing",
+          message: "Named scanner permissions are not configured. Ask an administrator to finish the device-role setup."
+        });
+      }
+      throw error;
+    }
     return reply.send({
       permissionKeys,
       resolvedAt: now().toISOString(),
