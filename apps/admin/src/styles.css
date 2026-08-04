@@ -1542,6 +1542,15 @@ footer > span:first-child { display: none; }
 .admin-account__controls { align-items: start; }
 .admin-account__control-actions { display: flex; flex-wrap: wrap; gap: 7px; grid-column: 1 / -1; }
 .admin-account__control-actions button { min-height: 36px; }
+.admin-account--disabled { opacity: 1 !important; background: #fbfbfb !important; }
+.admin-account--disabled > .avatar,
+.admin-account--disabled > .admin-account__identity,
+.admin-account--disabled > .admin-account__controls > input,
+.admin-account--disabled > .admin-account__controls > select,
+.admin-account--disabled > .admin-account__controls > .admin-scope-picker,
+.admin-account--disabled > .admin-account__controls > .admin-account__reset { opacity: .66; }
+.admin-account--disabled .admin-account__control-actions { opacity: 1; }
+.admin-account--disabled .admin-account__control-actions .primary { box-shadow: 0 1px 2px rgba(0, 79, 128, .16); }
 .admin-account__remove { width: 34px; min-height: 34px !important; padding: 0 !important; display: inline-grid; place-items: center; border: 1px solid transparent !important; color: #7b8c96 !important; background: transparent !important; }
 .admin-account__remove:hover:not(:disabled) { border-color: #d8e4e9 !important; color: #536b77 !important; background: #f3f8fa !important; }
 .admin-account__remove:focus-visible { outline: 3px solid rgba(0, 157, 207, .22); outline-offset: 1px; }
