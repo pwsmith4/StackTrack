@@ -784,6 +784,15 @@ function RolePreviewLauncher({ sourceRole, sourceLocationIds, locations, busy, e
     else if (targetRole !== "location_manager" && targetRole !== "read_only_reviewer") setLocationIds([]);
   }, [availableRoles.join("|"), sourceLocationIds.join("|"), sourceRole, targetRole]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   if (!availableRoles.length) return null;
 
   const toggleLocation = (locationId: string) => {
@@ -851,6 +860,7 @@ export function App() {
   // token persisted in sessionStorage.
   const [baseSession, setBaseSession] = useState<AdminSession | null>(() => readStoredAdminSession());
   const [session, setSession] = useState<AdminSession | null>(() => readStoredAdminSession());
+  const [sessionExpired, setSessionExpired] = useState<string | null>(null);
   const [rolePreviewBusy, setRolePreviewBusy] = useState(false);
   const [rolePreviewError, setRolePreviewError] = useState<string | null>(null);
   // The pilot console opens on the sign-in surface. A user may close it only
@@ -889,6 +899,31 @@ export function App() {
     window.location.replace(`${window.location.pathname}?stacktrack_build=${encodeURIComponent(newBuild.buildId)}${hash}`);
   };
 
+  // Session expiry is intentionally separate from a network outage. Clear the
+  // browser token immediately so operational data is not left visible while
+  // the administrator decides what to do next.
+  const expireSession = useCallback((message: string) => {
+    sessionStorage.removeItem("stacktrack.admin.session");
+    setBaseSession(null);
+    setSession(null);
+    setData(null);
+    setError(null);
+    setSessionExpired(message);
+  }, []);
+
+  // Do not wait for the next API request to discover an expired session. This
+  // also handles an administrator who leaves the console open while idle.
+  useEffect(() => {
+    if (!session || session.rolePreview) return;
+    const expiresAt = Date.parse(session.expiresAt);
+    if (!Number.isFinite(expiresAt)) return;
+    const delay = Math.max(0, expiresAt - Date.now() + 250);
+    const timer = window.setTimeout(() => {
+      expireSession("Your secure session has ended. StackTrack paused this console and cleared the expired browser session. You do not need to refresh the page — sign in again below to continue.");
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [expireSession, session?.expiresAt, session?.rolePreview]);
+
   const refresh = useCallback(async () => {
     if (!session) {
       setData(null);
@@ -909,16 +944,14 @@ export function App() {
           setError("This lower-role preview expired. You have been returned to your normal administrator view.");
           return;
         }
-        sessionStorage.removeItem("stacktrack.admin.session");
-        setBaseSession(null);
-        setSession(null); setData(null); setError(null);
+        expireSession("Your secure session is no longer active. StackTrack paused this console and cleared the expired browser session. You do not need to refresh the page — sign in again below to continue.");
         return;
       }
       setError(caught instanceof Error ? caught.message : "Could not connect to the operations service.");
     } finally {
       setLoading(false);
     }
-  }, [baseSession, session]);
+  }, [baseSession, expireSession, session]);
 
   useEffect(() => {
     void refresh();
@@ -1054,6 +1087,7 @@ export function App() {
     sessionStorage.setItem("stacktrack.admin.session", JSON.stringify(next));
     setBaseSession(next);
     setSession(next);
+    setSessionExpired(null);
     setRolePreviewError(null);
     setSignInOpen(false);
   };
@@ -1061,7 +1095,7 @@ export function App() {
     const realSession = baseSession ?? session;
     try { if (realSession) await revokeAdminSession(realSession); }
     catch { /* Clearing this browser session is still the safe client outcome. */ }
-    finally { sessionStorage.removeItem("stacktrack.admin.session"); setBaseSession(null); setSession(null); setData(null); }
+    finally { sessionStorage.removeItem("stacktrack.admin.session"); setBaseSession(null); setSession(null); setData(null); setSessionExpired(null); }
   };
   const markPasswordChanged = () => {
     if (!session) return;
@@ -1132,7 +1166,7 @@ export function App() {
   const governanceNav = visibleNav.filter((item) => ["audit", "reports"].includes(item.page));
 
   if (!session) {
-    return <div className="authentication-shell"><SignInDialog fullPage onClose={() => undefined} onSuccess={establishSession} /></div>;
+    return <div className="authentication-shell"><SignInDialog fullPage sessionNotice={sessionExpired} onClose={() => undefined} onSuccess={establishSession} /></div>;
   }
 
   // Temporary passwords are one-time credentials. Keep operational data out
@@ -1304,7 +1338,7 @@ export function App() {
 function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase(); }
 function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", location_manager: "Location Manager", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
 
-function SignInDialog({ fullPage = false, onClose: _onClose, onSuccess }: { fullPage?: boolean; onClose: () => void; onSuccess: (session: AdminSession) => void }) {
+function SignInDialog({ fullPage = false, sessionNotice, onClose: _onClose, onSuccess }: { fullPage?: boolean; sessionNotice?: string | null; onClose: () => void; onSuccess: (session: AdminSession) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -1329,6 +1363,7 @@ function SignInDialog({ fullPage = false, onClose: _onClose, onSuccess }: { full
       <div className="sign-in-dialog__story-footer"><img src={stacktrackLogo} alt="StackTrack" /></div>
     </div>
     <div className="sign-in-dialog__form-panel">
+      {sessionNotice && <div className="sign-in-session-notice" role="status"><strong>Sign-in required</strong><span>{sessionNotice}</span></div>}
       <div className="sign-in-dialog__form-heading"><span className="eyebrow">GOODWILL OPERATIONS ACCESS</span><h2 id="sign-in-title">Sign in</h2><p id="sign-in-description">Use your Goodwill account to continue.</p></div>
       <form onSubmit={(event) => void submit(event)}><label>Username<input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Password<span className="sign-in-dialog__password-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-pressed={showPassword}>{showPassword ? "Hide" : "Show"}</button></span></label>{error && <div className="sign-in-error" role="alert">{error}</div>}<button className="primary" disabled={busy || !username.trim() || !password} type="submit">{busy ? "Signing in…" : "Sign in"}</button></form>
       <button className="sign-in-help-toggle" type="button" onClick={() => { setHelpOpen((current) => !current); setHelpError(null); }} aria-expanded={helpOpen}>Can’t sign in?</button>
@@ -1372,7 +1407,7 @@ function PageContent({
   onPasswordChanged: () => void;
   onSignOut: () => Promise<void>;
 }) {
-  if (page === "dashboard") return <Dashboard data={data} setPage={setPage} openLocation={openLocation} session={session!} />;
+  if (page === "dashboard") return <Dashboard data={data} setPage={setPage} openContainers={openContainers} openLocation={openLocation} session={session!} />;
   if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} session={session!} />;
   if (page === "service") return <ServicePlanPage data={data} openLocation={openLocation} />;
   if (page === "forecast") return <WarehouseForecastPage data={data} openLocation={openLocation} />;
@@ -2490,7 +2525,7 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
   </div>;
 }
 
-function Dashboard({ data, setPage, openLocation, session }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; session: AdminSession }) {
+function Dashboard({ data, setPage, openContainers, openLocation, session }: { data: OperationsData; setPage: (page: Page) => void; openContainers: (movement?: ContainerMovement) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; session: AdminSession }) {
   const projections = Object.values(data.projections).filter(Boolean) as Projection[];
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
   const scoped = isScopedPrincipal(session.principal);
@@ -2609,7 +2644,7 @@ function Dashboard({ data, setPage, openLocation, session }: { data: OperationsD
 
       <div className="dashboard-grid">
         <section className="panel network-panel">
-          <PanelTitle title="Active departures" subtitle={activeRoutes.length ? `${inTransit} container${inTransit === 1 ? "" : "s"} in transit after leaving ${activeRoutes.length} location${activeRoutes.length === 1 ? "" : "s"}` : "No active departures are waiting for an arrival scan"} action="View all locations" onClick={() => setPage("locations")} />
+          <PanelTitle title="Active departures" subtitle={activeRoutes.length ? `${inTransit} container${inTransit === 1 ? "" : "s"} in transit after leaving ${activeRoutes.length} location${activeRoutes.length === 1 ? "" : "s"}` : "No active departures are waiting for an arrival scan"} action="View all in transit" onClick={() => openContainers("in_transit")} />
           {activeRoutes.length ? <div className="dashboard-route-list">{activeRoutes.slice(0, 4).map((route) => {
             const labels = route.items.slice(0, 3).map((item) => item.label).join(", ");
             const remaining = route.items.length - Math.min(route.items.length, 3);
@@ -5529,14 +5564,15 @@ function AdminRemovalDialog({ user, confirmation, error, busy, onChange, onClose
     <section className="admin-remove-dialog" role="alertdialog" aria-modal="true" aria-labelledby={`remove-admin-title-${user.userId}`} aria-describedby={`remove-admin-description-${user.userId}`} onClick={(event) => event.stopPropagation()}>
       <header className="admin-remove-dialog__header">
         <span className="admin-remove-dialog__icon"><AlertTriangle size={20} aria-hidden="true" /></span>
-        <div><span className="eyebrow">Permanent account removal</span><h3 id={`remove-admin-title-${user.userId}`}>Remove {user.displayName}?</h3></div>
+        <div><span className="eyebrow">Remove administrator</span><h3 id={`remove-admin-title-${user.userId}`}>Remove {user.displayName} permanently?</h3></div>
         <button type="button" className="icon-button icon-button--small" aria-label="Close removal dialog" onClick={onClose} disabled={busy}><X size={15} /></button>
       </header>
       <div className="admin-remove-dialog__body">
-        <p id={`remove-admin-description-${user.userId}`}>This permanently removes <strong>@{user.username}</strong> from the administrator directory. Their active sessions will end, while operational and audit history remains.</p>
-        <div className="admin-remove-dialog__note"><AlertTriangle size={16} aria-hidden="true" /><span>Use this only when the person should no longer have an account. Disabling is safer when access may be restored later.</span></div>
+        <p id={`remove-admin-description-${user.userId}`}>This removes <strong>@{user.username}</strong> from the administrator directory. Their active sessions end, while operational and audit history stays preserved.</p>
+        <div className="admin-remove-dialog__note"><AlertTriangle size={16} aria-hidden="true" /><span><strong>Use this only when access should never be restored.</strong><small>For a temporary absence, disable the account instead. A removed account cannot be re-enabled.</small></span></div>
         <form onSubmit={onSubmit}>
-          <label htmlFor={`remove-admin-confirmation-${user.userId}`}>Type <strong>{user.username}</strong> to confirm<span className="admin-remove-dialog__hint">This extra check helps prevent an accidental permanent removal.</span></label>
+          <div className="admin-remove-dialog__confirm-heading"><strong>Final confirmation</strong><span>Enter the username below to continue.</span></div>
+          <label htmlFor={`remove-admin-confirmation-${user.userId}`}>Username to remove: <strong>@{user.username}</strong></label>
           <input id={`remove-admin-confirmation-${user.userId}`} autoFocus autoComplete="off" value={confirmation} onChange={(event) => onChange(event.target.value)} placeholder={user.username} disabled={busy} />
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="admin-remove-dialog__actions"><button type="button" className="secondary" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" className="admin-remove-dialog__confirm" disabled={busy || !matches}>{busy ? "Removing…" : "Remove administrator"}</button></div>

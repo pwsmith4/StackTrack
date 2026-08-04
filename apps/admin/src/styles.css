@@ -1546,19 +1546,25 @@ footer > span:first-child { display: none; }
 .admin-account__remove:hover:not(:disabled) { border-color: #d8e4e9 !important; color: #536b77 !important; background: #f3f8fa !important; }
 .admin-account__remove:focus-visible { outline: 3px solid rgba(0, 157, 207, .22); outline-offset: 1px; }
 .admin-account__remove-error { flex-basis: 100%; color: #9a5d34; font-size: 9px; line-height: 1.35; }
-.admin-remove-dialog__backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 24px; background: rgba(18, 35, 48, .46); backdrop-filter: blur(3px); }
-.admin-remove-dialog { width: min(480px, 100%); overflow: hidden; border: 1px solid #d7e1e6; border-radius: 14px; background: #fff; box-shadow: 0 28px 80px rgba(0, 28, 55, .28); }
+.admin-remove-dialog__backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 24px; background: rgba(18, 35, 48, .52); backdrop-filter: blur(4px); }
+.admin-remove-dialog { position: relative; z-index: 1; width: min(540px, 100%); max-height: calc(100vh - 48px); overflow: auto; isolation: isolate; border: 1px solid #d7e1e6; border-radius: 14px; background: #fff !important; opacity: 1 !important; box-shadow: 0 28px 80px rgba(0, 28, 55, .32); }
 .admin-remove-dialog__header { display: flex; align-items: flex-start; gap: 12px; padding: 20px 22px 15px; border-bottom: 1px solid var(--line); }
 .admin-remove-dialog__header > div { min-width: 0; flex: 1; }
 .admin-remove-dialog__header h3 { margin: 4px 0 0; color: var(--ink); font: 800 18px/1.2 Manrope, sans-serif; }
 .admin-remove-dialog__icon { width: 40px; height: 40px; display: grid; place-items: center; flex: none; border: 1px solid #f3d6bd; border-radius: 12px; color: #a55f25; background: #fff2e7; }
-.admin-remove-dialog__body { padding: 18px 22px 22px; }
+.admin-remove-dialog__body { padding: 20px 24px 24px; background: #fff; }
 .admin-remove-dialog__body > p { margin: 0; color: #566b77; font-size: 10px; line-height: 1.6; }
 .admin-remove-dialog__body > p strong { color: #2b4655; }
-.admin-remove-dialog__note { display: flex; align-items: flex-start; gap: 9px; margin: 15px 0; padding: 11px 12px; border: 1px solid #e8e1d8; background: #fffaf5; color: #755e4c; font-size: 9px; line-height: 1.45; }
+.admin-remove-dialog__note { display: flex; align-items: flex-start; gap: 9px; margin: 17px 0; padding: 12px 13px; border: 1px solid #e8e1d8; background: #fffaf5; color: #755e4c; font-size: 10px; line-height: 1.5; }
 .admin-remove-dialog__note svg { flex: none; color: #a55f25; }
+.admin-remove-dialog__note span { display: grid; gap: 3px; }
+.admin-remove-dialog__note strong { color: #674b35; font-size: 10px; }
+.admin-remove-dialog__note small { color: #806f60; font-size: 9px; line-height: 1.45; }
 .admin-remove-dialog form { display: grid; gap: 10px; margin-top: 17px; }
-.admin-remove-dialog label { display: grid; gap: 6px; color: #566572; font-size: 9px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; }
+.admin-remove-dialog__confirm-heading { display: grid; gap: 3px; margin-bottom: 1px; }
+.admin-remove-dialog__confirm-heading strong { color: #2d4756; font-size: 11px; }
+.admin-remove-dialog__confirm-heading span { color: #788892; font-size: 9px; }
+.admin-remove-dialog label { display: grid; gap: 6px; color: #566572; font-size: 10px; font-weight: 700; }
 .admin-remove-dialog input { min-height: 42px; box-sizing: border-box; padding: 0 11px; border: 1px solid #bdc9d2; color: var(--ink); background: #fff; font: inherit; font-size: 10px; letter-spacing: normal; text-transform: none; }
 .admin-remove-dialog input:focus { border-color: #6ebed8; outline: 3px solid rgba(0, 157, 207, .12); }
 .admin-remove-dialog__hint { color: #7a8791; font-size: 8.5px; font-weight: 400; letter-spacing: normal; text-transform: none; }
@@ -2109,6 +2115,8 @@ footer > span:first-child { display: none; }
 .sign-in-dialog__story-footer img { width: 126px; max-height: 26px; object-fit: contain; object-position: left center; filter: saturate(.9); }
 .sign-in-dialog__form-panel { display: flex; flex-direction: column; justify-content: center; padding: clamp(28px, 5vw, 58px); background: #fff; }
 .sign-in-dialog__form-heading { max-width: 410px; }
+.sign-in-session-notice { display: grid; gap: 5px; max-width: 410px; margin-bottom: 18px; padding: 12px 13px; border: 1px solid #b9dce8; border-left: 3px solid #159ec4; border-radius: 6px; background: #eefafd; color: #4f7180; font-size: 10px; line-height: 1.45; }
+.sign-in-session-notice strong { color: #164b63; font-size: 11px; }
 .sign-in-dialog__form-heading .eyebrow { color: #176ba6; }
 .sign-in-dialog__icon { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 18px; border: 1px solid #cae5ef; border-radius: 10px; color: #0563a0; background: #eaf8fc; }
 .sign-in-dialog__form-panel h2 { margin: 10px 0 9px; color: #132633; font: 800 clamp(25px, 3vw, 33px)/1.1 Manrope, sans-serif; letter-spacing: -.9px; }
@@ -2240,14 +2248,15 @@ footer > span:first-child { display: none; }
 
 /* A clear, top-level read-only role preview. It is intentionally blue/cyan,
    never warning red: preview is a safety feature, not an error state. */
-.role-preview-control { position: relative; z-index: 20; }
+.role-preview-control { position: static; z-index: auto; }
 .role-preview-trigger { position: relative; z-index: 2; min-height: 36px; padding-inline: 11px; }
-.role-preview-backdrop { position: fixed; inset: 0; z-index: 0; border: 0; padding: 0; background: transparent; cursor: default; }
+.role-preview-backdrop { position: fixed; inset: 0; z-index: 90; border: 0; padding: 0; background: rgba(0, 28, 53, .34); backdrop-filter: blur(3px); cursor: default; }
 .role-preview-backdrop:focus { outline: none; }
-.role-preview-popover { position: absolute; right: 0; top: calc(100% + 10px); z-index: 1; width: min(390px, calc(100vw - 32px)); padding: 16px; border: 1px solid #b9d4df; background: #fff; box-shadow: 0 18px 45px rgba(0, 32, 56, .18); }
+.role-preview-popover { position: fixed; left: 50%; top: 50%; z-index: 91; transform: translate(-50%, -50%); width: min(520px, calc(100vw - 40px)); max-height: min(720px, calc(100vh - 40px)); overflow: auto; padding: 24px; border: 1px solid #b9d4df; border-radius: 12px; background: #fff; box-shadow: 0 28px 80px rgba(0, 32, 56, .28); animation: role-preview-in .16s ease-out; }
+@keyframes role-preview-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); } to { opacity: 1; transform: translate(-50%, -50%); } }
 .role-preview-popover__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .role-preview-popover__header > div { display: grid; gap: 4px; }
-.role-preview-popover__header strong { color: var(--ink); font-size: 13px; }
+.role-preview-popover__header strong { color: var(--ink); font-size: 16px; }
 .role-preview-popover > p { margin: 9px 0 14px; color: #657786; font-size: 10px; line-height: 1.5; }
 .role-preview-popover select { width: 100%; min-height: 37px; padding: 0 9px; border: 1px solid #b9c9d3; background: #fff; color: var(--ink); font: inherit; font-size: 10px; }
 .role-preview-popover .field-label { display: block; margin-bottom: 6px; color: #59717f; font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
@@ -2279,7 +2288,7 @@ footer > span:first-child { display: none; }
 .site-update-banner__later { color: #466b78; }
 @media (max-width: 700px) {
   .role-preview-control { position: static; }
-  .role-preview-popover { position: fixed; left: 16px; right: 16px; top: 74px; width: auto; max-height: calc(100vh - 90px); overflow: auto; }
+  .role-preview-popover { left: 16px; right: 16px; top: 50%; width: auto; max-height: calc(100vh - 32px); transform: translateY(-50%); animation: none; }
   .role-preview-banner { align-items: flex-start; flex-wrap: wrap; padding: 12px 16px; }
   .role-preview-banner__copy { flex-basis: calc(100% - 48px); }
   .role-preview-banner__exit { width: 100%; justify-content: center; margin-left: 44px; }
