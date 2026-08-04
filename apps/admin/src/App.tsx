@@ -5370,30 +5370,43 @@ function adminRoleTone(role: AdminPrincipal["role"]): PillTone {
 function AdminDirectory({ session, locations }: { session: AdminSession; locations: Location[] }) {
   const [users, setUsers] = useState<AdminPrincipal[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
   const [temporaryPassword, setTemporaryPassword] = useState("");
   const [role, setRole] = useState<EditableAdminRole>("operations_administrator");
   const [locationIds, setLocationIds] = useState<string[]>([]);
   const activeLocations = locations.filter((location) => location.isActive !== false && location.type !== "in_transit");
+  const resetAddForm = () => { setDisplayName(""); setUsername(""); setTemporaryPassword(""); setRole("operations_administrator"); setLocationIds([]); setAddError(null); };
+  const closeAddDialog = () => { if (!busy) { resetAddForm(); setAddOpen(false); } };
   const refreshUsers = useCallback(async () => {
     try { setUsers(await listAdminUsers(session)); setError(null); }
     catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load administrator accounts."); }
   }, [session]);
   useEffect(() => { void refreshUsers(); }, [refreshUsers]);
+  useEffect(() => {
+    if (!addOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeAddDialog();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [addOpen, busy]);
   const addUser = async (event: React.FormEvent) => {
     event.preventDefault();
     if (role === "location_manager" && locationIds.length === 0) {
-      setError("Choose at least one location for a Location Manager.");
+      setAddError("Choose at least one location for a Location Manager.");
       return;
     }
-    setBusy(true); setError(null);
+    setBusy(true); setAddError(null); setError(null);
     try {
       await createAdminUser(session, { displayName, username, temporaryPassword, role, ...(["location_manager", "read_only_reviewer"].includes(role) && locationIds.length ? { locationIds } : {}) });
-      setDisplayName(""); setUsername(""); setTemporaryPassword(""); setRole("operations_administrator"); setLocationIds([]);
       await refreshUsers();
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); }
+      resetAddForm();
+      setAddOpen(false);
+    } catch (caught) { setAddError(caught instanceof Error ? caught.message : "Could not create account."); }
     finally { setBusy(false); }
   };
   const save = async (userId: string, update: AdminDirectoryUpdate) => {
@@ -5416,21 +5429,30 @@ function AdminDirectory({ session, locations }: { session: AdminSession; locatio
   };
   return <section className="admin-directory">
     <PanelTitle title="Administrator directory" subtitle="Organization Owners have full control. Every other account is explicit about its operating scope, and no administrator can view another person’s stored password." />
-    <div className="admin-directory__owner-callout"><ShieldCheck size={20} /><div><strong>Signed in as Organization Owner</strong><span>You can add, scope, disable, reset, or permanently remove administrator accounts. Passwords are stored only as one-way hashes; a reset issues a one-time temporary password that the user must replace.</span></div></div>
     <div className="admin-role-legend">
       <article><Pill tone="blue">Full control</Pill><strong>Organization Owner</strong><span>Users, locations, devices, corrections, approvals, and settings across Goodwill.</span></article>
       <article><Pill tone="good">Network operations</Pill><strong>Operations Administrator</strong><span>Daily scanner, exception, correction-request, and data workflows across locations.</span></article>
       <article><Pill tone="blue">Location-scoped</Pill><strong>Location Manager</strong><span>Only assigned stores, Donation Xpress sites, or warehouses; changes remain reasoned and reviewable.</span></article>
       <article><Pill tone="muted">View only</Pill><strong>Read-only Reviewer</strong><span>Can investigate evidence and reports without changing operational state.</span></article>
     </div>
+    <div className="admin-directory__add-bar">
+      <div><span className="eyebrow">Create access</span><strong>Add an administrator</strong><span>Create a scoped account with a one-time password. The new user changes it privately on first sign-in.</span></div>
+      <button type="button" className="primary admin-directory__add-trigger" onClick={() => { resetAddForm(); setAddOpen(true); }}><Plus size={15} /> Add administrator</button>
+    </div>
     <div className="admin-directory__users">{users?.map((user) => <ManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} locations={activeLocations} busy={busy} onSave={save} onReset={resetPassword} onRemove={removeUser} />) ?? <div className="skeleton" />}</div>
     {error && <div className="sign-in-error">{error}</div>}
-    <form className="admin-user-form admin-user-form--owner" onSubmit={(event) => void addUser(event)}>
-      <div><span className="eyebrow">Create access</span><h3>Add an administrator</h3><p>Give each person the least access needed. The temporary password is never retrievable after this form is cleared; the user replaces it privately on first sign-in.</p></div>
-      <div className="admin-user-form__grid"><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label><label>Role<select value={role} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>One-time temporary password<input required minLength={12} type="password" autoComplete="new-password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /><small>12+ characters. It is hashed immediately and cannot be viewed later.</small></label></div>
-      {(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={activeLocations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}
-      <button className="primary" disabled={busy}>{busy ? "Creating…" : "Create administrator"}</button>
-    </form>
+    {addOpen && <div className="admin-user-dialog__backdrop">
+      <section className="admin-user-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-user-dialog-title">
+        <header className="admin-user-dialog__header"><div><span className="eyebrow">Create access</span><h3 id="admin-user-dialog-title">Add an administrator</h3></div><button type="button" className="icon-button" aria-label="Close add administrator dialog" onClick={closeAddDialog}><X size={18} /></button></header>
+        <p className="admin-user-dialog__intro">Give each person the least access needed. The temporary password is never retrievable after this form is cleared; the user replaces it privately on first sign-in.</p>
+        <form className="admin-user-dialog__form" onSubmit={(event) => void addUser(event)}>
+          <div className="admin-user-dialog__grid"><label>Display name<input required autoFocus value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label><label>Role<select value={role} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>One-time temporary password<input required minLength={12} type="password" autoComplete="new-password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /><small>12+ characters. It is hashed immediately and cannot be viewed later.</small></label></div>
+          {(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={activeLocations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}
+          {addError && <div className="sign-in-error admin-user-dialog__error">{addError}</div>}
+          <div className="admin-user-dialog__actions"><button type="button" className="secondary" disabled={busy} onClick={closeAddDialog}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? "Creating…" : "Create administrator"}</button></div>
+        </form>
+      </section>
+    </div>}
   </section>;
 }
 
@@ -5472,7 +5494,7 @@ function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onRes
   return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}>
     <span className="avatar">{initials(user.displayName)}</span>
     <div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={adminRoleTone(user.role)}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">First password change pending</Pill>}</div><small className="admin-account__scope">{user.role === "location_manager" ? (user.locationIds?.length ? "Assigned to " + user.locationIds.length + " location" + (user.locationIds.length === 1 ? "" : "s") : "No locations assigned") : user.role === "read_only_reviewer" ? (user.locationIds?.length ? "Read-only at " + user.locationIds.length + " assigned location" + (user.locationIds.length === 1 ? "" : "s") : "Network-wide read-only") : "Network-wide access"}</small></div>
-    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...((role === "location_manager" || role === "read_only_reviewer") || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" || role === "read_only_reviewer" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setRemoveError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button><button type="button" className="admin-account__remove" disabled={busy} onClick={confirmRemoval}>Remove permanently</button>{removeError && <small className="admin-account__remove-error">{removeError}</small>}</div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}
+    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...((role === "location_manager" || role === "read_only_reviewer") || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" || role === "read_only_reviewer" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setRemoveError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button><button type="button" className="admin-account__remove" disabled={busy} onClick={confirmRemoval} aria-label={`Permanently remove ${user.username}`} title="Remove permanently"><Trash2 size={15} aria-hidden="true" /></button>{removeError && <small className="admin-account__remove-error">{removeError}</small>}</div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}
   </article>;
 }
 
