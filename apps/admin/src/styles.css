@@ -1906,35 +1906,56 @@ footer > span:first-child { display: none; }
    lives in the row where its effect is visible. */
 .warehouse-outlook__section-nav {
   position: sticky;
-  top: 8px;
+  top: 10px;
   z-index: 4;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(155px, .34fr) minmax(0, 1fr);
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 7px 9px;
-  border: 1px solid #d9e8ed;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, .96);
-  box-shadow: 0 4px 14px rgba(20, 62, 76, .06);
+  gap: 14px;
+  padding: 11px 13px;
+  border: 1px solid #cfe5ec;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 5px 18px rgba(20, 62, 76, .08);
   backdrop-filter: blur(8px);
 }
-.warehouse-outlook__section-nav-label {
-  margin-right: 2px;
-  color: #6d858f;
-  font-size: 7.5px;
-  font-weight: 800;
-  letter-spacing: .09em;
-  text-transform: uppercase;
+.warehouse-outlook__section-nav-heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.warehouse-outlook__section-nav-heading .eyebrow {
+  color: #3c92aa;
+  font-size: 7px;
+}
+.warehouse-outlook__section-nav-heading strong {
+  color: var(--ink);
+  font: 800 12px/1.2 Manrope, sans-serif;
+}
+.warehouse-outlook__section-nav-heading small {
+  color: #718793;
+  font-size: 8px;
+  line-height: 1.3;
+}
+.warehouse-outlook__section-nav-links {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(112px, 1fr));
+  gap: 6px;
+  min-width: 0;
 }
 .warehouse-outlook__section-nav button {
-  min-height: 27px;
-  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 6px 8px;
   border: 1px solid #d5e5ea;
-  border-radius: 3px;
+  border-radius: 4px;
   color: #315b6d;
   background: #f8fcfd;
-  font: 800 8px/1 Manrope, sans-serif;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
 .warehouse-outlook__section-nav button:hover,
@@ -1944,8 +1965,47 @@ footer > span:first-child { display: none; }
   background: #eef9fc;
   outline: none;
 }
+.warehouse-outlook__section-nav button:focus-visible {
+  box-shadow: 0 0 0 2px rgba(0, 117, 185, .14);
+}
+.warehouse-outlook__section-nav-step {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  color: var(--blue-800);
+  background: #e8f5fa;
+  font: 800 9px/1 Manrope, sans-serif;
+}
+.warehouse-outlook__section-nav button:hover .warehouse-outlook__section-nav-step,
+.warehouse-outlook__section-nav button:focus-visible .warehouse-outlook__section-nav-step {
+  color: #fff;
+  background: var(--blue-800);
+}
+.warehouse-outlook__section-nav button > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.warehouse-outlook__section-nav button > span:last-child strong {
+  overflow: hidden;
+  color: var(--ink);
+  font: 800 8.5px/1.15 Manrope, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.warehouse-outlook__section-nav button > span:last-child small {
+  overflow: hidden;
+  color: #718793;
+  font-size: 7.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #warehouse-capacity, #store-targets, #store-coverage, #seasonal-planning, #forecast-method {
-  scroll-margin-top: 60px;
+  scroll-margin-top: 116px;
 }
 
 .store-outlook__target-editor--new > .store-outlook__target-form { display: none !important; }
@@ -2019,9 +2079,15 @@ footer > span:first-child { display: none; }
 }
 @media (max-width: 650px) {
   .warehouse-outlook__section-nav { position: static; }
-  .warehouse-outlook__section-nav-label { flex-basis: 100%; }
+  .warehouse-outlook__section-nav-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .warehouse-outlook__section-nav button { min-height: 40px; }
   .store-outlook__target-details-heading { align-items: stretch; }
   .store-outlook__target-range-cell, .store-outlook__target-action-cell { min-width: 180px; }
+}
+
+@media (max-width: 1000px) and (min-width: 651px) {
+  .warehouse-outlook__section-nav { grid-template-columns: 1fr; gap: 9px; }
+  .warehouse-outlook__section-nav-links { grid-template-columns: repeat(3, minmax(130px, 1fr)); }
 }
 
 /* The receipt horizon is an operational control, so keep it readable without overpowering the forecast value. */

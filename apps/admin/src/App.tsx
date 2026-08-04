@@ -2071,12 +2071,33 @@ function WarehouseForecastPage({ data, openLocation }: { data: OperationsData; o
   return <div className="warehouse-outlook-page">
     <section className="panel warehouse-outlook-page__intro"><div><span className="eyebrow">Planning workspace</span><h2>Capacity decisions with a visible calculation</h2><p>Review warehouse capacity first, tune store targets second, then confirm seasonal assumptions. Every value is a planning aid and accepted scanner history remains unchanged.</p></div><div className="warehouse-outlook-page__intro-badges"><Pill tone="blue">Warehouse capacity</Pill><Pill tone="good">Store coverage</Pill><Pill tone="muted">Scenario only</Pill></div></section>
     <nav className="warehouse-outlook__section-nav" aria-label="Warehouse outlook sections">
-      <span className="warehouse-outlook__section-nav-label">Jump to</span>
-      <button type="button" onClick={() => scrollToSection("warehouse-capacity")}>Warehouse capacity</button>
-      <button type="button" onClick={() => scrollToSection("store-targets")}>Store targets</button>
-      <button type="button" onClick={() => scrollToSection("store-coverage")}>Coverage queue</button>
-      <button type="button" onClick={() => scrollToSection("seasonal-planning")}>Seasonal planning</button>
-      <button type="button" onClick={() => scrollToSection("forecast-method")}>Calculation method</button>
+      <div className="warehouse-outlook__section-nav-heading">
+        <span className="eyebrow">Warehouse outlook</span>
+        <strong>On this page</strong>
+        <small>Choose a section to jump there.</small>
+      </div>
+      <div className="warehouse-outlook__section-nav-links">
+        <button type="button" aria-label="Jump to warehouse capacity" onClick={() => scrollToSection("warehouse-capacity")}>
+          <span className="warehouse-outlook__section-nav-step">1</span>
+          <span><strong>Warehouse capacity</strong><small>Receipts and on-hand plan</small></span>
+        </button>
+        <button type="button" aria-label="Jump to store targets" onClick={() => scrollToSection("store-targets")}>
+          <span className="warehouse-outlook__section-nav-step">2</span>
+          <span><strong>Store targets</strong><small>Minimums and maximums</small></span>
+        </button>
+        <button type="button" aria-label="Jump to the coverage queue" onClick={() => scrollToSection("store-coverage")}>
+          <span className="warehouse-outlook__section-nav-step">3</span>
+          <span><strong>Coverage queue</strong><small>Locations needing action</small></span>
+        </button>
+        <button type="button" aria-label="Jump to seasonal planning" onClick={() => scrollToSection("seasonal-planning")}>
+          <span className="warehouse-outlook__section-nav-step">4</span>
+          <span><strong>Seasonal planning</strong><small>Holiday assumptions</small></span>
+        </button>
+        <button type="button" aria-label="Jump to the calculation method" onClick={() => scrollToSection("forecast-method")}>
+          <span className="warehouse-outlook__section-nav-step">5</span>
+          <span><strong>Calculation method</strong><small>How the estimate is built</small></span>
+        </button>
+      </div>
     </nav>
     <WarehouseForecastPanel data={data} warehouses={warehouses} warehouseRecords={warehouseRecords} goodsColumns={goodsColumns} openLocation={openLocation} />
     <StoreCapacityOutlook data={data} records={records} goodsColumns={goodsColumns} openLocation={openLocation} />
