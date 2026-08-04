@@ -1464,12 +1464,11 @@ footer > span:first-child { display: none; }
 .profile-security-card strong { color: #294c61; font-size: 11px; }
 .profile-security-card span, .profile-security-card small { color: #6b7e8a; font-size: 10px; line-height: 1.45; }
 .profile-security-card small { font-size: 9px; }
-.detail-danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 28px; padding: 16px; border: 1px solid #f0d8d3; background: #fff9f8; }
-.detail-danger-zone > div { min-width: 0; }
-.detail-danger-zone strong { color: #6f3028; font-size: 11px; }
-.detail-danger-zone p { margin: 5px 0 0; color: #8b6d68; font-size: 9px; line-height: 1.5; }
-.danger-button { min-height: 34px; flex: none; padding: 0 13px; border: 1px solid #dca79e; color: #9d3e32; background: #fff; font-size: 10px; font-weight: 800; }
-.danger-button:hover { color: #fff; border-color: #a8463a; background: #a8463a; }
+.profile-signout { display: grid; gap: 5px; margin-top: 28px; padding: 17px; border: 1px solid #dfe9ed; background: #f8fbfc; }
+.profile-signout .eyebrow { margin: 0 0 1px; }
+.profile-signout > strong { color: #324b5b; font-size: 11px; }
+.profile-signout > p { margin: 0 0 8px; color: #6b7d88; font-size: 9px; line-height: 1.5; }
+.profile-signout__button { width: fit-content; min-height: 34px; padding-inline: 13px; }
 .admin-directory .panel-title p { font-size: 0; }
 .admin-directory .panel-title p::after { content: "Organization access and role governance."; font-size: 10px; }
 
@@ -1605,7 +1604,7 @@ footer > span:first-child { display: none; }
 @media (max-width: 700px) { .admin-role-legend, .admin-user-form__grid, .admin-user-dialog__grid, .admin-scope-picker > div { grid-template-columns: 1fr !important; } .admin-account__self { max-width: none; width: 100%; box-sizing: border-box; } .admin-directory__add-bar { align-items: stretch; flex-direction: column; } .admin-directory__add-trigger { justify-content: center; } .admin-user-dialog__backdrop, .admin-remove-dialog__backdrop { padding: 12px; } .admin-user-dialog__header, .admin-user-dialog__intro, .admin-user-dialog__form, .admin-remove-dialog__header, .admin-remove-dialog__body { padding-left: 16px; padding-right: 16px; } .admin-remove-dialog__actions { flex-direction: column-reverse; } .admin-remove-dialog__actions button { width: 100%; justify-content: center; } }
 @media (max-width: 900px) { .load-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .load-filter-grid .load-filter--wide { grid-column: span 2; } }
 @media (max-width: 600px) { .load-filter-panel__header { align-items: stretch; flex-direction: column; } .load-filter-panel__header > div:last-child { width: 100%; } .load-filter-panel__header > div:last-child button { flex: 1; justify-content: center; } .load-filter-grid { grid-template-columns: 1fr; } .load-filter-grid .load-filter--wide { grid-column: auto; } }
-@media (max-width: 600px) { .detail-drawer__body { padding: 20px; } .detail-drawer__header { padding: 18px 20px; } .detail-drawer__record { margin-inline: 20px; } .detail-drawer__actions { padding-inline: 20px; } .detail-danger-zone { align-items: stretch; flex-direction: column; } .danger-button { width: 100%; } }
+@media (max-width: 600px) { .detail-drawer__body { padding: 20px; } .detail-drawer__header { padding: 18px 20px; } .detail-drawer__record { margin-inline: 20px; } .detail-drawer__actions { padding-inline: 20px; } }
 @media (max-width: 600px) { .timeline { padding: 14px 12px 18px; } .timeline article { grid-template-columns: 26px minmax(0, 1fr); gap: 7px; } .timeline__card { padding: 11px 10px 12px; } .timeline__card-heading { flex-direction: column; gap: 7px; } .timeline time { white-space: normal; } }
 @media (max-width: 600px) { .pagination { align-items: stretch; flex-direction: column; } .pagination__summary, .pagination__controls { justify-content: space-between; width: 100%; } .pagination__page-size { margin-left: auto; } }
 @media (max-width: 1100px) { .container-filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
