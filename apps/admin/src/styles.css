@@ -2135,6 +2135,8 @@ footer > span:first-child { display: none; }
 .scope-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 9px; border: 1px solid #d8e4ea; border-radius: 999px; color: #607985; background: #f6fafb; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .scope-chip svg { color: #1673a9; }
 .scope-chip--local { border-color: #bfe4ed; color: #0e638f; background: #eaf8fb; }
+.role-preview-topbar-exit { min-height: 34px; padding-inline: 11px; border-color: #087da8; background: #087da8; box-shadow: 0 2px 0 rgba(0, 55, 90, .12); }
+.role-preview-topbar-exit:hover { border-color: #005f87; background: #005f87; }
 @media (max-width: 780px) {
   .sign-in-dialog { grid-template-columns: 1fr; min-height: 0; }
   .sign-in-dialog__story { min-height: 365px; }
@@ -2142,6 +2144,8 @@ footer > span:first-child { display: none; }
   .sign-in-dialog__story-footer { margin-top: auto; }
   .sign-in-dialog__form-panel { padding: 32px 26px 30px; }
   .scope-chip { display: none; }
+  .role-preview-topbar-exit { min-height: 32px; padding-inline: 9px; font-size: 10px; }
+  .topbar--preview .topbar-refresh { display: none; }
 }
 @media (max-width: 480px) {
   .authentication-shell { padding: 0; place-items: stretch; }

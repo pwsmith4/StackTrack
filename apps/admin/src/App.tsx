@@ -1252,16 +1252,17 @@ export function App() {
       {menuOpen && <button className="scrim" onClick={() => setMenuOpen(false)} aria-label="Close menu" />}
 
       <main>
-        <header className="topbar">
+        <header className={`topbar ${session.rolePreview ? "topbar--preview" : ""}`}>
           <button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="Open menu"><Menu /></button>
           <Mark compact />
           <div className="topbar__right">
+            {session.rolePreview && <button className="primary role-preview-topbar-exit" type="button" onClick={endRolePreview} title="Return to your normal administrator view" aria-label="Return to normal view"><Eye size={14} /><span>Exit preview</span></button>}
             <span className={`scope-chip ${isScopedPrincipal(session.principal) ? "scope-chip--local" : ""}`}><MapPin size={13} /> {scopeLabel(session.principal)}</span>
             {previewableRoles.length > 0 && <RolePreviewLauncher sourceRole={baseSession!.principal.role} sourceLocationIds={baseSession!.principal.locationIds ?? []} locations={data?.fixtures.locations ?? []} busy={rolePreviewBusy} error={rolePreviewError} onStart={beginRolePreview} />}
             <span className={`connection connection--${connectionState}`}>
               <i /> {connectionLabel}
             </span>
-            <button className="icon-button" onClick={() => void refresh()} aria-label="Refresh data">
+            <button className="icon-button topbar-refresh" onClick={() => void refresh()} aria-label="Refresh data">
               <RefreshCw size={18} className={loading ? "spin" : ""} />
             </button>
           </div>
