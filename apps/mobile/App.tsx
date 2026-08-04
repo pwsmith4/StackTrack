@@ -26,6 +26,7 @@ import { canUseDevicePermission, resolveDevicePermissions, type DevicePermission
 import { deviceRequestHeaders } from "./src/device-network";
 import { isDevicePermissionConfigurationMissing, isLocalPreviewApi, shouldClearCachedReferenceData, shouldRetainCachedDevicePermissions, shouldUseSyntheticReferenceData } from "./src/reference-data";
 import { resolveDeferredCapture, type DeferredCapture } from "./src/deferred-observations";
+import { canStartScanner } from "./src/scanner-availability";
 
 const colors = {
   navy: "#00294F",
@@ -624,6 +625,7 @@ function AppContent() {
   const recordingAllowed = canUseDevicePermission(devicePermissions, "observation.create");
   const offlineValidationReady = !referenceDataReady && assignmentResolved && recordingAllowed;
   const lookupAllowed = referenceDataReady && canUseDevicePermission(devicePermissions, "load_code.lookup");
+  const scannerAvailable = canStartScanner({ scannerEnabled, recordingAllowed, referenceDataReady, assignmentResolved });
 
   useEffect(() => {
     if (!effectiveOnline) return;
@@ -703,7 +705,7 @@ function AppContent() {
       );
       return;
     }
-    if (!referenceDataReady && !offlineValidationReady) {
+    if (!scannerAvailable) {
       Alert.alert("Scanner setup needs attention", "This scanner has not received a confirmed operating location yet. Connect to StackTrack or ask an administrator to review the device before scanning.");
       return;
     }
@@ -970,7 +972,7 @@ function AppContent() {
               </View>
             </View>
           </View>
-          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} locations={fixtures?.locations} onScan={beginScan} onLookup={openLoadCodeLookup} onViewActivity={() => setTab("activity")} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} referenceDataReady={referenceDataReady} offlineValidationReady={offlineValidationReady} recordingAllowed={recordingAllowed} lookupAllowed={lookupAllowed} deviceLocationName={deviceLocationName} refreshNotice={refreshNotice} />}
+          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} locations={fixtures?.locations} onScan={beginScan} onLookup={openLoadCodeLookup} onViewActivity={() => setTab("activity")} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} referenceDataReady={referenceDataReady} offlineValidationReady={offlineValidationReady} recordingAllowed={recordingAllowed} lookupAllowed={lookupAllowed} scannerAvailable={scannerAvailable} deviceLocationName={deviceLocationName} refreshNotice={refreshNotice} />}
           {tab === "activity" && <ActivityScreen observations={observations} locations={fixtures?.locations} deviceLocationName={deviceLocationName} />}
           {tab === "settings" && (
             <SettingsScreen
@@ -1030,7 +1032,7 @@ function AppContent() {
   );
 }
 
-function HomeScreen({ online, pending, recent, locations, onScan, onLookup, onViewActivity, updateRequired, requiredAppVersion, scannerEnabled, referenceDataReady, offlineValidationReady, recordingAllowed, lookupAllowed, deviceLocationName, refreshNotice }: { online: boolean; pending: number; recent: LocalObservation[]; locations?: Fixtures["locations"] | undefined; onScan: () => void; onLookup: () => void; onViewActivity: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; referenceDataReady: boolean; offlineValidationReady: boolean; recordingAllowed: boolean; lookupAllowed: boolean; deviceLocationName: string; refreshNotice: string }) {
+function HomeScreen({ online, pending, recent, locations, onScan, onLookup, onViewActivity, updateRequired, requiredAppVersion, scannerEnabled, referenceDataReady, offlineValidationReady, recordingAllowed, lookupAllowed, scannerAvailable, deviceLocationName, refreshNotice }: { online: boolean; pending: number; recent: LocalObservation[]; locations?: Fixtures["locations"] | undefined; onScan: () => void; onLookup: () => void; onViewActivity: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; referenceDataReady: boolean; offlineValidationReady: boolean; recordingAllowed: boolean; lookupAllowed: boolean; scannerAvailable: boolean; deviceLocationName: string; refreshNotice: string }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.locationStrip}>
@@ -1049,7 +1051,7 @@ function HomeScreen({ online, pending, recent, locations, onScan, onLookup, onVi
         <Text style={styles.heroEyebrow}>FIELD SCANNER</Text>
         <Text style={styles.heroTitle}>Ready for the{`\n`}next container.</Text>
         <Text style={styles.heroText}>Use the attached handheld scanner or enter the printed label, then record what happened to the container.</Text>
-        <Pressable onPress={onScan} disabled={!scannerEnabled || !recordingAllowed || (!referenceDataReady && !offlineValidationReady)} style={({ pressed }) => [styles.scanButton, pressed && scannerEnabled && recordingAllowed && (referenceDataReady || offlineValidationReady) && styles.buttonPressed, (!scannerEnabled || !recordingAllowed || (!referenceDataReady && !offlineValidationReady)) && styles.buttonDisabled]}>
+        <Pressable onPress={onScan} disabled={!scannerAvailable} style={({ pressed }) => [styles.scanButton, pressed && scannerAvailable && styles.buttonPressed, !scannerAvailable && styles.buttonDisabled]}>
           <View style={styles.scanGlyph}><Icon name="scan-outline" size={36} color="white" /></View>
           <View style={styles.scanCopy}><Text style={styles.scanButtonText}>SCAN CONTAINER</Text><Text style={styles.scanButtonSub}>Handheld scanner or enter label</Text></View>
           <Icon name="arrow-forward" color="white" />
