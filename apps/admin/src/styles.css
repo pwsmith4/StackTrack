@@ -1344,13 +1344,15 @@ footer > span:first-child { display: none; }
 .activity-filter-panel__actions .secondary { min-height: 36px; }
 .activity-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 11px; padding: 14px; border: 1px solid var(--line); background: #fafcfd; }
 .activity-filter-panel .activity-filters { border: 0; background: #fff; }
-.activity-filters--expanded { align-items: stretch; display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
+.activity-filters--expanded { align-items: start; display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
 .activity-filters label { display: grid; gap: 5px; min-width: 170px; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 .activity-filters select, .activity-filters input { width: 100%; min-height: 38px; box-sizing: border-box; padding: 0 9px; border: 1px solid #bdc9d2; border-radius: 4px; color: var(--ink); background: white; font: inherit; font-size: 11px; text-transform: none; letter-spacing: normal; }
 .activity-filters input:focus, .activity-filters select:focus { border-color: var(--blue-800); outline: 2px solid rgba(0, 92, 145, .12); outline-offset: 0; }
-.activity-filters--expanded > label { line-height: 1.2; }
-.activity-filters--expanded > .audit-multi-select--stacked { display: grid; align-content: start; gap: 5px; min-width: 0; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-.activity-filters--expanded > .audit-multi-select--stacked > .audit-multi-select__label { min-height: 12px; overflow: hidden; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.activity-filters--expanded > label,
+.activity-filters--expanded > .audit-multi-select--stacked { grid-template-rows: 14px 38px; align-content: start; gap: 5px; min-width: 0; min-height: 57px; line-height: 14px; }
+.activity-filters--expanded > label .activity-filter-label,
+.activity-filters--expanded > .audit-multi-select--stacked > .audit-multi-select__label { display: block; min-height: 14px; overflow: hidden; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-filters--expanded > .audit-multi-select--stacked { display: grid; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 .activity-filters--expanded > .audit-multi-select--stacked > .audit-multi-select { width: 100%; }
 .activity-filters--expanded > .audit-multi-select--stacked > .audit-multi-select > summary { min-height: 38px; }
 .activity-filters .audit-multi-select { width: 100%; }
