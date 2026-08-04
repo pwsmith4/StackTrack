@@ -769,7 +769,9 @@ interface RolePreviewLauncherProps {
  * read-only capability for the lower role.
  */
 function RolePreviewLauncher({ sourceRole, sourceLocationIds, locations, busy, error, onStart }: RolePreviewLauncherProps) {
-  const availableRoles = rolePreviewOrder.filter((role) => canPreviewRole(sourceRole, role));
+  // A preview is always for a lower-access view. Keep the current role out of
+  // the list explicitly so the control can never offer a redundant self-view.
+  const availableRoles = rolePreviewOrder.filter((role) => role !== sourceRole && canPreviewRole(sourceRole, role));
   const [open, setOpen] = useState(false);
   const [targetRole, setTargetRole] = useState<AdminPrincipal["role"]>(availableRoles[0] ?? "read_only_reviewer");
   const [locationIds, setLocationIds] = useState<string[]>(sourceRole === "location_manager" ? [...sourceLocationIds] : []);
@@ -798,7 +800,9 @@ function RolePreviewLauncher({ sourceRole, sourceLocationIds, locations, busy, e
     <button className="secondary role-preview-trigger" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog">
       <Eye size={16} /> View as
     </button>
-    {open && <div className="role-preview-popover" role="dialog" aria-label="Preview a lower access role">
+    {open && <>
+      <button type="button" className="role-preview-backdrop" aria-label="Close role preview" onClick={() => setOpen(false)} />
+      <div className="role-preview-popover" role="dialog" aria-label="Preview a lower access role" onClick={(event) => event.stopPropagation()}>
       <div className="role-preview-popover__header"><div><span className="eyebrow">Safe read-only preview</span><strong>See the console as another role</strong></div><button className="icon-button icon-button--small" type="button" onClick={() => setOpen(false)} aria-label="Close role preview"><X size={15} /></button></div>
       <p>Nothing is changed and your Organization Owner/Operations Administrator session stays intact. The API disables all write actions while previewing.</p>
       <label className="field-label" htmlFor="role-preview-role">Preview role</label>
@@ -814,7 +818,8 @@ function RolePreviewLauncher({ sourceRole, sourceLocationIds, locations, busy, e
       </fieldset>}
       <div className="role-preview-popover__footer"><span>{requiresLocations ? `${locationIds.length} location${locationIds.length === 1 ? "" : "s"} selected` : targetRole === "read_only_reviewer" && locationIds.length ? `${locationIds.length} location${locationIds.length === 1 ? "" : "s"} selected` : "Network view"}</span><div><button className="secondary" type="button" onClick={() => setOpen(false)}>Cancel</button><button className="primary" type="button" disabled={busy || (requiresLocations && locationIds.length === 0)} onClick={() => void submit()}>{busy ? "Starting…" : "Start preview"}</button></div></div>
       {error && <p className="form-error" role="alert">{error}</p>}
-    </div>}
+      </div>
+    </>}
   </div>;
 }
 
@@ -1114,7 +1119,7 @@ export function App() {
            : "Cloud API connected";
 
   const previewableRoles = baseSession && session && !session.rolePreview
-    ? rolePreviewOrder.filter((targetRole) => canPreviewRole(baseSession.principal.role, targetRole))
+    ? rolePreviewOrder.filter((targetRole) => targetRole !== baseSession.principal.role && canPreviewRole(baseSession.principal.role, targetRole))
     : [];
 
   // Keep this safe while the sign-in screen is being shown.  Session state is
@@ -5461,6 +5466,29 @@ function LocationScopePicker({ locations, value, onChange, optional = false }: {
   return <fieldset className="admin-scope-picker"><legend>{optional ? "Optional location scope" : "Assigned locations"} <small>{optional ? "Leave empty for a network-wide read-only reviewer, or select only the sites they should see." : "Select every site this manager is responsible for."}</small></legend><div>{locations.map((location) => <label key={location.locationId} className={value.includes(location.locationId) ? "admin-scope-picker__option admin-scope-picker__option--selected" : "admin-scope-picker__option"}><input type="checkbox" checked={value.includes(location.locationId)} onChange={() => toggle(location.locationId)} /><span><strong>{location.name}</strong><small>{location.type === "donation_express" ? "Donation Xpress" : location.type === "warehouse" ? "Warehouse" : "Store"}</small></span></label>)}</div>{value.length === 0 && <small className="admin-scope-picker__empty">{optional ? "No scope selected — network-wide read-only access." : "No locations selected yet."}</small>}</fieldset>;
 }
 
+function AdminRemovalDialog({ user, confirmation, error, busy, onChange, onClose, onSubmit }: { user: AdminPrincipal; confirmation: string; error: string | null; busy: boolean; onChange: (value: string) => void; onClose: () => void; onSubmit: (event: React.FormEvent) => void }) {
+  const matches = confirmation.trim().toLowerCase() === user.username;
+  return <div className="admin-remove-dialog__backdrop" onClick={onClose}>
+    <section className="admin-remove-dialog" role="alertdialog" aria-modal="true" aria-labelledby={`remove-admin-title-${user.userId}`} aria-describedby={`remove-admin-description-${user.userId}`} onClick={(event) => event.stopPropagation()}>
+      <header className="admin-remove-dialog__header">
+        <span className="admin-remove-dialog__icon"><AlertTriangle size={20} aria-hidden="true" /></span>
+        <div><span className="eyebrow">Permanent account removal</span><h3 id={`remove-admin-title-${user.userId}`}>Remove {user.displayName}?</h3></div>
+        <button type="button" className="icon-button icon-button--small" aria-label="Close removal dialog" onClick={onClose} disabled={busy}><X size={15} /></button>
+      </header>
+      <div className="admin-remove-dialog__body">
+        <p id={`remove-admin-description-${user.userId}`}>This permanently removes <strong>@{user.username}</strong> from the administrator directory. Their active sessions will end, while operational and audit history remains.</p>
+        <div className="admin-remove-dialog__note"><AlertTriangle size={16} aria-hidden="true" /><span>Use this only when the person should no longer have an account. Disabling is safer when access may be restored later.</span></div>
+        <form onSubmit={onSubmit}>
+          <label htmlFor={`remove-admin-confirmation-${user.userId}`}>Type <strong>{user.username}</strong> to confirm<span className="admin-remove-dialog__hint">This extra check helps prevent an accidental permanent removal.</span></label>
+          <input id={`remove-admin-confirmation-${user.userId}`} autoFocus autoComplete="off" value={confirmation} onChange={(event) => onChange(event.target.value)} placeholder={user.username} disabled={busy} />
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <div className="admin-remove-dialog__actions"><button type="button" className="secondary" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" className="admin-remove-dialog__confirm" disabled={busy || !matches}>{busy ? "Removing…" : "Remove administrator"}</button></div>
+        </form>
+      </div>
+    </section>
+  </div>;
+}
+
 function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onReset, onRemove }: { user: AdminPrincipal; currentUserId: string; locations: Location[]; busy: boolean; onSave: (userId: string, update: AdminDirectoryUpdate) => Promise<void>; onReset: (userId: string, temporaryPassword: string, reason: string) => Promise<void>; onRemove: (userId: string, confirmation: string) => Promise<void> }) {
   const [displayName, setDisplayName] = useState(user.displayName);
   const [role, setRole] = useState<EditableAdminRole>(user.role === "support" ? "read_only_reviewer" : user.role);
@@ -5470,7 +5498,21 @@ function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onRes
   const [resetReason, setResetReason] = useState("");
   const [resetError, setResetError] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeConfirmation, setRemoveConfirmation] = useState("");
   useEffect(() => { setDisplayName(user.displayName); setRole(user.role === "support" ? "read_only_reviewer" : user.role); setLocationIds(user.locationIds ?? []); }, [user.displayName, user.role, (user.locationIds ?? []).join(",")]);
+  useEffect(() => {
+    if (!removeOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        setRemoveOpen(false);
+        setRemoveConfirmation("");
+        setRemoveError(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [removeOpen, busy]);
   const self = user.userId === currentUserId;
   const changed = displayName.trim() !== user.displayName || role !== user.role || ((role === "location_manager" || role === "read_only_reviewer") ? locationIds.join(",") !== (user.locationIds ?? []).join(",") : (user.locationIds ?? []).length > 0);
   const assignedLocationNames = locationIds.map((locationId) => locations.find((location) => location.locationId === locationId)?.name).filter((name): name is string => Boolean(name));
@@ -5481,20 +5523,36 @@ function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onRes
     try { await onReset(user.userId, temporaryPassword, resetReason.trim()); setTemporaryPassword(""); setResetReason(""); setResetOpen(false); }
     catch (caught) { setResetError(caught instanceof Error ? caught.message : "Could not reset this password."); }
   };
+  const closeRemoval = () => {
+    if (busy) return;
+    setRemoveOpen(false);
+    setRemoveConfirmation("");
+    setRemoveError(null);
+  };
   const confirmRemoval = () => {
     setRemoveError(null);
-    if (!window.confirm(`Permanently remove ${user.displayName} (@${user.username})? This cannot be undone. Their active sessions will end, while operational and audit history remains.`)) return;
-    const confirmation = window.prompt(`Type ${user.username} to confirm permanent removal.`) ?? "";
-    if (confirmation.trim().toLowerCase() !== user.username) {
-      setRemoveError(`Removal cancelled. Type ${user.username} exactly to confirm.`);
+    setRemoveConfirmation("");
+    setRemoveOpen(true);
+  };
+  const submitRemoval = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (removeConfirmation.trim().toLowerCase() !== user.username) {
+      setRemoveError(`Type ${user.username} exactly to confirm removal.`);
       return;
     }
-    void onRemove(user.userId, confirmation.trim()).catch((caught) => setRemoveError(caught instanceof Error ? caught.message : "Could not permanently remove the administrator."));
+    setRemoveError(null);
+    try {
+      await onRemove(user.userId, removeConfirmation.trim());
+      setRemoveOpen(false);
+      setRemoveConfirmation("");
+    } catch (caught) {
+      setRemoveError(caught instanceof Error ? caught.message : "Could not permanently remove the administrator.");
+    }
   };
   return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}>
     <span className="avatar">{initials(user.displayName)}</span>
     <div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={adminRoleTone(user.role)}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">First password change pending</Pill>}</div><small className="admin-account__scope">{user.role === "location_manager" ? (user.locationIds?.length ? "Assigned to " + user.locationIds.length + " location" + (user.locationIds.length === 1 ? "" : "s") : "No locations assigned") : user.role === "read_only_reviewer" ? (user.locationIds?.length ? "Read-only at " + user.locationIds.length + " assigned location" + (user.locationIds.length === 1 ? "" : "s") : "Network-wide read-only") : "Network-wide access"}</small></div>
-    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...((role === "location_manager" || role === "read_only_reviewer") || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" || role === "read_only_reviewer" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setRemoveError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button><button type="button" className="admin-account__remove" disabled={busy} onClick={confirmRemoval} aria-label={`Permanently remove ${user.username}`} title="Remove permanently"><Trash2 size={15} aria-hidden="true" /></button>{removeError && <small className="admin-account__remove-error">{removeError}</small>}</div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}
+    {self ? <small className="admin-account__self">Your owner account has full control. Use another Organization Owner to change or disable it.</small> : <div className="admin-account__controls"><input aria-label={"Display name for " + user.username} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={"Role for " + user.username} value={role} disabled={busy} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select>{(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={locations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}<div className="admin-account__control-actions"><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2 || (role === "location_manager" && locationIds.length === 0)} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role } : {}), ...((role === "location_manager" || role === "read_only_reviewer") || (user.locationIds ?? []).length > 0 ? { locationIds: role === "location_manager" || role === "read_only_reviewer" ? locationIds : [] } : {}) })}>Save access</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable account" : "Enable account"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setRemoveError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Issue reset"}</button><button type="button" className="admin-account__remove" disabled={busy} onClick={confirmRemoval} aria-label={`Permanently remove ${user.username}`} title="Remove permanently"><Trash2 size={15} aria-hidden="true" /></button>{removeError && <small className="admin-account__remove-error">{removeError}</small>}</div>{resetOpen && <div className="admin-account__reset"><p>Issue a one-time temporary password. The user must choose their private password; you will not be able to view it.</p><label>Reason for reset<textarea required minLength={8} maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="Example: User lost access to their private password after device replacement." /></label><input aria-label={"Temporary password for " + user.username} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12 || resetReason.trim().length < 8} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}{removeOpen && <AdminRemovalDialog user={user} confirmation={removeConfirmation} error={removeError} busy={busy} onChange={setRemoveConfirmation} onClose={closeRemoval} onSubmit={(event) => void submitRemoval(event)} />}
   </article>;
 }
 
