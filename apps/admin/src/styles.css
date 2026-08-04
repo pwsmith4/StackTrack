@@ -1751,11 +1751,11 @@ footer > span:first-child { display: none; }
 .store-outlook-panel > .warehouse-forecast__assumption-note { order: 2; }
 .store-outlook-panel > .store-outlook__controls { order: 3; }
 .store-outlook-panel > .store-outlook__summary { order: 4; }
-.store-outlook-panel > .store-outlook__queue { order: 5; }
+.store-outlook-panel > .store-outlook__queue { order: 6; }
 .store-outlook-panel > .store-outlook__table-wrap { display: none; }
-.store-outlook-panel > .store-outlook__target-editor { order: 6; }
-.store-outlook-panel > .store-outlook__logic { order: 7; }
-.store-outlook-panel > .store-outlook__holiday-section { order: 8; }
+.store-outlook-panel > .store-outlook__target-editor { order: 5; }
+.store-outlook-panel > .store-outlook__logic { order: 8; }
+.store-outlook-panel > .store-outlook__holiday-section { order: 7; }
 .store-outlook-panel > .store-outlook__holiday-section:not(.store-outlook__holiday-section--new) { display: none; }
 .store-outlook-panel > .store-outlook__note { order: 9; }
 .store-outlook__queue { margin: 0 19px; border: 1px solid #dce8ed; background: #fff; }
@@ -1824,7 +1824,6 @@ footer > span:first-child { display: none; }
 /* Location-first target setup: keep the high-level view compact and reveal item settings only after a location is chosen. */
 .store-outlook-panel > .store-outlook__target-editor:not(.store-outlook__target-editor--new) { display: none; }
 .store-outlook-panel > .store-outlook__target-editor--new { order: 5; display: block; margin: 0 19px; padding: 0; border: 1px solid #cfe5ec; background: #fff; }
-.store-outlook-panel > .store-outlook__queue { order: 6; }
 .store-outlook__target-editor--new h3 { margin: 4px 0 0; color: var(--ink); font: 800 15px/1.2 Manrope, sans-serif; }
 .store-outlook__target-editor--new p { max-width: 720px; margin: 6px 0 0; color: #718793; font-size: 8.5px; line-height: 1.45; }
 .store-outlook__target-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 16px; border-bottom: 1px solid #e2edf1; background: #fbfdfe; }
@@ -1884,6 +1883,129 @@ footer > span:first-child { display: none; }
   .store-outlook__target-form { margin-inline: 12px; }
   .store-outlook__target-form-fields { grid-template-columns: 1fr; }
   .store-outlook__target-form-fields .store-outlook__target-actions { grid-column: auto; flex-wrap: wrap; }
+}
+
+/* Warehouse outlook navigation and inline target editing. The page can be
+   long on purpose, but the sections stay one click away and the range editor
+   lives in the row where its effect is visible. */
+.warehouse-outlook__section-nav {
+  position: sticky;
+  top: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid #d9e8ed;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 4px 14px rgba(20, 62, 76, .06);
+  backdrop-filter: blur(8px);
+}
+.warehouse-outlook__section-nav-label {
+  margin-right: 2px;
+  color: #6d858f;
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.warehouse-outlook__section-nav button {
+  min-height: 27px;
+  padding: 0 8px;
+  border: 1px solid #d5e5ea;
+  border-radius: 3px;
+  color: #315b6d;
+  background: #f8fcfd;
+  font: 800 8px/1 Manrope, sans-serif;
+  cursor: pointer;
+}
+.warehouse-outlook__section-nav button:hover,
+.warehouse-outlook__section-nav button:focus-visible {
+  border-color: #73c5d7;
+  color: var(--blue-800);
+  background: #eef9fc;
+  outline: none;
+}
+#warehouse-capacity, #store-targets, #store-coverage, #seasonal-planning, #forecast-method {
+  scroll-margin-top: 60px;
+}
+
+.store-outlook__target-editor--new > .store-outlook__target-form { display: none !important; }
+.store-outlook__target-range-cell { min-width: 170px; }
+.store-outlook__target-action-cell { min-width: 170px; }
+.store-outlook__inline-range {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.store-outlook__inline-range input {
+  width: 54px;
+  min-height: 27px;
+  box-sizing: border-box;
+  padding: 0 5px;
+  border: 1px solid #8fc9d6;
+  border-radius: 3px;
+  color: #234858;
+  background: #fff;
+  font: 800 9px/1 Manrope, sans-serif;
+  text-align: center;
+}
+.store-outlook__inline-range input:focus {
+  border-color: var(--blue-800);
+  outline: 2px solid rgba(0, 117, 185, .13);
+}
+.store-outlook__inline-range span { color: #718793; font-size: 8px; }
+.store-outlook__inline-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.store-outlook__inline-actions button {
+  min-height: 27px;
+  padding: 0 7px;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.store-outlook__inline-reset {
+  min-height: 27px;
+  padding: 0 2px;
+  border: 0;
+  color: var(--blue-800);
+  background: transparent;
+  font: 700 7.5px/1 Manrope, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.store-outlook__inline-reset:hover { text-decoration: underline; }
+.store-outlook__target-error {
+  margin: -2px 0 9px;
+  padding: 7px 9px;
+  border-left: 2px solid #d59a55;
+  color: #825522 !important;
+  background: #fff8ed;
+  font-size: 8px !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 650px) {
+  .warehouse-outlook__section-nav { position: static; }
+  .warehouse-outlook__section-nav-label { flex-basis: 100%; }
+  .store-outlook__target-details-heading { align-items: stretch; }
+  .store-outlook__target-range-cell, .store-outlook__target-action-cell { min-width: 180px; }
 }
 
 /* The receipt horizon is an operational control, so keep it readable without overpowering the forecast value. */
