@@ -24,7 +24,7 @@ import { classifyEventResponse, type EventResponseBody } from "./src/sync";
 import { normalizeScan } from "./src/scanner";
 import { canUseDevicePermission, resolveDevicePermissions, type DevicePermissionState } from "./src/device-permissions";
 import { deviceRequestHeaders } from "./src/device-network";
-import { isLocalPreviewApi, shouldClearCachedReferenceData, shouldRetainCachedDevicePermissions, shouldUseSyntheticReferenceData } from "./src/reference-data";
+import { isDevicePermissionConfigurationMissing, isLocalPreviewApi, shouldClearCachedReferenceData, shouldRetainCachedDevicePermissions, shouldUseSyntheticReferenceData } from "./src/reference-data";
 import { resolveDeferredCapture, type DeferredCapture } from "./src/deferred-observations";
 
 const colors = {
@@ -473,7 +473,15 @@ function AppContent() {
       });
       controlPlaneResponded = true;
       if (!permissionsResponse.ok) {
-        if (shouldClearCachedReferenceData(permissionsResponse.status)) {
+        let permissionError: unknown = null;
+        try {
+          permissionError = await permissionsResponse.clone().json();
+        } catch {
+          // A proxy or platform error may not include JSON. Treat it as a
+          // transient outage unless the server gave the explicit config code.
+        }
+        const configurationMissing = isDevicePermissionConfigurationMissing(permissionError);
+        if (shouldClearCachedReferenceData(permissionsResponse.status) || configurationMissing) {
           permissionAccessDenied = true;
           setFixtures(null);
           setAssignmentResolved(false);
@@ -486,6 +494,8 @@ function AppContent() {
             permissionKeys: [],
             message: permissionsResponse.status === 403
               ? "This scanner is not authorized to receive its permission set."
+              : configurationMissing
+                ? "Scanner permissions are not configured yet. Ask an administrator to finish device setup."
               : "The scanner permission service is unavailable."
           });
         } else if (!shouldRetainCachedDevicePermissions(permissionsResponse.status) || !hasCachedPermissions) {

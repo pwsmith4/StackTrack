@@ -36,3 +36,15 @@ export function shouldClearCachedReferenceData(status: number): boolean {
 export function shouldRetainCachedDevicePermissions(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
 }
+
+/**
+ * A 503 can mean a short-lived service outage or a missing server migration.
+ * The latter is an explicit configuration decision, not an offline condition;
+ * cached permissions must not keep a scanner operating when the cloud cannot
+ * verify its named role.
+ */
+export function isDevicePermissionConfigurationMissing(input: unknown): boolean {
+  if (!input || typeof input !== "object") return false;
+  const error = (input as { error?: unknown }).error;
+  return error === "DevicePermissionConfigurationMissing";
+}

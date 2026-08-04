@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isLocalPreviewApi, shouldClearCachedReferenceData, shouldRetainCachedDevicePermissions, shouldUseSyntheticReferenceData } from "../src/reference-data.js";
+import { isDevicePermissionConfigurationMissing, isLocalPreviewApi, shouldClearCachedReferenceData, shouldRetainCachedDevicePermissions, shouldUseSyntheticReferenceData } from "../src/reference-data.js";
 
 describe("reference data safety", () => {
   it("recognizes only loopback endpoints as local previews", () => {
@@ -28,5 +28,14 @@ describe("reference data safety", () => {
     expect(shouldRetainCachedDevicePermissions(503)).toBe(true);
     expect(shouldRetainCachedDevicePermissions(400)).toBe(false);
     expect(shouldRetainCachedDevicePermissions(404)).toBe(false);
+  });
+
+  it("distinguishes a missing permission migration from a transient outage", () => {
+    expect(isDevicePermissionConfigurationMissing({
+      error: "DevicePermissionConfigurationMissing",
+      message: "Named scanner permissions are not configured."
+    })).toBe(true);
+    expect(isDevicePermissionConfigurationMissing({ error: "Unavailable" })).toBe(false);
+    expect(isDevicePermissionConfigurationMissing(null)).toBe(false);
   });
 });
