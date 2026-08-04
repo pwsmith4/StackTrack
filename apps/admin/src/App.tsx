@@ -3955,7 +3955,7 @@ function LocationAdministrationPanel({
     <div className="location-admin-panel__body">
       <div className="location-admin-stat"><span><Building2 size={17} /></span><div><strong>{activeLocations.length}</strong><small>active operating locations</small></div></div>
       <div className="location-admin-stat"><span><ScrollText size={17} /></span><div><strong>{retired.length}</strong><small>retired names retained in history</small></div></div>
-      <div className="location-admin-policy"><ShieldCheck size={17} /><div><strong>Retirement is deliberately rare.</strong><p>Before retiring a site, update its scanners where possible. If a scanner cannot be updated immediately, the controlled fallback is <b>Unknown location</b>; no observation is silently reassigned.</p></div></div>
+      <div className="location-admin-policy location-admin-policy--warning"><div><strong>Use this only when a location has closed.</strong><p>This is a rare, high-impact change. Move its scanners to their new locations first when possible. If a scanner cannot be moved yet, choose <b>Unknown location</b>; its previous scans will stay tied to the closed location.</p></div></div>
     </div>
     {canRetire && <form className="location-retire-form" onSubmit={(event) => void submitRetire(event)}>
       <div className="location-retire-form__heading"><div><strong>Retire a location</strong><small>First inspect its dependencies. The final action requires the exact location name and Organization Owner approval.</small></div><Pill tone="warn">High impact</Pill></div>
