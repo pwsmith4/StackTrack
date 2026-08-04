@@ -1433,10 +1433,10 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       async (request, reply) => {
         const principal = await requireAdmin(request, reply);
         if (!principal) return;
-        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator" && principal.role !== "location_manager") {
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
           return reply.code(403).send({
             error: "InsufficientRole",
-            message: "This administrator role cannot change scanners."
+            message: "Only Organization Owners and Operations Administrators can change scanner settings."
           });
         }
         const tenantId = principal.tenantId;

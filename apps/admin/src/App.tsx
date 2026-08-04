@@ -294,7 +294,7 @@ const pagesForRole: Record<AdminPrincipal["role"], readonly Page[]> = {
   // A location manager can run the local operation, but dispatch targets,
   // warehouse forecasting, and organization-wide reports remain corporate
   // responsibilities. The API enforces the same boundary server-side.
-  location_manager: ["dashboard", "inventory", "containers", "locations", "exceptions", "corrections", "activity", "devices"],
+  location_manager: ["dashboard", "inventory", "containers", "locations", "corrections", "activity", "devices"],
   read_only_reviewer: ["dashboard", "inventory", "containers", "locations", "exceptions", "activity"],
   support: ["dashboard", "containers", "locations", "activity", "devices"]
 };
@@ -1176,7 +1176,7 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${session.principal.role === "location_manager" ? "app-shell--location-manager" : ""}`}>
       <aside className={`sidebar ${menuOpen ? "sidebar--open" : ""}`}>
         <button className="sidebar-close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
           <X />
@@ -2580,12 +2580,13 @@ function Dashboard({ data, setPage, openContainers, openLocation, session }: { d
   const attentionCount = review + pendingCorrections.length;
   const signInHelpCount = data.auditEntries.filter((entry) => entry.action === "admin.access_issue_requested").length;
   const reviewItems = projections.filter((item) => item.health === "needs_review");
+  const isLocationManager = session.principal.role === "location_manager";
   const assignedLocationId = session.principal.locationIds?.[0] ?? null;
   const openAssignedLocation = () => assignedLocationId ? openLocation(assignedLocationId) : setPage("locations");
 
   return (
     <>
-      <div className="metric-grid">
+      <div className={`metric-grid ${isLocationManager ? "metric-grid--location-manager" : ""}`}>
         <Metric icon={<ContainerIcon />} label="Tracked containers" value={data.fixtures.containers.length} detail={`${operatingLocations.length} active operating locations`} tone="blue" onClick={() => setPage("containers")} />
         <Metric icon={<PackageCheck />} label="Currently loaded" value={loaded} detail={`${loadedPercent}% of tracked assets`} tone="cyan" onClick={() => setPage("containers")} />
         <Metric icon={<Truck />} label="In transit" value={inTransit} detail="Leaving a confirmed location · next scan records arrival" tone="navy" onClick={() => setPage("locations")} />
@@ -2643,7 +2644,7 @@ function Dashboard({ data, setPage, openContainers, openLocation, session }: { d
         </div>
       </section>
 
-      <div className="dashboard-grid">
+      <div className={`dashboard-grid ${isLocationManager ? "dashboard-grid--location-manager" : ""}`}>
         <section className="panel network-panel">
           <PanelTitle title="Active departures" subtitle={activeRoutes.length ? `${inTransit} container${inTransit === 1 ? "" : "s"} in transit after leaving ${activeRoutes.length} location${activeRoutes.length === 1 ? "" : "s"}` : "No active departures are waiting for an arrival scan"} action="View all in transit" onClick={() => openContainers("in_transit")} />
           {activeRoutes.length ? <div className="dashboard-route-list">{activeRoutes.slice(0, 4).map((route) => {
@@ -3619,11 +3620,12 @@ function LocationLifecycleExplorer({ routeRecords, focusLocationId, onOpen }: { 
 function LocationWorkspacePage({ data, locationId, locationFilter, openLocation, openDetail, setPage, refresh, session }: { data: OperationsData; locationId: string; locationFilter?: LocationInventoryFilter; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; openDetail: OpenDetail; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null }) {
   const principal = session?.principal;
   const scoped = Boolean(principal && isScopedPrincipal(principal));
+  const isLocationManager = principal?.role === "location_manager";
   const location = data.fixtures.locations.find((item) => item.locationId === locationId && item.type !== "in_transit" && item.isActive !== false && !isUnknownLocation(item) && (!scoped || principal?.locationIds?.includes(item.locationId)));
-  const canManageScanners = Boolean(principal && ["organization_owner", "operations_administrator", "location_manager"].includes(principal.role));
+  const canManageScanners = Boolean(principal && ["organization_owner", "operations_administrator"].includes(principal.role));
   const canRequestCorrections = Boolean(principal && ["organization_owner", "operations_administrator", "location_manager"].includes(principal.role));
   if (!location) {
-    return <section className="location-workspace-denied panel"><div className="location-workspace-denied__icon"><ShieldCheck size={24} /></div><span className="eyebrow">Location workspace</span><h2>Location unavailable</h2><p>This site is outside the signed-in account's operating scope, has been retired, or no longer exists. Return to the network directory to choose an available location.</p><button className="secondary" onClick={() => setPage("locations")}><MapPin size={15} /> Back to locations</button></section>;
+    return <section className="location-workspace-denied panel"><div className="location-workspace-denied__icon"><ShieldCheck size={24} /></div><span className="eyebrow">Location workspace</span><h2>Location unavailable</h2><p>{isLocationManager ? "This location is outside your assigned operating scope or is no longer active. Ask a corporate administrator to review your assignment." : "This site is outside the signed-in account's operating scope, has been retired, or no longer exists. Return to the network directory to choose an available location."}</p>{!isLocationManager && <button className="secondary" onClick={() => setPage("locations")}><MapPin size={15} /> Back to locations</button>}</section>;
   }
   const transitId = data.fixtures.locations.find((item) => item.type === "in_transit")?.locationId;
   const projections = Object.values(data.projections).filter(Boolean) as Projection[];
@@ -3641,7 +3643,7 @@ function LocationWorkspacePage({ data, locationId, locationFilter, openLocation,
   const staleScanners = scanners.filter((device) => !device.lastReportedAt || Date.now() - Date.parse(device.lastReportedAt) > 24 * 60 * 60 * 1000);
   const scansLastDay = localEvents.filter((event) => Date.now() - Date.parse(event.receivedAt) <= 24 * 60 * 60 * 1000).length;
   const flaggedScans = localEvents.filter((event) => event.accuracyFlags.length > 0).length;
-  const openReviews = localReviews.filter((item) => !["resolved", "approved", "rejected"].includes(item.status));
+  const openReviews = isLocationManager ? [] : localReviews.filter((item) => !["resolved", "approved", "rejected"].includes(item.status));
   const containerFor = (containerId: string) => data.fixtures.containers.find((item) => item.containerId === containerId);
   const openContainer = (projection: Projection) => {
     const record = containerFor(projection.containerId);
@@ -3720,7 +3722,7 @@ function LocationWorkspacePage({ data, locationId, locationFilter, openLocation,
   return <div className="location-focused-page">
     {session && <RoleScopeNotice principal={session.principal} pageLabel="This location workspace" />}
     <section className="location-inventory panel"><div className="location-inventory__header"><div><span className="eyebrow">Location inventory</span><h3>Filter the containers associated with this site</h3><p>Select a count or filter to see the exact bins, carts, or gaylords behind it. The selected view is preserved in the URL so a filtered location link can be shared.</p></div><div className="location-inventory__header-count"><strong>{visibleInventory.length}</strong><span>{inventoryBucketLabel(selectedBucket)}</span></div></div><div className="location-inventory__tabs" role="tablist" aria-label="Location inventory view"><button type="button" className={selectedBucket === "current" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "current" })}>At this location <b>{inventoryCountLabel("current")}</b></button><button type="button" className={selectedBucket === "arriving" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "arriving" })}>Received here <b>{inventoryCountLabel("arriving")}</b></button><button type="button" className={selectedBucket === "leaving" ? "active" : ""} onClick={() => updateInventoryFilter({ bucket: "leaving" })}>Leaving <b>{inventoryCountLabel("leaving")}</b></button></div><div className="location-inventory__filters"><label><span>Container type</span><select value={locationFilter?.containerType ?? ""} onChange={(event) => updateInventoryFilter({ containerType: (event.target.value || undefined) as LocationInventoryFilter["containerType"] })}><option value="">All types</option>{inventoryTypeOptions.map((value) => <option value={value} key={value}>{containerTypeLabel(value)}</option>)}</select></label><label><span>Goods category</span><select value={locationFilter?.goodsType ?? ""} onChange={(event) => updateInventoryFilter({ goodsType: event.target.value || undefined })}><option value="">All categories</option>{inventoryGoodsOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></label><label><span>Current state</span><select value={locationFilter?.loadState ?? ""} onChange={(event) => updateInventoryFilter({ loadState: (event.target.value || undefined) as LocationInventoryFilter["loadState"] })}><option value="">Any state</option><option value="loaded">Loaded</option><option value="empty">Empty</option><option value="unknown">Unknown</option></select></label><div className="location-inventory__filter-summary"><strong>{visibleInventory.length} matching</strong><span>{inventoryFilterSummary.join(" · ")}</span></div><button type="button" className="secondary" onClick={clearInventoryFilters} disabled={!locationFilter || Object.keys(locationFilter).length === 0}>Clear filters</button></div><div className="location-inventory__breakdown">{inventoryTypeOptions.map((type) => { const count = visibleInventory.filter((record) => record.container.type === type).length; return <button type="button" key={type} className={locationFilter?.containerType === type ? "active" : ""} onClick={() => updateInventoryFilter({ containerType: locationFilter?.containerType === type ? undefined : type })}><strong>{count}</strong><span>{containerTypeLabel(type)}s</span><small>Show only these containers</small></button>; })}</div><div className="location-inventory__list">{visibleInventory.length ? visibleInventory.map((record) => <button type="button" className="location-inventory__row" key={record.container.containerId} onClick={() => record.projection && openContainer(record.projection)} disabled={!record.projection}><span className="location-inventory__row-icon"><ContainerIcon size={15} /></span><span className="location-inventory__row-main"><strong>{record.container.label}</strong><small>{containerTypeLabel(record.container.type)} · {record.goodsType} · {loadStateLabel(record.projection?.loadState)}</small></span><span className="location-inventory__row-movement">{movementLabelFor(record)}</span><span className="location-inventory__row-time">{record.projection ? relativeTime(record.projection.lastObservedAt) : "No observation"}</span><ChevronRight size={14} /></button>) : <div className="location-focused-empty">No containers match these filters in this workflow view.</div>}</div></section>
-    <div className="location-focused-toolbar"><button className="secondary" onClick={() => setPage("locations")}><ArrowRight size={15} className="location-focused-toolbar__back" /> All locations</button><span className="location-focused-toolbar__crumb"><MapPin size={14} /> {typeLabel} workspace</span><button className="secondary" onClick={() => void refresh()} title="Reload this location's latest scanners, observations, and inventory" aria-label="Refresh this location's data"><RefreshCw size={15} /> Refresh data</button></div>
+    <div className="location-focused-toolbar">{!isLocationManager && <button className="secondary" onClick={() => setPage("locations")}><ArrowRight size={15} className="location-focused-toolbar__back" /> All locations</button>}<span className="location-focused-toolbar__crumb"><MapPin size={14} /> {typeLabel} workspace</span><button className="secondary" onClick={() => void refresh()} title="Reload this location's latest scanners, observations, and inventory" aria-label="Refresh this location's data"><RefreshCw size={15} /> Refresh data</button></div>
     <section className="location-focused-hero panel"><div className="location-focused-hero__identity"><span className={`location-title-icon location-title-icon--${location.type}`}><LocationTypeIcon location={location} size={23} /></span><div><span className="eyebrow">Focused operating location</span><h2>{location.name}</h2><p>{typeLabel} · {scanners.length} assigned scanner{scanners.length === 1 ? "" : "s"} · {scansLastDay} accepted scan{scansLastDay === 1 ? "" : "s"} in the last 24 hours</p><div className="location-focused-hero__tags"><Pill tone={openReviews.length ? "warn" : "good"}>{openReviews.length ? `${openReviews.length} review${openReviews.length === 1 ? "" : "s"} open` : "No open reviews"}</Pill><Pill tone={staleScanners.length ? "warn" : "good"}>{staleScanners.length ? `${staleScanners.length} stale scanner${staleScanners.length === 1 ? "" : "s"}` : "Scanner reports fresh"}</Pill></div></div></div><div className="location-focused-hero__actions"><button className={canManageScanners ? "primary" : "secondary"} onClick={() => setPage("devices")}><Smartphone size={15} /> {canManageScanners ? "Manage scanners" : "View scanners"}</button><button className="secondary" onClick={() => setPage("activity")}><Activity size={15} /> Local activity</button>{canRequestCorrections && <button className="secondary" onClick={() => setPage("corrections")}><FilePenLine size={15} /> Request correction</button>}</div></section>
     <section className="location-focused-metrics"><article><span className="location-focused-metric__icon location-focused-metric__icon--blue"><Boxes size={18} /></span><div><small>At this location</small><strong>{current.length}</strong><em>Latest confirmed projection</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--green"><ArrowRight size={18} /></span><div><small>Confirmed receipts</small><strong>{arriving.length}</strong><em>Latest receipt scan</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--orange"><Truck size={18} /></span><div><small>Open departures</small><strong>{leaving.length}</strong><em>Left this site; receiving location not recorded</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--slate"><Smartphone size={18} /></span><div><small>Scanner coverage</small><strong>{scanners.filter((device) => device.isActive).length}/{scanners.length}</strong><em>{staleScanners.length ? `${staleScanners.length} report stale` : "Reports within 24 hours"}</em></div></article><article><span className="location-focused-metric__icon location-focused-metric__icon--cyan"><Activity size={18} /></span><div><small>Recent scans</small><strong>{scansLastDay}</strong><em>{flaggedScans ? `${flaggedScans} flagged for review` : "No scan-quality flags"}</em></div></article></section>
      <section className="location-focused-section panel"><div className="location-focused-section__header"><div><span className="eyebrow">Confirmed workflow</span><h3>What is here, was received here, and has left</h3><p>Departures show their confirmed origin only. This workspace never predicts which destination a truck will use.</p></div><Pill tone="blue">{current.length + arriving.length + leaving.length} records</Pill></div><div className="workflow-lanes"><LocationWorkflowLane title="At this location" subtitle="Official current projection" tone="here" items={current} data={data} onOpen={openContainer} /><LocationWorkflowLane title="Received here" subtitle="Confirmed arrival scans recorded at this site" tone="arriving" items={arriving} data={data} onOpen={openContainer} /><LocationWorkflowLane title="Leaving this site" subtitle="Open departures with this location as origin" tone="leaving" items={leaving} data={data} onOpen={openContainer} /></div></section>
@@ -3747,6 +3749,9 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openCon
   useEffect(() => {
     setLocationPage(0);
   }, [locationQuery, locationTypeFilter, locationHealthFilter, locationSort, locationPageSize]);
+  const managerLocationId = session?.principal.role === "location_manager"
+    ? physicalLocations.find((location) => session.principal.locationIds?.includes(location.locationId))?.locationId
+    : undefined;
   const clearLocationFilters = () => {
     setLocationQuery("");
     setLocationTypeFilter("all");
@@ -3754,6 +3759,10 @@ function LocationsPage({ data, focusedLocationId, focusedLocationFilter, openCon
     setLocationSort("work");
   };
   if (focusedLocationId) return <LocationWorkspacePage data={data} locationId={focusedLocationId} {...(focusedLocationFilter ? { locationFilter: focusedLocationFilter } : {})} openLocation={openLocation} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
+  if (session?.principal.role === "location_manager") {
+    if (!managerLocationId) return <section className="location-workspace-denied panel"><div className="location-workspace-denied__icon"><MapPin size={24} /></div><span className="eyebrow">Location workspace</span><h2>No location assigned</h2><p>Your account is active, but no operating location is assigned yet. Ask a corporate administrator to assign your store or warehouse.</p></section>;
+    return <LocationWorkspacePage data={data} locationId={managerLocationId} openLocation={openLocation} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
+  }
   const selected = (physicalLocations.find((location) => location.locationId === selectedLocationId) ?? physicalLocations[0])!;
   if (!selected) return <section className="panel"><EmptyState>No active operating locations are available. Add or restore a location from Settings before reviewing workflow.</EmptyState><button className="secondary" onClick={() => setPage("settings")}><Settings size={15} /> Open Settings</button></section>;
 
@@ -4795,7 +4804,7 @@ function DevicesPage({ data, query, setQuery, openDetail, refresh, session, onRe
        </div>
        <div className="device-filter-panel__summary"><strong>Showing {matchingDevices.length} of {visibleDevices.length} scanners</strong><span>{visibleDevices.length - disabledCount} enabled</span><span>{disabledCount} disabled</span><span>{staleCount} need a fresh report</span>{searchTerm && <span>Search: “{query.trim()}”</span>}</div>
      </section>
-     {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator", "location_manager"].includes(session.principal.role))} canMoveAcrossLocations={session?.principal.role === "organization_owner"} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState><span>No scanners match the current search and filters.</span><button className="secondary" onClick={clearFilters}>Clear filters</button></EmptyState>}
+     {matchingDevices.length ? <div className="device-grid">{matchingDevices.map((device) => <DeviceCard key={device.deviceId} device={device} data={data} operatingLocations={operatingLocations} busy={busyId === device.deviceId} canManage={Boolean(session && ["organization_owner", "operations_administrator"].includes(session.principal.role))} canMoveAcrossLocations={session?.principal.role === "organization_owner"} onSave={save} onDetails={() => openDetail(deviceDetail(device, data))} />)}</div> : <EmptyState><span>No scanners match the current search and filters.</span><button className="secondary" onClick={clearFilters}>Clear filters</button></EmptyState>}
    </>;
 }
 

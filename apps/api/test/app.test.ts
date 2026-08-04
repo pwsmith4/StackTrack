@@ -492,6 +492,37 @@ describe("StackTrack API foundation", () => {
     expect(authenticateAccessToken).toHaveBeenCalledWith("c".repeat(32));
   });
 
+  it("blocks location managers from changing scanner settings", async () => {
+    const managerPrincipal: AdminPrincipal = {
+      ...ownerPrincipal,
+      tenantId: localFixtures.tenant.tenantId,
+      role: "location_manager",
+      locationIds: [localFixtures.devices[0]!.assignedLocationId]
+    };
+    const update = vi.fn();
+    app = await createApp({
+      localMode: true,
+      referenceData: async () => localFixtures,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(managerPrincipal) } as unknown as PostgresAdminAccess,
+      deviceAdministration: {
+        update,
+        reportTelemetry: async () => null,
+        isScannerEnabled: async () => true
+      }
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/local/devices/${localFixtures.devices[0]!.deviceId}`,
+      headers: { authorization: `Bearer ${"m".repeat(32)}` },
+      payload: { label: "Renamed by manager" }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "InsufficientRole" });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("keeps the mobile control plane available when the API is not in local-admin mode", async () => {
     const administration: DeviceAdministration = {
       update: async () => null,

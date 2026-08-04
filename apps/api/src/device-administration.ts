@@ -139,6 +139,10 @@ export class PostgresDeviceAdministration implements DeviceAdministration {
       const changedAvailability = isActive !== current.rows[0].is_active;
       const changedRequiredVersion = requiredAppVersion !== current.rows[0].required_app_version;
 
+      if (actor?.role === "location_manager" && (changedLabel || changedLocation || changedAvailability || changedRequiredVersion)) {
+        throw new Error("Location Managers can view scanners but cannot change scanner settings.");
+      }
+
       // Keep the corporate approval boundary in the persistence layer as well
       // as the HTTP layer. This prevents a future caller from accidentally
       // bypassing the owner-only rule when the reference-data cache is stale.

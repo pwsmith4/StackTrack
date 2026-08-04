@@ -1675,6 +1675,15 @@ footer > span:first-child { display: none; }
 .location-focused-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .location-focused-toolbar__crumb { display: inline-flex; align-items: center; gap: 6px; color: #71828d; font-size: 10px; font-weight: 700; }
 .location-focused-toolbar__back { transform: rotate(180deg); }
+.app-shell--location-manager .metric-grid--location-manager > :nth-child(4) { display: none; }
+.app-shell--location-manager .dashboard-grid--location-manager .review-panel { display: none; }
+.app-shell--location-manager .dashboard-grid--location-manager .network-panel { grid-column: 1 / -1; }
+.app-shell--location-manager .location-focused-toolbar > button:first-child { display: none; }
+.app-shell--location-manager .location-focused-page .location-review-list { display: none; }
+.app-shell--location-manager .location-focused-page .location-focused-section__header-actions button:nth-child(2) { display: none; }
+.app-shell--location-manager .device-name-input button,
+.app-shell--location-manager .device-card__actions > button:first-child { display: none; }
+.app-shell--location-manager .device-card__actions { grid-template-columns: 1fr; }
 .location-focused-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 22px; border-color: #c5e2ec; background: linear-gradient(135deg, #f7fcfe, #fff); }
 .location-focused-hero__identity { display: flex; gap: 13px; min-width: 0; }
 .location-focused-hero__identity > .location-title-icon { width: 48px; height: 48px; flex: none; }
