@@ -1172,7 +1172,7 @@ export function App() {
   // Temporary passwords are one-time credentials. Keep operational data out
   // of the browser until its holder replaces the administrator-issued value.
   if (session.principal.mustChangePassword) {
-    return <div className="authentication-shell"><AccountSecurity session={session} required onPasswordChanged={markPasswordChanged} onSignOut={signOut} /></div>;
+    return <div className="authentication-shell"><AccountSecurity session={session} required onPasswordChanged={markPasswordChanged} /></div>;
   }
 
   return (
@@ -1321,7 +1321,7 @@ export function App() {
           {loading && !data ? (
             <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>
           ) : data ? (
-             <PageContent page={page} {...(locationId ? { locationId } : {})} {...(locationFilter ? { locationFilter } : {})} {...(route.containerMovement ? { containerMovement: route.containerMovement } : {})} data={data} query={query} setQuery={setQuery} setPage={setPage} openContainers={openContainers} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} onSignOut={signOut} />
+             <PageContent page={page} {...(locationId ? { locationId } : {})} {...(locationFilter ? { locationFilter } : {})} {...(route.containerMovement ? { containerMovement: route.containerMovement } : {})} data={data} query={query} setQuery={setQuery} setPage={setPage} openContainers={openContainers} openLocation={openLocation} openDetail={setDetail} refresh={refresh} session={session} onRequestSignIn={() => setSignInOpen(true)} onPasswordChanged={markPasswordChanged} />
           ) : <div className="loading-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton" />)}</div>}
         </div>
         <footer>
@@ -1388,8 +1388,7 @@ function PageContent({
   refresh,
   session,
   onRequestSignIn,
-  onPasswordChanged,
-  onSignOut
+  onPasswordChanged
 }: {
   page: Page;
   locationId?: string | undefined;
@@ -1406,7 +1405,6 @@ function PageContent({
   session: AdminSession | null;
   onRequestSignIn: () => void;
   onPasswordChanged: () => void;
-  onSignOut: () => Promise<void>;
 }) {
   if (page === "dashboard") return <Dashboard data={data} setPage={setPage} openContainers={openContainers} openLocation={openLocation} session={session!} />;
   if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} session={session!} />;
@@ -1421,7 +1419,7 @@ function PageContent({
   if (page === "audit") return <AuditTrailPage data={data} session={session!} openDetail={openDetail} />;
   if (page === "devices") return <DevicesPage data={data} query={query} setQuery={setQuery} openDetail={openDetail} refresh={refresh} session={session} onRequestSignIn={onRequestSignIn} />;
   if (page === "reports") return <ReportsPage data={data} openDetail={openDetail} />;
-  return <SettingsPage data={data} setPage={setPage} session={session} refresh={refresh} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />;
+  return <SettingsPage data={data} setPage={setPage} session={session} refresh={refresh} onRequestSignIn={onRequestSignIn} onPasswordChanged={onPasswordChanged} />;
 }
 
 function InventoryPage({ data, setPage, openLocation, session }: { data: OperationsData; setPage: (page: Page) => void; openLocation: (locationId: string) => void; session: AdminSession }) {
@@ -5357,7 +5355,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   </section>;
 }
 
-function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPasswordChanged, onSignOut }: { data: OperationsData; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
+function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPasswordChanged }: { data: OperationsData; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void }) {
   const settings = [
     { icon: UserRound, title: "Roles & approvals", text: "Operations Administrators can request corrections; Organization Owners approve them with dual control for material changes." },
     { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners receive their assigned operating location and availability from the administration service." },
@@ -5396,10 +5394,10 @@ function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPass
       <PanelTitle title="Operating policies" subtitle="Reference only — these policies are enforced by the service and are not interactive settings." />
       <div className="settings-reference__grid">{settings.map((setting) => <article className="settings-reference__item" key={setting.title}><span className="settings-reference__icon"><setting.icon size={18} /></span><div><h3>{setting.title}</h3><p>{setting.text}</p></div><Pill tone="muted">Reference</Pill></article>)}</div>
     </section>
-    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} onSignOut={onSignOut} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} locations={data.fixtures.locations} />}</>;
+    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} locations={data.fixtures.locations} />}</>;
 }
 
-function AccountSecurity({ session, required = false, onPasswordChanged, onSignOut }: { session: AdminSession; required?: boolean; onPasswordChanged: () => void; onSignOut: () => Promise<void> }) {
+function AccountSecurity({ session, required = false, onPasswordChanged }: { session: AdminSession; required?: boolean; onPasswordChanged: () => void }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -5417,7 +5415,7 @@ function AccountSecurity({ session, required = false, onPasswordChanged, onSignO
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Password could not be changed."); }
     finally { setBusy(false); }
   };
-  return <section className={`account-security ${required ? "account-security--required" : ""}`}><PanelTitle title={required ? "Choose your private password" : "Your account security"} subtitle={required ? "This is the first sign-in for this account. Replace the administrator-issued temporary password before StackTrack shows any operational data." : "Password changes are recorded and revoke your other active browser sessions."} />{required && <div className="account-security__required-note"><ShieldCheck size={20}/><span>This keeps a shared temporary password from becoming ongoing access. Your new password needs at least 12 characters.</span></div>}<div className="account-security__status"><span className="avatar">{initials(session.principal.displayName)}</span><div><strong>{session.principal.displayName}</strong><small>@{session.principal.username} · {roleLabel(session.principal.role)}</small></div><Pill tone={session.principal.mustChangePassword ? "warn" : "good"}>{session.principal.mustChangePassword ? "Password change required" : "Password current"}</Pill></div><form className="account-security__form" onSubmit={(event) => void submit(event)}><label>Current password<input required type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label><label>New password<input required minLength={12} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label><label>Confirm new password<input required minLength={12} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label><button className="primary" disabled={busy}>{busy ? "Updating…" : required ? "Continue to StackTrack" : "Update password"}</button></form>{error && <div className="sign-in-error">{error}</div>}{notice && <div className="device-notice">{notice}</div>}<button className="account-security__signout" onClick={() => void onSignOut()}>Sign out of this browser</button></section>;
+  return <section className={`account-security ${required ? "account-security--required" : ""}`}><PanelTitle title={required ? "Choose your private password" : "Your account security"} subtitle={required ? "This is the first sign-in for this account. Replace the administrator-issued temporary password before StackTrack shows any operational data." : "Password changes are recorded and revoke your other active browser sessions."} />{required && <div className="account-security__required-note"><ShieldCheck size={20}/><span>This keeps a shared temporary password from becoming ongoing access. Your new password needs at least 12 characters.</span></div>}<div className="account-security__status"><span className="avatar">{initials(session.principal.displayName)}</span><div><strong>{session.principal.displayName}</strong><small>@{session.principal.username} · {roleLabel(session.principal.role)}</small></div><Pill tone={session.principal.mustChangePassword ? "warn" : "good"}>{session.principal.mustChangePassword ? "Password change required" : "Password current"}</Pill></div><form className="account-security__form" onSubmit={(event) => void submit(event)}><label>Current password<input required type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label><label>New password<input required minLength={12} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label><label>Confirm new password<input required minLength={12} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label><button className="primary" disabled={busy}>{busy ? "Updating…" : required ? "Continue to StackTrack" : "Update password"}</button></form>{error && <div className="sign-in-error">{error}</div>}{notice && <div className="device-notice">{notice}</div>}</section>;
 }
 
 function LegacyAdminDirectory({ session }: { session: AdminSession }) {
