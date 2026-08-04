@@ -951,14 +951,32 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
       // Legacy/local test doubles do not have named roles yet. The conservative
       // response is an empty set rather than an invented grant.
-      return reply.send({ permissionKeys: [], resolvedAt: now().toISOString(), enforced: false });
+      const assignedLocationId = administration?.assignedLocationId
+        ? await administration.assignedLocationId(context.tenantId, context.deviceId, installationId)
+        : null;
+      const isActive = administration?.isScannerEnabled
+        ? await administration.isScannerEnabled(context.tenantId, context.deviceId, installationId)
+        : true;
+      return reply.send({ permissionKeys: [], resolvedAt: now().toISOString(), enforced: false, ...(assignedLocationId ? { assignedLocationId } : {}), isActive });
     }
     const permissionKeys = await administration.permissionKeys(
       context.tenantId,
       context.deviceId,
       installationId
     );
-    return reply.send({ permissionKeys, resolvedAt: now().toISOString(), enforced: strictDevicePermissions });
+    const assignedLocationId = administration.assignedLocationId
+      ? await administration.assignedLocationId(context.tenantId, context.deviceId, installationId)
+      : null;
+    const isActive = administration.isScannerEnabled
+      ? await administration.isScannerEnabled(context.tenantId, context.deviceId, installationId)
+      : true;
+    return reply.send({
+      permissionKeys,
+      resolvedAt: now().toISOString(),
+      enforced: strictDevicePermissions,
+      ...(assignedLocationId ? { assignedLocationId } : {}),
+      isActive
+    });
   });
 
   const handleMobileTelemetry = async (

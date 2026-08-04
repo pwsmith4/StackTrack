@@ -25,4 +25,19 @@ describe("device permission bootstrap", () => {
     expect(state.mode).toBe("unavailable");
     expect(canUseDevicePermission(state, "observation.create")).toBe(false);
   });
+
+  it("keeps assignment metadata with the resolved role", () => {
+    const state = resolveDevicePermissions({
+      enforced: true,
+      permissionKeys: ["observation.create"],
+      assignedLocationId: "66666666-6666-4666-8666-666666666666",
+      isActive: true,
+      deviceLabel: "Scanner 1"
+    });
+    expect(state).toMatchObject({
+      assignedLocationId: "66666666-6666-4666-8666-666666666666",
+      isActive: true,
+      deviceLabel: "Scanner 1"
+    });
+  });
 });

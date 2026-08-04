@@ -18,13 +18,14 @@ import {
   useWindowDimensions
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { APP_RELEASE, APP_REPORTED_VERSION, APP_VERSION } from "./src/release";
 import { classifyEventResponse, type EventResponseBody } from "./src/sync";
 import { normalizeScan } from "./src/scanner";
 import { canUseDevicePermission, resolveDevicePermissions, type DevicePermissionState } from "./src/device-permissions";
 import { deviceRequestHeaders } from "./src/device-network";
-import { shouldClearCachedReferenceData, shouldRetainCachedDevicePermissions, shouldUseSyntheticReferenceData } from "./src/reference-data";
+import { isLocalPreviewApi, shouldClearCachedReferenceData, shouldRetainCachedDevicePermissions, shouldUseSyntheticReferenceData } from "./src/reference-data";
+import { resolveDeferredCapture, type DeferredCapture } from "./src/deferred-observations";
 
 const colors = {
   navy: "#00294F",
@@ -57,6 +58,7 @@ const LOAD_LOOKUP_CACHE_KEY = "stacktrack.local.load-code-lookup.v1";
 const DEVICE_PERMISSIONS_CACHE_KEY = "stacktrack.local.device-permissions.v1";
 const REFERENCE_DATA_CACHE_KEY = "stacktrack.local.reference-data.v1";
 const SECURE_QUEUE_CHUNK_SIZE = 1800;
+const DEFERRED_VALIDATION_MESSAGE = "Saved on this scanner. The label will be checked against the approved container list before it is sent.";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 type Tab = "home" | "activity" | "settings";
@@ -93,6 +95,11 @@ interface LocalObservation {
   originName?: string;
   loadCode?: string;
   message?: string;
+  /** True until the printed label is matched against approved reference data. */
+  deferred?: boolean;
+  validationState?: "verified" | "unverified";
+  deviceSequence?: number;
+  capture?: DeferredCapture;
   event?: Record<string, unknown>;
 }
 
@@ -151,6 +158,11 @@ function actionSummary(action: ActionType, locationName?: string) {
   if (action === "batch_out") return `In transit — leaving ${locationName ?? "this location"}`;
   if (action === "batch_in") return `Container received${location}`;
   return `Container marked empty${location}`;
+}
+
+function normalizeStoredObservations(value: unknown): LocalObservation[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is LocalObservation => Boolean(item && typeof item === "object" && typeof (item as LocalObservation).localId === "string" && typeof (item as LocalObservation).label === "string" && typeof (item as LocalObservation).eventType === "string" && typeof (item as LocalObservation).eventAt === "string" && typeof (item as LocalObservation).status === "string"));
 }
 
 function queueMessage(status: QueueStatus) {
@@ -317,9 +329,10 @@ function AppContent() {
   const [submitting, setSubmitting] = useState(false);
   const [requiredAppVersion, setRequiredAppVersion] = useState(APP_VERSION);
   const [scannerEnabled, setScannerEnabled] = useState(true);
-  const [assignedLocationId, setAssignedLocationId] = useState(LOCATION_ID);
-  const [deviceLocationName, setDeviceLocationName] = useState("Midtown Store");
+  const [assignedLocationId, setAssignedLocationId] = useState("");
+  const [deviceLocationName, setDeviceLocationName] = useState("Assigned location (offline)");
   const [deviceLabel, setDeviceLabel] = useState("Assigned scanner");
+  const [assignmentResolved, setAssignmentResolved] = useState(false);
   const [refreshingDevice, setRefreshingDevice] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState("");
   // Do not assume scanner capabilities before the control plane has resolved
@@ -330,10 +343,54 @@ function AppContent() {
     status: "pending",
     message: queueMessage("pending")
   });
+  const syncInProgress = useRef(false);
+
+  const resolveDeferredQueue = useCallback(async (loaded: Fixtures) => {
+    const stored = await readQueueStore();
+    if (!stored) return;
+    let parsed: LocalObservation[];
+    try {
+      parsed = normalizeStoredObservations(JSON.parse(stored));
+    } catch {
+      return;
+    }
+    const transitLocationId = loaded.locations.find((location) => location.type === "in_transit")?.locationId;
+    let changed = false;
+    const next = parsed.map((item) => {
+      if (item.status !== "pending" || !item.deferred || item.event || !item.capture) return item;
+      let result: ReturnType<typeof resolveDeferredCapture>;
+      try {
+        result = resolveDeferredCapture(item.capture, { containers: loaded.containers, ...(transitLocationId ? { transitLocationId } : {}) }, { deviceInstallationId: INSTALLATION_ID });
+      } catch {
+        changed = true;
+        return {
+          ...item,
+          status: "review" as const,
+          deferred: false,
+          validationState: "unverified" as const,
+          message: "This offline scan could not be validated. An administrator needs to review it."
+        };
+      }
+      changed = true;
+      if (result.kind === "review") {
+        return { ...item, status: "review" as const, deferred: false, validationState: "unverified" as const, message: result.message };
+      }
+      return { ...item, deferred: false, validationState: "verified" as const, event: result.event, message: "The label matched the approved container list and is ready to sync." };
+    });
+    if (!changed) return;
+    setObservations(next);
+    await writeQueueStore(JSON.stringify(next));
+  }, []);
 
   const loadLocal = useCallback(async () => {
     const cached = await readQueueStore();
-    if (cached) setObservations(JSON.parse(cached) as LocalObservation[]);
+    if (cached) {
+      try {
+        setObservations(normalizeStoredObservations(JSON.parse(cached)));
+      } catch {
+        setObservations([]);
+      }
+    }
     const cachedLookups = await AsyncStorage.getItem(LOAD_LOOKUP_CACHE_KEY);
     if (cachedLookups) {
       try {
@@ -344,6 +401,11 @@ function AppContent() {
     }
     const cachedPermissions = await AsyncStorage.getItem(DEVICE_PERMISSIONS_CACHE_KEY);
     let hasCachedPermissions = false;
+    let resolvedAssignmentId: string | undefined;
+    let resolvedScannerActive: boolean | undefined;
+    let resolvedDeviceLabel: string | undefined;
+    let permissionResolutionSucceeded = false;
+    let permissionAccessDenied = false;
     if (cachedPermissions) {
       try {
         const parsedPermissions = resolveDevicePermissions(JSON.parse(cachedPermissions));
@@ -351,6 +413,19 @@ function AppContent() {
           await AsyncStorage.removeItem(DEVICE_PERMISSIONS_CACHE_KEY);
         } else {
           setDevicePermissions(parsedPermissions);
+          if (parsedPermissions.assignedLocationId) {
+            resolvedAssignmentId = parsedPermissions.assignedLocationId;
+            setAssignedLocationId(parsedPermissions.assignedLocationId);
+            setAssignmentResolved(true);
+          }
+          if (parsedPermissions.isActive !== undefined) {
+            resolvedScannerActive = parsedPermissions.isActive;
+            setScannerEnabled(parsedPermissions.isActive);
+          }
+          if (parsedPermissions.deviceLabel) {
+            resolvedDeviceLabel = parsedPermissions.deviceLabel;
+            setDeviceLabel(parsedPermissions.deviceLabel);
+          }
           hasCachedPermissions = true;
         }
       } catch {
@@ -362,10 +437,30 @@ function AppContent() {
     let hasCachedReferenceData = false;
     if (cachedReferenceData) {
       try {
-        setFixtures(JSON.parse(cachedReferenceData) as Fixtures);
+        const loaded = JSON.parse(cachedReferenceData) as Fixtures;
+        setFixtures(loaded);
+        await resolveDeferredQueue(loaded);
+        const registeredDevice = loaded.devices?.find((device) => device.deviceId === DEVICE_ID);
+        const nextLocationId = registeredDevice?.assignedLocationId ?? resolvedAssignmentId;
+        if (nextLocationId) {
+          setAssignedLocationId(nextLocationId);
+          setDeviceLocationName(loaded.locations.find((location) => location.locationId === nextLocationId)?.name ?? "Assigned location (offline)");
+          setAssignmentResolved(true);
+        } else if (isLocalPreviewApi(API_URL) && loaded.locations.some((location) => location.locationId === LOCATION_ID)) {
+          setAssignedLocationId(LOCATION_ID);
+          setDeviceLocationName(loaded.locations.find((location) => location.locationId === LOCATION_ID)?.name ?? "Midtown Store");
+          setAssignmentResolved(true);
+        } else {
+          setAssignmentResolved(false);
+        }
+        setRequiredAppVersion(registeredDevice?.requiredAppVersion ?? APP_VERSION);
+        if (registeredDevice?.isActive !== undefined) setScannerEnabled(registeredDevice.isActive);
+        else if (resolvedScannerActive !== undefined) setScannerEnabled(resolvedScannerActive);
+        setDeviceLabel(registeredDevice?.label ?? resolvedDeviceLabel ?? "Assigned scanner");
         hasCachedReferenceData = true;
       } catch {
         await AsyncStorage.removeItem(REFERENCE_DATA_CACHE_KEY);
+        setAssignmentResolved(false);
       }
     }
     let controlPlaneResponded = false;
@@ -379,7 +474,9 @@ function AppContent() {
       controlPlaneResponded = true;
       if (!permissionsResponse.ok) {
         if (shouldClearCachedReferenceData(permissionsResponse.status)) {
+          permissionAccessDenied = true;
           setFixtures(null);
+          setAssignmentResolved(false);
           hasCachedReferenceData = false;
           await AsyncStorage.removeItem(REFERENCE_DATA_CACHE_KEY);
           await AsyncStorage.removeItem(DEVICE_PERMISSIONS_CACHE_KEY);
@@ -402,12 +499,27 @@ function AppContent() {
       }
       const permissions = resolveDevicePermissions(await permissionsResponse.json());
       if (permissions.mode === "unavailable") {
+        permissionAccessDenied = true;
         setDevicePermissions(permissions);
         hasCachedPermissions = false;
         await AsyncStorage.removeItem(DEVICE_PERMISSIONS_CACHE_KEY);
         throw new Error(permissions.message ?? "Device permissions unreadable");
       }
+      permissionResolutionSucceeded = true;
       setDevicePermissions(permissions);
+      if (permissions.assignedLocationId) {
+        resolvedAssignmentId = permissions.assignedLocationId;
+        setAssignedLocationId(permissions.assignedLocationId);
+        setAssignmentResolved(true);
+      }
+      if (permissions.isActive !== undefined) {
+        resolvedScannerActive = permissions.isActive;
+        setScannerEnabled(permissions.isActive);
+      }
+      if (permissions.deviceLabel) {
+        resolvedDeviceLabel = permissions.deviceLabel;
+        setDeviceLabel(permissions.deviceLabel);
+      }
       hasCachedPermissions = true;
       await AsyncStorage.setItem(DEVICE_PERMISSIONS_CACHE_KEY, JSON.stringify(permissions));
       // Device availability and assignment are control-plane data. Bust any
@@ -426,14 +538,17 @@ function AppContent() {
       }
       const loaded = await response.json() as Fixtures;
       setFixtures(loaded);
+      await resolveDeferredQueue(loaded);
       await AsyncStorage.setItem(REFERENCE_DATA_CACHE_KEY, JSON.stringify(loaded));
       const registeredDevice = loaded.devices?.find((device) => device.deviceId === DEVICE_ID);
       setRequiredAppVersion(registeredDevice?.requiredAppVersion ?? APP_VERSION);
-      setScannerEnabled(registeredDevice?.isActive ?? true);
-      const nextLocationId = registeredDevice?.assignedLocationId ?? LOCATION_ID;
-      setAssignedLocationId(nextLocationId);
-      setDeviceLocationName(loaded.locations.find((location) => location.locationId === nextLocationId)?.name ?? "Assigned location unavailable");
-      setDeviceLabel(registeredDevice?.label ?? "Assigned scanner");
+      if (registeredDevice?.isActive !== undefined) setScannerEnabled(registeredDevice.isActive);
+      else if (resolvedScannerActive !== undefined) setScannerEnabled(resolvedScannerActive);
+      const nextLocationId = registeredDevice?.assignedLocationId ?? resolvedAssignmentId ?? (isLocalPreviewApi(API_URL) && loaded.locations.some((location) => location.locationId === LOCATION_ID) ? LOCATION_ID : undefined);
+      setAssignmentResolved(Boolean(nextLocationId));
+      setAssignedLocationId(nextLocationId ?? "");
+      setDeviceLocationName(nextLocationId ? loaded.locations.find((location) => location.locationId === nextLocationId)?.name ?? "Assigned location (offline)" : "Assigned location (offline)");
+      setDeviceLabel(registeredDevice?.label ?? resolvedDeviceLabel ?? "Assigned scanner");
       setOnline(true);
       return true;
     } catch {
@@ -456,16 +571,24 @@ function AppContent() {
           { name: "Other", secondaryLabel: "Other Type", options: ["Trash", "Ecomm", "Ewaste", "Bric Brac"] }
         ]
         });
-      } else if (!hasCachedReferenceData && controlPlaneResponded) {
-        // A real cloud response without usable reference data is an
-        // authorization/configuration failure, not an offline test state.
+        const syntheticLocationId = resolvedAssignmentId ?? LOCATION_ID;
+        setAssignedLocationId(syntheticLocationId);
+        setDeviceLocationName(syntheticLocationId === LOCATION_ID ? "Midtown Store" : "Assigned location (offline)");
+        setAssignmentResolved(true);
+        setScannerEnabled(resolvedScannerActive ?? true);
+      } else if (!hasCachedReferenceData && controlPlaneResponded && !permissionResolutionSucceeded) {
+        // A permission decision that never resolved cannot safely establish
+        // an assignment. A temporary reference-data outage after a successful
+        // permission response is different: keep the assignment and allow
+        // explicitly unverified local captures to be reconciled later.
         setFixtures(null);
+        if (!hasCachedPermissions || permissionAccessDenied) setAssignmentResolved(false);
       }
       return false;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [resolveDeferredQueue]);
 
   useEffect(() => { void loadLocal(); }, [loadLocal]);
   useEffect(() => {
@@ -488,7 +611,8 @@ function AppContent() {
   const recent = observations.slice(0, 4);
   const updateRequired = versionIsOlder(APP_VERSION, requiredAppVersion);
   const referenceDataReady = fixtures !== null;
-  const recordingAllowed = referenceDataReady && canUseDevicePermission(devicePermissions, "observation.create");
+  const recordingAllowed = canUseDevicePermission(devicePermissions, "observation.create");
+  const offlineValidationReady = !referenceDataReady && assignmentResolved && recordingAllowed;
   const lookupAllowed = referenceDataReady && canUseDevicePermission(devicePermissions, "load_code.lookup");
 
   useEffect(() => {
@@ -507,54 +631,57 @@ function AppContent() {
 
   const syncPending = async () => {
     if (offlineMode || !scannerEnabled) return;
+    if (syncInProgress.current) return;
+    syncInProgress.current = true;
     const next = [...observations];
     let reachedServer = false;
-    for (let index = 0; index < next.length; index += 1) {
-      const item = next[index];
-      if (!item || item.status !== "pending" || !item.event) continue;
-      try {
-        const response = await fetch(`${API_URL}/api/v1/events`, {
-          method: "POST",
-          headers: deviceRequestHeaders({ tenantId: TENANT_ID, deviceId: DEVICE_ID, installationId: INSTALLATION_ID }, { contentType: true }),
-          body: JSON.stringify(item.event)
-        });
-        const result = await readEventResponse(response);
-        reachedServer = true;
-        const outcome = classifyEventResponse(response.status, result);
-        if (outcome.kind === "retry") {
-          throw new Error(outcome.message);
+    try {
+      for (let index = 0; index < next.length; index += 1) {
+        const item = next[index];
+        if (!item || item.status !== "pending" || !item.event) continue;
+        try {
+          const response = await fetch(`${API_URL}/api/v1/events`, {
+            method: "POST",
+            headers: deviceRequestHeaders({ tenantId: TENANT_ID, deviceId: DEVICE_ID, installationId: INSTALLATION_ID }, { contentType: true }),
+            body: JSON.stringify(item.event)
+          });
+          const result = await readEventResponse(response);
+          reachedServer = true;
+          const outcome = classifyEventResponse(response.status, result);
+          if (outcome.kind === "retry") {
+            throw new Error(outcome.message);
+          }
+          next[index] = {
+            ...item,
+            status: outcome.kind,
+            message: queueMessage(outcome.kind)
+          };
+        } catch {
+          setOnline(false);
+          break;
         }
-        next[index] = {
-          ...item,
-          status: outcome.kind,
-          message: queueMessage(outcome.kind)
-        };
-      } catch {
-        setOnline(false);
-        break;
       }
+      if (reachedServer) setOnline(true);
+      await saveObservations(next);
+    } finally {
+      syncInProgress.current = false;
     }
-    if (reachedServer) setOnline(true);
-    await saveObservations(next);
   };
 
   // A device should not need a second scan or a manual Retry tap just because
   // connectivity returned. Keep device order by using the existing sequential
   // sync routine whenever either real connectivity or the test offline switch
   // comes back online.
+  const hasReadyPending = observations.some((item) => item.status === "pending" && Boolean(item.event));
   useEffect(() => {
-    if (effectiveOnline && pending > 0 && scannerEnabled) {
+    if (effectiveOnline && hasReadyPending && scannerEnabled) {
       void syncPending();
     }
-  }, [effectiveOnline, pending, scannerEnabled]);
+  }, [effectiveOnline, hasReadyPending, scannerEnabled, observations]);
 
   const beginScan = () => {
     if (!scannerEnabled) {
       Alert.alert("Scanner disabled", "An administrator has disabled this scanner. Ask them to enable it before recording new observations.");
-      return;
-    }
-    if (!referenceDataReady) {
-      Alert.alert("Scanner data unavailable", "StackTrack could not load this scanner's approved container list. Connect to the service or ask an administrator to review this device.");
       return;
     }
     if (!recordingAllowed) {
@@ -564,6 +691,10 @@ function AppContent() {
           ? "This scanner has not received its permissions yet. Connect to StackTrack or ask an administrator to review the device role."
           : "This scanner is not permitted to record observations. Ask an administrator to review its device role."
       );
+      return;
+    }
+    if (!referenceDataReady && !offlineValidationReady) {
+      Alert.alert("Scanner setup needs attention", "This scanner has not received a confirmed operating location yet. Connect to StackTrack or ask an administrator to review the device before scanning.");
       return;
     }
     setWorkflow(initialWorkflow);
@@ -636,8 +767,13 @@ function AppContent() {
     const normalized = normalizeScan(workflow.label).toUpperCase();
     const container = fixtures?.containers.find((item) => item.label === normalized) ?? null;
     if (!container) {
-      if (Platform.OS === "web") window.alert("That label is not in the current container list. Check the printed ID and try again.");
-      else Alert.alert("Container not found", "Check the printed ID and try again.");
+      if (!offlineValidationReady) {
+        if (Platform.OS === "web") window.alert("That label is not in the current container list. Check the printed ID and try again.");
+        else Alert.alert("Container not found", "Check the printed ID and try again.");
+        return;
+      }
+      setWorkflow((current) => ({ ...current, label: normalized, container: null, action: batchAction ?? current.action }));
+      setStep(batchAction ? "details" : "action");
       return;
     }
     setWorkflow((current) => ({ ...current, label: normalized, container, action: batchAction ?? current.action }));
@@ -657,19 +793,24 @@ function AppContent() {
   };
 
   const continueBatch = () => {
-    if (!batchAction || !workflow.container || workflow.action !== batchAction) return;
+    if (!batchAction || !workflow.label || workflow.action !== batchAction) return;
     setBatchItems((current) => [...current, workflow]);
     setWorkflow({ ...initialWorkflow, action: batchAction });
     setStep("scan");
   };
 
   const submitObservation = async () => {
-    if (!workflow.container || !workflow.action) return;
+    if (!workflow.label || !workflow.action) return;
     setSubmitting(true);
     const sequence = Number(await AsyncStorage.getItem(SEQUENCE_KEY) ?? "20");
-    const workItems = [...batchItems, workflow];
+    type ActiveWorkflow = WorkflowState & { action: ActionType };
+    const workItems = [...batchItems, workflow].filter((item): item is ActiveWorkflow => Boolean(item.label && item.action));
+    if (workItems.length === 0) {
+      setSubmitting(false);
+      return;
+    }
     const generatedLoadCodes: (string | null)[] = [];
-    const events = workItems.map((item, index) => {
+    const records = workItems.map((item, index) => {
       const eventId = pseudoUuid();
       const loadCodeId = item.action === "load_assigned" ? pseudoUuid() : undefined;
       const loadCode = loadCodeId ? displayLoadCode(loadCodeId) : null;
@@ -680,29 +821,53 @@ function AppContent() {
         : item.action === "batch_out"
           ? { sourceLocationId: assignedLocationId }
           : item.action === "emptied"
-            ? { processedPercentage: item.processedPercentage }
-            : {};
-      return {
-        eventId,
-        deviceInstallationId: INSTALLATION_ID,
-        deviceSequence: sequence + index,
-        containerId: item.container!.containerId,
-        ...(loadCodeId ? { loadCodeId } : {}),
-        locationId: item.action === "batch_out"
-          ? fixtures?.locations.find((location) => location.type === "in_transit")?.locationId ?? TRANSIT_LOCATION_ID
-          : assignedLocationId,
-        eventType: item.action!,
+          ? { processedPercentage: item.processedPercentage }
+          : {};
+      const locationId = item.action === "batch_out"
+        ? fixtures?.locations.find((location) => location.type === "in_transit")?.locationId ?? TRANSIT_LOCATION_ID
+        : assignedLocationId;
+      const referenceDataVersion = new Date(Date.now() - 60_000).toISOString();
+      const event = item.container
+        ? {
+          eventId,
+          deviceInstallationId: INSTALLATION_ID,
+          deviceSequence: sequence + index,
+          containerId: item.container.containerId,
+          ...(loadCodeId ? { loadCodeId } : {}),
+          locationId,
+          eventType: item.action,
+          eventAt,
+          deviceClockOffsetSeconds: 0,
+          clockVerifiedAt: eventAt,
+          referenceDataVersion,
+          payload
+        }
+        : undefined;
+      const capture: DeferredCapture = {
+        localId: eventId,
+        label: item.label,
+        eventType: item.action,
         eventAt,
-        deviceClockOffsetSeconds: 0,
-        clockVerifiedAt: eventAt,
-        referenceDataVersion: new Date(Date.now() - 60_000).toISOString(),
-        payload
+        deviceSequence: sequence + index,
+        locationId: assignedLocationId,
+        ...(item.action === "batch_out" ? { originLocationId: assignedLocationId } : {}),
+        ...(item.action === "load_assigned" ? { goodsType: item.goodsType, secondaryValue: item.secondaryValue } : {}),
+        ...(item.action === "emptied" ? { processedPercentage: item.processedPercentage } : {}),
+        ...(loadCodeId ? { loadCodeId } : {}),
+        ...(loadCode ? { loadCode } : {}),
+        referenceDataVersion
       };
+      return { item, eventId, eventAt, event, capture };
     });
-    const outcomes: { status: QueueStatus; message: string }[] = events.map(() => ({ status: "pending", message: queueMessage("pending") }));
-    if (effectiveOnline) {
+    const outcomes: { status: QueueStatus; message: string }[] = records.map((record) => ({
+      status: "pending",
+      message: record.event ? queueMessage("pending") : DEFERRED_VALIDATION_MESSAGE
+    }));
+    const sendable = records.map((record, index) => ({ record, index })).filter((entry) => Boolean(entry.record.event));
+    if (effectiveOnline && sendable.length > 0) {
       try {
-        const isBatch = events.length > 1;
+        const isBatch = sendable.length > 1;
+        const events = sendable.map((entry) => entry.record.event!);
         const response = await fetch(`${API_URL}/api/v1/${isBatch ? "events/batch" : "events"}`, {
           method: "POST",
           headers: deviceRequestHeaders({ tenantId: TENANT_ID, deviceId: DEVICE_ID, installationId: INSTALLATION_ID }, { contentType: true }),
@@ -712,35 +877,38 @@ function AppContent() {
         setOnline(true);
         if (isBatch && result && Array.isArray(result.results)) {
           for (const item of result.results) {
-            const index = typeof item.index === "number" ? item.index : -1;
-            if (index < 0 || index >= outcomes.length) continue;
+            const sendableIndex = typeof item.index === "number" ? item.index : -1;
+            const originalIndex = sendable[sendableIndex]?.index ?? -1;
+            if (originalIndex < 0 || originalIndex >= outcomes.length) continue;
             const outcome = classifyEventResponse(response.status, item as EventResponseBody);
-            if (outcome.kind !== "retry") outcomes[index] = { status: outcome.kind, message: queueMessage(outcome.kind) };
+            if (outcome.kind !== "retry") outcomes[originalIndex] = { status: outcome.kind, message: queueMessage(outcome.kind) };
           }
         } else {
           const outcome = classifyEventResponse(response.status, result);
           if (outcome.kind === "retry") throw new Error(outcome.message);
-          outcomes[0] = { status: outcome.kind, message: queueMessage(outcome.kind) };
+          const originalIndex = sendable[0]?.index;
+          if (originalIndex !== undefined) outcomes[originalIndex] = { status: outcome.kind, message: queueMessage(outcome.kind) };
         }
       } catch {
         setOnline(false);
       }
     }
-    const next: LocalObservation[] = events.map((event, index) => ({
-      localId: event.eventId,
-      label: workItems[index]!.container!.label,
-      eventType: event.eventType,
-      eventAt: event.eventAt,
+    const next: LocalObservation[] = records.map((record, index) => ({
+      localId: record.eventId,
+      label: record.item.label,
+      eventType: record.item.action,
+      eventAt: record.eventAt,
       status: outcomes[index]!.status,
       locationName: deviceLocationName,
-      ...(event.eventType === "batch_out" ? { originName: deviceLocationName } : {}),
+      ...(record.item.action === "batch_out" ? { originName: deviceLocationName } : {}),
       ...(generatedLoadCodes[index] ? { loadCode: generatedLoadCodes[index]! } : {}),
       message: outcomes[index]!.message,
-      event
+      validationState: record.event ? "verified" : "unverified",
+      ...(record.event ? { event: record.event } : { deferred: true, capture: record.capture })
     }));
     await saveObservations([...next, ...observations]);
-    await AsyncStorage.setItem(SEQUENCE_KEY, String(sequence + events.length));
-    setLastBatchCount(events.length);
+    await AsyncStorage.setItem(SEQUENCE_KEY, String(sequence + records.length));
+    setLastBatchCount(records.length);
     setWorkflow((current) => ({ ...current, loadCode: generatedLoadCodes.at(-1) ?? null }));
     const aggregateStatus: QueueStatus = outcomes.some((item) => item.status === "review")
       ? "review"
@@ -792,7 +960,7 @@ function AppContent() {
               </View>
             </View>
           </View>
-          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} locations={fixtures?.locations} onScan={beginScan} onLookup={openLoadCodeLookup} onViewActivity={() => setTab("activity")} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} referenceDataReady={referenceDataReady} recordingAllowed={recordingAllowed} lookupAllowed={lookupAllowed} deviceLocationName={deviceLocationName} refreshNotice={refreshNotice} />}
+          {tab === "home" && <HomeScreen online={effectiveOnline} pending={pending} recent={recent} locations={fixtures?.locations} onScan={beginScan} onLookup={openLoadCodeLookup} onViewActivity={() => setTab("activity")} updateRequired={updateRequired} requiredAppVersion={requiredAppVersion} scannerEnabled={scannerEnabled} referenceDataReady={referenceDataReady} offlineValidationReady={offlineValidationReady} recordingAllowed={recordingAllowed} lookupAllowed={lookupAllowed} deviceLocationName={deviceLocationName} refreshNotice={refreshNotice} />}
           {tab === "activity" && <ActivityScreen observations={observations} locations={fixtures?.locations} deviceLocationName={deviceLocationName} />}
           {tab === "settings" && (
             <SettingsScreen
@@ -819,10 +987,10 @@ function AppContent() {
             <WorkflowHeader step={step} onClose={closeWorkflow} onBack={() => setStep(step === "action" ? "scan" : step === "details" || step === "confirm" ? "action" : "scan")} />
             <ScrollView contentContainerStyle={styles.workflowContent} keyboardShouldPersistTaps="handled">
               {step === "scan" && <ScanStep workflow={workflow} setWorkflow={setWorkflow} onContinue={findContainer} batchAction={batchAction} batchCount={batchItems.length} />}
-              {step === "action" && workflow.container && <ActionStep container={workflow.container} onChoose={chooseAction} />}
-              {step === "details" && fixtures && <DetailsStep workflow={workflow} setWorkflow={setWorkflow} fixtures={fixtures} assignedLocationId={assignedLocationId} onContinue={() => setStep("confirm")} />}
-              {step === "confirm" && workflow.container && workflow.action && <ConfirmStep workflow={workflow} batchItems={[...batchItems, workflow]} batchCount={batchItems.length + 1} canAddAnother={Boolean(batchAction)} fixtures={fixtures} submitting={submitting} deviceLocationName={deviceLocationName} onAddAnother={continueBatch} onSubmit={() => void submitObservation()} />}
-              {step === "success" && workflow.container && workflow.action && <SuccessStep workflow={workflow} batchCount={lastBatchCount} deviceLocationName={deviceLocationName} submissionStatus={lastSubmission.status} submissionMessage={lastSubmission.message} onDone={closeWorkflow} onAnother={() => { closeWorkflow(); setTimeout(beginScan, 150); }} />}
+              {step === "action" && <ActionStep container={workflow.container} label={workflow.label} unverified={!referenceDataReady} onChoose={chooseAction} />}
+              {step === "details" && workflow.action && <DetailsStep workflow={workflow} setWorkflow={setWorkflow} fixtures={fixtures} assignedLocationId={assignedLocationId} onContinue={() => setStep("confirm")} />}
+              {step === "confirm" && workflow.action && <ConfirmStep workflow={workflow} batchItems={[...batchItems, workflow]} batchCount={batchItems.length + 1} canAddAnother={Boolean(batchAction)} fixtures={fixtures} submitting={submitting} deviceLocationName={deviceLocationName} onAddAnother={continueBatch} onSubmit={() => void submitObservation()} />}
+              {step === "success" && workflow.action && <SuccessStep workflow={workflow} batchCount={lastBatchCount} deviceLocationName={deviceLocationName} submissionStatus={lastSubmission.status} submissionMessage={lastSubmission.message} onDone={closeWorkflow} onAnother={() => { closeWorkflow(); setTimeout(beginScan, 150); }} />}
             </ScrollView>
           </SafeAreaView>
         </SafeAreaProvider>
@@ -852,7 +1020,7 @@ function AppContent() {
   );
 }
 
-function HomeScreen({ online, pending, recent, locations, onScan, onLookup, onViewActivity, updateRequired, requiredAppVersion, scannerEnabled, referenceDataReady, recordingAllowed, lookupAllowed, deviceLocationName, refreshNotice }: { online: boolean; pending: number; recent: LocalObservation[]; locations?: Fixtures["locations"] | undefined; onScan: () => void; onLookup: () => void; onViewActivity: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; referenceDataReady: boolean; recordingAllowed: boolean; lookupAllowed: boolean; deviceLocationName: string; refreshNotice: string }) {
+function HomeScreen({ online, pending, recent, locations, onScan, onLookup, onViewActivity, updateRequired, requiredAppVersion, scannerEnabled, referenceDataReady, offlineValidationReady, recordingAllowed, lookupAllowed, deviceLocationName, refreshNotice }: { online: boolean; pending: number; recent: LocalObservation[]; locations?: Fixtures["locations"] | undefined; onScan: () => void; onLookup: () => void; onViewActivity: () => void; updateRequired: boolean; requiredAppVersion: string; scannerEnabled: boolean; referenceDataReady: boolean; offlineValidationReady: boolean; recordingAllowed: boolean; lookupAllowed: boolean; deviceLocationName: string; refreshNotice: string }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.locationStrip}>
@@ -862,15 +1030,16 @@ function HomeScreen({ online, pending, recent, locations, onScan, onLookup, onVi
       </View>
       {updateRequired && <View style={styles.requiredUpdateBanner}><Icon name="alert-circle-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Update required</Text><Text style={styles.requiredUpdateText}>This scanner is on {APP_VERSION}; StackTrack {requiredAppVersion} is required. Ask an administrator to update this device.</Text></View></View>}
       {!scannerEnabled && <View style={styles.requiredUpdateBanner}><Icon name="pause-circle-outline" color={colors.red} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Scanner disabled</Text><Text style={styles.requiredUpdateText}>An administrator has paused this shared scanner. New observations cannot be recorded until it is enabled.</Text></View></View>}
-      {!referenceDataReady && <View style={styles.requiredUpdateBanner}><Icon name="cloud-download-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Scanner data unavailable</Text><Text style={styles.requiredUpdateText}>The approved container list is not available yet. Connect to StackTrack or ask an administrator to review this device before scanning.</Text></View></View>}
-      {scannerEnabled && referenceDataReady && !recordingAllowed && <View style={styles.requiredUpdateBanner}><Icon name="lock-closed-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Scanner permissions need attention</Text><Text style={styles.requiredUpdateText}>This device cannot record observations until its named scanner permissions are available. Ask an administrator to review the device role.</Text></View></View>}
+      {!referenceDataReady && offlineValidationReady && <View style={styles.requiredUpdateBanner}><Icon name="cloud-offline-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Container list not synced</Text><Text style={styles.requiredUpdateText}>You can keep recording while offline. Each printed label is saved as unverified and checked against the approved list before it is sent to StackTrack.</Text></View></View>}
+      {!referenceDataReady && !offlineValidationReady && <View style={styles.requiredUpdateBanner}><Icon name="cloud-download-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Scanner setup needs attention</Text><Text style={styles.requiredUpdateText}>This scanner has not received a confirmed operating location and permission set. Connect to StackTrack or ask an administrator to review it before scanning.</Text></View></View>}
+      {scannerEnabled && !recordingAllowed && (referenceDataReady || offlineValidationReady) && <View style={styles.requiredUpdateBanner}><Icon name="lock-closed-outline" color={colors.orange} size={22} /><View style={styles.requiredUpdateCopy}><Text style={styles.requiredUpdateTitle}>Scanner permissions need attention</Text><Text style={styles.requiredUpdateText}>This device cannot record observations until its named scanner permissions are available. Ask an administrator to review the device role.</Text></View></View>}
       {!!refreshNotice && <View style={styles.refreshNotice}><Icon name={online ? "checkmark-circle-outline" : "cloud-offline-outline"} size={18} color={online ? colors.green : colors.orange} /><Text>{refreshNotice}</Text></View>}
 
       <View style={styles.hero}>
         <Text style={styles.heroEyebrow}>FIELD SCANNER</Text>
         <Text style={styles.heroTitle}>Ready for the{`\n`}next container.</Text>
         <Text style={styles.heroText}>Use the attached handheld scanner or enter the printed label, then record what happened to the container.</Text>
-        <Pressable onPress={onScan} disabled={!scannerEnabled || !referenceDataReady || !recordingAllowed} style={({ pressed }) => [styles.scanButton, pressed && scannerEnabled && referenceDataReady && recordingAllowed && styles.buttonPressed, (!scannerEnabled || !referenceDataReady || !recordingAllowed) && styles.buttonDisabled]}>
+        <Pressable onPress={onScan} disabled={!scannerEnabled || !recordingAllowed || (!referenceDataReady && !offlineValidationReady)} style={({ pressed }) => [styles.scanButton, pressed && scannerEnabled && recordingAllowed && (referenceDataReady || offlineValidationReady) && styles.buttonPressed, (!scannerEnabled || !recordingAllowed || (!referenceDataReady && !offlineValidationReady)) && styles.buttonDisabled]}>
           <View style={styles.scanGlyph}><Icon name="scan-outline" size={36} color="white" /></View>
           <View style={styles.scanCopy}><Text style={styles.scanButtonText}>SCAN CONTAINER</Text><Text style={styles.scanButtonSub}>Handheld scanner or enter label</Text></View>
           <Icon name="arrow-forward" color="white" />
@@ -884,7 +1053,7 @@ function HomeScreen({ online, pending, recent, locations, onScan, onLookup, onVi
 
       <View style={styles.syncCard}>
         <View style={[styles.syncIcon, !online && styles.syncIconOffline]}><Icon name={online ? "cloud-done-outline" : "cloud-offline-outline"} color={online ? colors.green : colors.orange} /></View>
-        <View style={styles.syncCopy}><Text style={styles.syncTitle}>{!scannerEnabled ? "Scanner disabled" : pending > 0 ? (online ? "Waiting to sync" : "Saved offline") : online ? "All observations synced" : "Offline capture is active"}</Text><Text style={styles.syncText}>{!scannerEnabled ? "Ask an administrator to enable this scanner before scanning." : pending ? `${pending} observation${pending === 1 ? "" : "s"} will sync automatically` : online ? "Nothing is waiting on this device" : "Scans will be saved on this device"}</Text></View>
+        <View style={styles.syncCopy}><Text style={styles.syncTitle}>{!scannerEnabled ? "Scanner disabled" : pending > 0 ? (online ? "Waiting to sync" : "Saved offline") : !referenceDataReady && offlineValidationReady ? "Offline validation is ready" : online ? "All observations synced" : "Waiting for scanner setup"}</Text><Text style={styles.syncText}>{!scannerEnabled ? "Ask an administrator to enable this scanner before scanning." : pending ? `${pending} observation${pending === 1 ? "" : "s"} will sync automatically` : !referenceDataReady && offlineValidationReady ? "New labels will be checked when the approved list returns" : online ? "Nothing is waiting on this device" : "Connect to StackTrack to finish scanner setup"}</Text></View>
         {pending > 0 && <View style={styles.pendingBadge}><Text>{pending}</Text></View>}
       </View>
 
@@ -1016,9 +1185,9 @@ function ScanStep({ workflow, setWorkflow, onContinue, batchAction, batchCount }
   );
 }
 
-function ActionStep({ container, onChoose }: { container: ContainerReference; onChoose: (action: ActionType) => void }) {
+function ActionStep({ container, label, unverified, onChoose }: { container: ContainerReference | null; label: string; unverified: boolean; onChoose: (action: ActionType) => void }) {
   const actions: { action: ActionType; icon: IconName; title: string; text: string; accent: string }[] = [
-    { action: "load_assigned", icon: "archive-outline", title: "Generate load code", text: "Record the goods in this container and create its traceable load code.", accent: colors.blue },
+    { action: "load_assigned", icon: "archive-outline", title: "Generate load code", text: unverified ? "Available after the approved container list returns, so the load can be verified before it is created." : "Record the goods in this container and create its traceable load code.", accent: colors.blue },
     { action: "batch_out", icon: "arrow-forward-circle-outline", title: "Record container departure", text: "The container is leaving this location. StackTrack records the departure only; another scanner records where it arrives.", accent: colors.cyan },
     { action: "batch_in", icon: "arrow-down-circle-outline", title: "Record arrival here", text: "Confirm that the container arrived at this location.", accent: colors.green },
     { action: "emptied", icon: "checkmark-circle-outline", title: "Mark container empty", text: "Close the active load at this location.", accent: colors.orange }
@@ -1026,9 +1195,9 @@ function ActionStep({ container, onChoose }: { container: ContainerReference; on
   return (
     <View style={styles.step}>
       <Text style={styles.stepEyebrow}>STEP 2 OF 4</Text><Text style={styles.stepTitle}>What happened?</Text><Text style={styles.stepText}>Choose the one observation you are making now.</Text>
-      <View style={styles.scannedContainer}><View style={styles.scannedIcon}><Icon name="cube-outline" /></View><View><Text style={styles.scannedLabel}>{container.label}</Text><Text style={styles.scannedType}>{container.type.toUpperCase()} · LABEL VERIFIED</Text></View><Icon name="checkmark-circle" color={colors.green} /></View>
+      <View style={styles.scannedContainer}><View style={styles.scannedIcon}><Icon name="cube-outline" /></View><View style={styles.scannedCopy}><Text style={styles.scannedLabel}>{container?.label ?? label}</Text><Text style={styles.scannedType}>{container ? "LABEL VERIFIED" : "LABEL CAPTURED · VERIFY BEFORE SYNC"}</Text></View><Icon name={container ? "checkmark-circle" : "help-circle-outline"} color={container ? colors.green : colors.orange} /></View>
       <View style={styles.actionGrid}>{actions.map((item) => (
-        <Pressable key={item.action} onPress={() => onChoose(item.action)} style={({ pressed }) => [styles.actionCard, pressed && styles.actionCardPressed]}>
+        <Pressable key={item.action} onPress={() => onChoose(item.action)} disabled={unverified && item.action === "load_assigned"} style={({ pressed }) => [styles.actionCard, pressed && styles.actionCardPressed, unverified && item.action === "load_assigned" && styles.buttonDisabled]}>
           <View style={[styles.actionIcon, { backgroundColor: `${item.accent}18` }]}><Icon name={item.icon} size={26} color={item.accent} /></View>
           <Text style={styles.actionTitle}>{item.title}</Text><Text style={styles.actionText}>{item.text}</Text><Icon name="arrow-forward" size={18} color={colors.blue} />
         </Pressable>
@@ -1037,8 +1206,9 @@ function ActionStep({ container, onChoose }: { container: ContainerReference; on
   );
 }
 
-function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onContinue }: { workflow: WorkflowState; setWorkflow: (value: (current: WorkflowState) => WorkflowState) => void; fixtures: Fixtures; assignedLocationId: string; onContinue: () => void }) {
-  const selectedGoods = fixtures.goodsTypes.find((item) => item.name === workflow.goodsType) ?? fixtures.goodsTypes[0];
+function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onContinue }: { workflow: WorkflowState; setWorkflow: (value: (current: WorkflowState) => WorkflowState) => void; fixtures: Fixtures | null; assignedLocationId: string; onContinue: () => void }) {
+  const availableGoods = fixtures?.goodsTypes ?? [];
+  const selectedGoods = availableGoods.find((item) => item.name === workflow.goodsType) ?? availableGoods[0];
   const isDeparture = workflow.action === "batch_out";
   const detailTitle = workflow.action === "load_assigned"
     ? "Describe the load"
@@ -1059,11 +1229,11 @@ function DetailsStep({ workflow, setWorkflow, fixtures, assignedLocationId, onCo
       <Text style={styles.stepEyebrow}>STEP 3 OF 4</Text><Text style={styles.stepTitle}>{detailTitle}</Text><Text style={styles.stepText}>{detailText}</Text>
       {workflow.action === "load_assigned" ? (
         <>
-          <Text style={styles.fieldLabel}>GOODS TYPE</Text><View style={styles.choiceWrap}>{fixtures.goodsTypes.map((item) => <Pressable key={item.name} onPress={() => setWorkflow((current) => ({ ...current, goodsType: item.name, secondaryValue: item.options[0] ?? "" }))} style={[styles.choice, workflow.goodsType === item.name && styles.choiceActive]}><Text style={[styles.choiceText, workflow.goodsType === item.name && styles.choiceTextActive]}>{item.name}</Text></Pressable>)}</View>
+          <Text style={styles.fieldLabel}>GOODS TYPE</Text><View style={styles.choiceWrap}>{availableGoods.map((item) => <Pressable key={item.name} onPress={() => setWorkflow((current) => ({ ...current, goodsType: item.name, secondaryValue: item.options[0] ?? "" }))} style={[styles.choice, workflow.goodsType === item.name && styles.choiceActive]}><Text style={[styles.choiceText, workflow.goodsType === item.name && styles.choiceTextActive]}>{item.name}</Text></Pressable>)}</View>
           <Text style={styles.fieldLabel}>{selectedGoods?.secondaryLabel.toUpperCase()}</Text><View style={styles.choiceWrap}>{selectedGoods?.options.map((item) => <Pressable key={item} onPress={() => setWorkflow((current) => ({ ...current, secondaryValue: item }))} style={[styles.choice, workflow.secondaryValue === item && styles.choiceActive]}><Text style={[styles.choiceText, workflow.secondaryValue === item && styles.choiceTextActive]}>{item}</Text></Pressable>)}</View>
         </>
       ) : isDeparture ? (
-        <View style={styles.departureNotice}><View style={styles.departureNoticeIcon}><Icon name="arrow-forward-circle-outline" size={24} color={colors.blue} /></View><View style={styles.departureNoticeCopy}><Text style={styles.departureNoticeTitle}>In transit — leaving {fixtures.locations.find((item) => item.locationId === assignedLocationId)?.name ?? "this location"}</Text><Text style={styles.departureNoticeText}>No receiving site is selected here. Another scanner records where the container arrives.</Text></View></View>
+        <View style={styles.departureNotice}><View style={styles.departureNoticeIcon}><Icon name="arrow-forward-circle-outline" size={24} color={colors.blue} /></View><View style={styles.departureNoticeCopy}><Text style={styles.departureNoticeTitle}>In transit — leaving {fixtures?.locations.find((item) => item.locationId === assignedLocationId)?.name ?? "this location"}</Text><Text style={styles.departureNoticeText}>No receiving site is selected here. Another scanner records where the container arrives.</Text></View></View>
       ) : workflow.action === "emptied" ? (
         <>
           <Text style={styles.fieldLabel}>PERCENT OF LOAD PROCESSED</Text>
@@ -1080,7 +1250,8 @@ function ConfirmStep({ workflow, batchItems, batchCount, canAddAnother, fixtures
     <View style={styles.step}>
       <Text style={styles.stepEyebrow}>STEP 4 OF 4</Text><Text style={styles.stepTitle}>Confirm before saving</Text><Text style={styles.stepText}>Check the container, action, and scan location. You can go back if anything needs to change.</Text>
       <View style={styles.confirmCard}>
-        <ConfirmRow label="Container" value={workflow.container?.label ?? ""} />
+        <ConfirmRow label="Container" value={workflow.container?.label ?? workflow.label} />
+        {!workflow.container && <ConfirmRow label="Validation" value="Label will be checked when the approved list returns" />}
         <ConfirmRow label="Action" value={actionSummary(workflow.action!, deviceLocationName)} />
         <ConfirmRow label="Scanned at" value={deviceLocationName} />
         {workflow.action === "load_assigned" && <><ConfirmRow label="Goods" value={workflow.goodsType} /><ConfirmRow label="Quality" value={workflow.secondaryValue} /></>}
@@ -1089,7 +1260,7 @@ function ConfirmStep({ workflow, batchItems, batchCount, canAddAnother, fixtures
         <ConfirmRow label="Device time" value={new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} last />
       </View>
       {batchCount > 1 && <View style={styles.batchSummary}><Icon name="layers-outline" size={21} color={colors.blue} /><View style={styles.batchSummaryCopy}><Text style={styles.batchSummaryTitle}>{batchCount} containers ready</Text><Text style={styles.batchSummaryText}>Each container will receive its own scan record and result.</Text></View></View>}
-      {batchCount > 1 && <View style={styles.batchList}>{batchItems.map((item, index) => <View key={`${item.container?.containerId ?? "container"}-${index}`} style={styles.batchListRow}><Text style={styles.batchListNumber}>{index + 1}</Text><Text style={styles.batchListLabel}>{item.container?.label}</Text><Text style={styles.batchListAction}>{item.action === "batch_out" ? "Departure" : "Arrival"}</Text></View>)}</View>}
+      {batchCount > 1 && <View style={styles.batchList}>{batchItems.map((item, index) => <View key={`${item.container?.containerId ?? item.label}-${index}`} style={styles.batchListRow}><Text style={styles.batchListNumber}>{index + 1}</Text><Text style={styles.batchListLabel}>{item.container?.label ?? item.label}</Text><Text style={styles.batchListAction}>{item.action === "batch_out" ? "Departure" : "Arrival"}</Text></View>)}</View>}
       <View style={styles.auditNotice}><Icon name="information-circle-outline" size={22} /><Text>This saves the action with the time, scanner, and location so it can be followed by the operations team.</Text></View>
       {canAddAnother && <Pressable onPress={onAddAnother} disabled={submitting} style={styles.batchAddButton}><Icon name="add-circle-outline" size={19} color={colors.blue} /><Text style={styles.batchAddButtonText}>SCAN ANOTHER CONTAINER</Text></Pressable>}
       <PrimaryButton onPress={onSubmit} disabled={submitting} {...(!submitting ? { icon: "checkmark" as const } : {})}>{submitting ? "SAVING..." : `SAVE ${batchCount > 1 ? `${batchCount} CONTAINERS` : "OBSERVATION"}`}</PrimaryButton>
@@ -1107,7 +1278,7 @@ function SuccessStep({ workflow, batchCount, deviceLocationName, submissionStatu
   return (
     <View style={[styles.step, styles.successStep]}>
       <View style={[styles.successIcon, needsReview && styles.successIconReview]}><Icon name={needsReview ? "alert" : "checkmark"} size={45} color="white" /></View>
-      <Text style={styles.successEyebrow}>{isSynced ? "SAVED & SYNCED" : needsReview ? "SAVED FOR REVIEW" : "SAVED ON DEVICE"}</Text><Text style={styles.successTitle}>{batchCount > 1 ? `${batchCount} containers recorded.` : `${workflow.container?.label} recorded.`}</Text>
+      <Text style={styles.successEyebrow}>{isSynced ? "SAVED & SYNCED" : needsReview ? "SAVED FOR REVIEW" : "SAVED ON DEVICE"}</Text><Text style={styles.successTitle}>{batchCount > 1 ? `${batchCount} containers recorded.` : `${workflow.container?.label ?? workflow.label} recorded.`}</Text>
       <Text style={styles.successText}>{batchCount > 1 ? `${actionSummary(workflow.action!, deviceLocationName)} for each container. ${submissionMessage}` : `${actionSummary(workflow.action!, deviceLocationName)}. ${submissionMessage}`}</Text>
       {workflow.loadCode && <View style={styles.loadCodeBox}><Text style={styles.loadCodeLabel}>GENERATED LOAD CODE</Text><Text style={styles.loadCodeValue}>{workflow.loadCode}</Text><Text style={styles.loadCodeHelp}>Use this code in the production system.</Text></View>}
       <PrimaryButton onPress={onDone}>DONE</PrimaryButton>
@@ -1271,6 +1442,7 @@ const styles = StyleSheet.create({
   testLabelButton: { alignItems: "center", padding: 15 },
   scannedContainer: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, padding: 13, marginBottom: 17 },
   scannedIcon: { width: 39, height: 39, backgroundColor: colors.paleBlue, alignItems: "center", justifyContent: "center", marginRight: 11 },
+  scannedCopy: { flex: 1 },
   scannedLabel: { color: colors.ink, fontSize: 17, fontWeight: "800" },
   scannedType: { color: colors.muted, fontSize: 7.5, letterSpacing: 0.8, marginTop: 3 },
   actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
