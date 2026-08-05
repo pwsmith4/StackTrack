@@ -185,10 +185,34 @@ export class InMemoryEventLedger implements EventLedger {
       flags.push("LateArrival");
     }
 
-    const event: StoredEvent = {
+    let event: StoredEvent = {
       ...tentativeEvent,
       accuracyFlags: [...new Set(flags)]
     };
+
+    // A receiving or processing scanner may be the first device to reveal
+    // that a container changed sites. That is useful physical evidence, so
+    // preserve and apply it, but mark the event when no departure checkpoint
+    // precedes it. This keeps the API and PostgreSQL-backed ledger consistent
+    // because both use the same deterministic projection rules.
+    const candidateProjection = projectContainer(
+      [...containerEvents, event],
+      this.#options.projection
+    );
+    const eventConflictFlags = candidateProjection?.conflicts
+      .filter((conflict) => conflict.eventIds.includes(event.eventId))
+      .flatMap((conflict) => {
+        if (conflict.reason === "LocationChangeWithoutDeparture") return ["LocationChangeWithoutDeparture" as const];
+        if (conflict.reason === "RepeatedDepartureBeforeArrival") return ["RepeatedDepartureBeforeArrival" as const];
+        if (conflict.reason === "ProcessingWithoutReceipt") return ["ProcessingWithoutReceipt" as const];
+        return [];
+      }) ?? [];
+    if (eventConflictFlags.length > 0) {
+      event = {
+        ...event,
+        accuracyFlags: [...new Set([...event.accuracyFlags, ...eventConflictFlags])]
+      };
+    }
     this.#events.push(event);
 
     const projection = this.projectionForContainer(

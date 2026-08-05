@@ -643,6 +643,20 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         const removed = await dependencies.adminAccess!.removeUser(principal, request.params.userId, confirmation);
         return reply.send({ removed });
       } catch (error) {
+        const databaseCode = typeof error === "object" && error !== null && "code" in error
+          ? String((error as { code?: unknown }).code ?? "")
+          : "";
+        const databaseMessage = error instanceof Error ? error.message : String(error ?? "");
+        // Some pool/driver wrappers preserve the PostgreSQL message but omit
+        // the SQLSTATE. Keep the same safe, actionable response for those
+        // deployments instead of exposing a raw ACL error to an administrator.
+        const permissionsMissing = databaseCode === "42501" || /permission denied for table\s+(admin_sessions|admin_users|admin_user_locations)/i.test(databaseMessage);
+        if (permissionsMissing) {
+          return reply.code(503).send({
+            error: "AdminDatabasePermissionsMissing",
+            message: "Permanent removal is temporarily unavailable because the API cannot revoke the user's sessions. Ask the database administrator to apply the StackTrack administrator-delete permission repair, then restart the API and try again. Nothing was removed."
+          });
+        }
         return reply.code(400).send({ error: "AdminUserRemovalRejected", message: error instanceof Error ? error.message : "Administrator account could not be removed." });
       }
     });

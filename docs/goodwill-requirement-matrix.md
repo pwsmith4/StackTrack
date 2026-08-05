@@ -31,7 +31,7 @@ real system or device.
 | --- | --- | --- | --- |
 | Batch-out records origin and in-transit sentinel only | Mobile does not ask for a destination; server overwrites/validates departure origin from device assignment and projects a defined `In transit` location. | Domain destination rejection; API departure-origin tests; admin movement rendering | Complete |
 | Batch-in confirms receiving location from the device | Receiving action is available as a batch; assigned device location is authoritative and manual destination fields are rejected. | API assignment/mismatch tests; mobile workflow | Complete for pilot behavior |
-| Multi-hop journeys remain honest | An arrival closes the open departure at the arrival site; no planned destination is trusted from old payloads. | Projection tests and destination-payload rejection test | Complete for the current evidence model |
+| Multi-hop journeys remain honest | An arrival closes the open departure at the arrival site; no planned destination is trusted from old payloads. If a later physical scan appears at a new site without a departure, the newer site is shown and `LocationChangeWithoutDeparture` opens review instead of leaving the container stranded. A second departure before an arrival is retained and marked `RepeatedDepartureBeforeArrival`; processing a loaded container at a new site before receipt is retained and marked `ProcessingWithoutReceipt`. | Projection tests for normal arrival, unannounced arrival/load/empty, repeated departure, processing-before-receipt, and destination-payload rejection | Complete for pilot behavior; exact correction policy remains a Goodwill decision |
 
 ## Least privilege and governance
 

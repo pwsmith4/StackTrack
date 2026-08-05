@@ -226,6 +226,221 @@ describe("InMemoryEventLedger", () => {
     expect(result.message).toContain("arrival scan");
   });
 
+  it("preserves an arrival at a new site when no departure scan was recorded", () => {
+    const ledger = new InMemoryEventLedger();
+    ledger.submit(
+      loadAssigned(undefined, { eventAt: "2026-07-22T12:00:00.000Z" }),
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:00:01.000Z")
+    );
+
+    const arrival = ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777783",
+        deviceInstallationId: secondInstallationId,
+        deviceSequence: 0,
+        containerId,
+        locationId: secondLocationId,
+        eventType: "batch_in",
+        eventAt: "2026-07-22T13:00:00.000Z",
+        payload: {}
+      },
+      { tenantId, deviceId: secondDeviceId },
+      new Date("2026-07-22T13:00:01.000Z")
+    );
+
+    expect(arrival.accepted).toBe(true);
+    expect(arrival.status).toBe("accepted_for_review");
+    expect(arrival.warnings).toContain("LocationChangeWithoutDeparture");
+    const projection = ledger.projectionForContainer(tenantId, containerId);
+    expect(projection?.locationId).toBe(secondLocationId);
+    expect(projection?.health).toBe("needs_review");
+    expect(projection?.conflicts[0]?.reason).toBe("LocationChangeWithoutDeparture");
+  });
+
+  it("does not flag a normal arrival after a recorded departure", () => {
+    const ledger = new InMemoryEventLedger();
+    ledger.submit(
+      loadAssigned(undefined, { eventAt: "2026-07-22T12:00:00.000Z" }),
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:00:01.000Z")
+    );
+    ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777784",
+        deviceInstallationId: installationId,
+        deviceSequence: 1,
+        containerId,
+        locationId: secondLocationId,
+        eventType: "batch_out",
+        eventAt: "2026-07-22T12:30:00.000Z",
+        payload: { sourceLocationId: locationId }
+      },
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:30:01.000Z")
+    );
+    const arrival = ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777785",
+        deviceInstallationId: secondInstallationId,
+        deviceSequence: 0,
+        containerId,
+        locationId: secondLocationId,
+        eventType: "batch_in",
+        eventAt: "2026-07-22T13:00:00.000Z",
+        payload: {}
+      },
+      { tenantId, deviceId: secondDeviceId },
+      new Date("2026-07-22T13:00:01.000Z")
+    );
+
+    expect(arrival.status).toBe("accepted");
+    expect(arrival.warnings).not.toContain("LocationChangeWithoutDeparture");
+  });
+
+  it("flags a second departure before the prior movement is received", () => {
+    const ledger = new InMemoryEventLedger();
+    ledger.submit(
+      loadAssigned(undefined, { eventAt: "2026-07-22T12:00:00.000Z" }),
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:00:01.000Z")
+    );
+    ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777788",
+        deviceInstallationId: installationId,
+        deviceSequence: 1,
+        containerId,
+        locationId,
+        eventType: "batch_out",
+        eventAt: "2026-07-22T12:30:00.000Z",
+        payload: { sourceLocationId: locationId }
+      },
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:30:01.000Z")
+    );
+
+    const repeatedDeparture = ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777789",
+        deviceInstallationId: installationId,
+        deviceSequence: 2,
+        containerId,
+        locationId,
+        eventType: "batch_out",
+        eventAt: "2026-07-22T13:00:00.000Z",
+        payload: { sourceLocationId: locationId }
+      },
+      { tenantId, deviceId },
+      new Date("2026-07-22T13:00:01.000Z")
+    );
+
+    expect(repeatedDeparture.status).toBe("accepted_for_review");
+    expect(repeatedDeparture.warnings).toContain("RepeatedDepartureBeforeArrival");
+    expect(
+      ledger.projectionForContainer(tenantId, containerId)?.conflicts.map((item) => item.reason)
+    ).toContain("RepeatedDepartureBeforeArrival");
+  });
+
+  it("uses a later load scan as location evidence when the departure was missed", () => {
+    const ledger = new InMemoryEventLedger();
+    ledger.submit(
+      loadAssigned(undefined, { eventAt: "2026-07-22T12:00:00.000Z" }),
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:00:01.000Z")
+    );
+
+    const movedLoad = ledger.submit(
+      loadAssigned("77777777-7777-4777-8777-777777777786", {
+        deviceInstallationId: secondInstallationId,
+        deviceSequence: 0,
+        locationId: secondLocationId,
+        loadCodeId: "55555555-5555-4555-8555-555555555556",
+        eventAt: "2026-07-22T13:00:00.000Z"
+      }),
+      { tenantId, deviceId: secondDeviceId },
+      new Date("2026-07-22T13:00:01.000Z")
+    );
+
+    expect(movedLoad.status).toBe("accepted_for_review");
+    expect(movedLoad.warnings).toContain("LocationChangeWithoutDeparture");
+    const projection = ledger.projectionForContainer(tenantId, containerId);
+    expect(projection?.locationId).toBe(secondLocationId);
+    expect(projection?.activeLoadCodeId).toBe("55555555-5555-4555-8555-555555555556");
+    expect(projection?.conflicts.map((item) => item.reason)).toEqual(
+      expect.arrayContaining(["ContainerAlreadyLoaded", "LocationChangeWithoutDeparture"])
+    );
+  });
+
+  it("flags a processing scan at a new site when no departure was recorded", () => {
+    const ledger = new InMemoryEventLedger();
+    ledger.submit(
+      loadAssigned(undefined, { eventAt: "2026-07-22T12:00:00.000Z" }),
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:00:01.000Z")
+    );
+    const emptied = ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777787",
+        deviceInstallationId: secondInstallationId,
+        deviceSequence: 0,
+        containerId,
+        locationId: secondLocationId,
+        eventType: "emptied",
+        eventAt: "2026-07-22T13:00:00.000Z",
+        payload: { processedPercentage: 100 }
+      },
+      { tenantId, deviceId: secondDeviceId },
+      new Date("2026-07-22T13:00:01.000Z")
+    );
+
+    expect(emptied.status).toBe("accepted_for_review");
+    expect(emptied.warnings).toContain("LocationChangeWithoutDeparture");
+    expect(ledger.projectionForContainer(tenantId, containerId)?.locationId).toBe(secondLocationId);
+  });
+
+  it("flags processing at a new site before a receiving scan closes the departure", () => {
+    const ledger = new InMemoryEventLedger();
+    ledger.submit(
+      loadAssigned(undefined, { eventAt: "2026-07-22T12:00:00.000Z" }),
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:00:01.000Z")
+    );
+    ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777790",
+        deviceInstallationId: installationId,
+        deviceSequence: 1,
+        containerId,
+        locationId,
+        eventType: "batch_out",
+        eventAt: "2026-07-22T12:30:00.000Z",
+        payload: { sourceLocationId: locationId }
+      },
+      { tenantId, deviceId },
+      new Date("2026-07-22T12:30:01.000Z")
+    );
+
+    const processed = ledger.submit(
+      {
+        eventId: "77777777-7777-4777-8777-777777777791",
+        deviceInstallationId: secondInstallationId,
+        deviceSequence: 0,
+        containerId,
+        locationId: secondLocationId,
+        eventType: "emptied",
+        eventAt: "2026-07-22T13:00:00.000Z",
+        payload: { processedPercentage: 100 }
+      },
+      { tenantId, deviceId: secondDeviceId },
+      new Date("2026-07-22T13:00:01.000Z")
+    );
+
+    expect(processed.status).toBe("accepted_for_review");
+    expect(processed.warnings).toContain("ProcessingWithoutReceipt");
+    expect(ledger.projectionForContainer(tenantId, containerId)?.conflicts.map((item) => item.reason)).toContain("ProcessingWithoutReceipt");
+  });
+
   it("does not confuse legitimate offline time with clock skew", () => {
     const ledger = new InMemoryEventLedger();
     const result = ledger.submit(

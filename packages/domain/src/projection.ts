@@ -7,7 +7,10 @@ export type ConflictReason =
   | "ContainerAlreadyLoaded"
   | "ContainerAlreadyEmpty"
   | "CompetingLocationObservations"
-  | "AccuracyEvidenceRequiresReview";
+  | "AccuracyEvidenceRequiresReview"
+  | "LocationChangeWithoutDeparture"
+  | "RepeatedDepartureBeforeArrival"
+  | "ProcessingWithoutReceipt";
 
 export interface ProjectionConflict {
   readonly conflictId: string;
@@ -55,6 +58,14 @@ function isLocationObservation(event: StoredEvent): boolean {
   return event.eventType === "batch_in" || event.eventType === "batch_out";
 }
 
+function isPhysicalEvidence(event: StoredEvent): boolean {
+  return (
+    event.eventType === "load_assigned" ||
+    event.eventType === "batch_in" ||
+    event.eventType === "emptied"
+  );
+}
+
 export function projectContainer(
   sourceEvents: readonly StoredEvent[],
   options: ProjectionOptions = defaultOptions
@@ -73,6 +84,11 @@ export function projectContainer(
   let activeLoadCodeId: string | null = null;
   let locationId: string | null = null;
   let lastAppliedLocationEvent: StoredEvent | undefined;
+  // The last physical checkpoint is intentionally separate from the last
+  // location observation. A load or empty scan establishes a physical site;
+  // a later receipt at another site without a batch-out is an unannounced
+  // handoff, not a reason to discard the newer arrival evidence.
+  let lastPhysicalEvidence: StoredEvent | undefined;
   const appliedEventIds: string[] = [];
   const conflicts: ProjectionConflict[] = [];
   const warningSet = new Set<AccuracyFlag>();
@@ -88,10 +104,36 @@ export function projectContainer(
     }
   };
 
+  const noteUnannouncedLocationChange = (event: StoredEvent): void => {
+    if (!isPhysicalEvidence(event) || !lastPhysicalEvidence) return;
+    if (lastPhysicalEvidence.locationId === event.locationId) return;
+    if (lastAppliedLocationEvent?.eventType === "batch_out") return;
+    addConflict(
+      "LocationChangeWithoutDeparture",
+      [lastPhysicalEvidence.eventId, event.eventId],
+      event.receivedAt
+    );
+  };
+
+  const noteProcessingWithoutReceipt = (event: StoredEvent): void => {
+    if (event.eventType !== "emptied") return;
+    if (loadState !== "loaded") return;
+    if (lastAppliedLocationEvent?.eventType !== "batch_out") return;
+    if (!lastPhysicalEvidence || lastPhysicalEvidence.locationId === event.locationId) return;
+    addConflict(
+      "ProcessingWithoutReceipt",
+      [lastAppliedLocationEvent.eventId, event.eventId],
+      event.receivedAt
+    );
+  };
+
   for (const event of events) {
     for (const flag of event.accuracyFlags) {
       warningSet.add(flag);
-      if (flag === "ClockSkewReview" || flag === "DeviceSequenceCollision") {
+      if (
+        flag === "ClockSkewReview" ||
+        flag === "DeviceSequenceCollision"
+      ) {
         addConflict("AccuracyEvidenceRequiresReview", [event.eventId], event.receivedAt);
       }
     }
@@ -104,12 +146,24 @@ export function projectContainer(
           priorId ? [priorId, event.eventId] : [event.eventId],
           event.receivedAt
         );
+        // A second load scan at another site is still useful physical
+        // evidence. Apply that newer location/load while preserving the
+        // double-load conflict so the operator can reconcile the missing
+        // handoff instead of leaving the container stranded at its old site.
+        noteUnannouncedLocationChange(event);
+        if (lastPhysicalEvidence?.locationId !== event.locationId) {
+          activeLoadCodeId = event.loadCodeId ?? activeLoadCodeId;
+          locationId = event.locationId;
+          appliedEventIds.push(event.eventId);
+          lastPhysicalEvidence = event;
+        }
         continue;
       }
       loadState = "loaded";
       activeLoadCodeId = event.loadCodeId ?? null;
       locationId = event.locationId;
       appliedEventIds.push(event.eventId);
+      lastPhysicalEvidence = event;
       continue;
     }
 
@@ -121,16 +175,40 @@ export function projectContainer(
           priorId ? [priorId, event.eventId] : [event.eventId],
           event.receivedAt
         );
+        // Even an already-empty container can provide the first trustworthy
+        // evidence that it is now at a different site. Keep that location,
+        // but flag the missing departure when no handoff was recorded.
+        noteUnannouncedLocationChange(event);
+        if (lastPhysicalEvidence?.locationId !== event.locationId) {
+          locationId = event.locationId;
+          appliedEventIds.push(event.eventId);
+          lastPhysicalEvidence = event;
+        }
         continue;
       }
+      noteProcessingWithoutReceipt(event);
+      noteUnannouncedLocationChange(event);
       loadState = "empty";
       activeLoadCodeId = null;
       locationId = event.locationId;
       appliedEventIds.push(event.eventId);
+      lastPhysicalEvidence = event;
       continue;
     }
 
     if (isLocationObservation(event)) {
+      if (
+        event.eventType === "batch_out" &&
+        lastAppliedLocationEvent?.eventType === "batch_out"
+      ) {
+        addConflict(
+          "RepeatedDepartureBeforeArrival",
+          [lastAppliedLocationEvent.eventId, event.eventId],
+          event.receivedAt
+        );
+      }
+      if (event.eventType === "batch_in") noteUnannouncedLocationChange(event);
+
       if (
         lastAppliedLocationEvent &&
         lastAppliedLocationEvent.eventType === event.eventType &&
@@ -154,6 +232,9 @@ export function projectContainer(
       locationId = event.locationId;
       lastAppliedLocationEvent = event;
       appliedEventIds.push(event.eventId);
+      if (event.eventType === "batch_in") {
+        lastPhysicalEvidence = event;
+      }
     }
   }
 

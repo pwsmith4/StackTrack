@@ -975,6 +975,53 @@ describe("StackTrack API foundation", () => {
     expect(removeUser).toHaveBeenCalledWith(ownerPrincipal, temporaryPasswordPrincipal.userId, "new-admin");
   });
 
+  it("turns a missing admin-table grant into a repairable service response", async () => {
+    const permissionError = Object.assign(new Error("permission denied for table admin_sessions"), { code: "42501" });
+    const removeUser = vi.fn().mockRejectedValue(permissionError);
+    app = await createApp({
+      localMode: true,
+      adminAccess: {
+        authenticate: vi.fn().mockResolvedValue(ownerPrincipal),
+        removeUser
+      } as unknown as PostgresAdminAccess
+    });
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/local/admin/users/${temporaryPasswordPrincipal.userId}`,
+      headers: { authorization: `Bearer ${"r".repeat(32)}` },
+      payload: { confirmation: temporaryPasswordPrincipal.username }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      error: "AdminDatabasePermissionsMissing",
+      message: expect.stringContaining("administrator-delete permission repair")
+    });
+  });
+
+  it("recognizes wrapped admin-table permission messages without an SQLSTATE", async () => {
+    const permissionError = new Error("permission denied for table admin_sessions");
+    const removeUser = vi.fn().mockRejectedValue(permissionError);
+    app = await createApp({
+      localMode: true,
+      adminAccess: {
+        authenticate: vi.fn().mockResolvedValue(ownerPrincipal),
+        removeUser
+      } as unknown as PostgresAdminAccess
+    });
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/local/admin/users/${temporaryPasswordPrincipal.userId}`,
+      headers: { authorization: `Bearer ${"r".repeat(32)}` },
+      payload: { confirmation: temporaryPasswordPrincipal.username }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ error: "AdminDatabasePermissionsMissing" });
+  });
+
   it("starts a lower-role preview without changing the real administrator session", async () => {
     const sessionToken = "p".repeat(32);
     const previewLocationId = "66666666-6666-4666-8666-666666666666";

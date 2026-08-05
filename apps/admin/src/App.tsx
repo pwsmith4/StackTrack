@@ -156,7 +156,10 @@ const accuracyFlagLabels: Record<string, string> = {
   DeviceSequenceGap: "Scanner sequence gap",
   DeviceSequenceOutOfOrder: "Scan arrived out of order",
   DeviceSequenceCollision: "Duplicate scanner sequence",
-  StaleReferenceData: "Location or scanner reference is stale"
+  StaleReferenceData: "Location or scanner reference is stale",
+  LocationChangeWithoutDeparture: "Arrival recorded without a departure scan",
+  RepeatedDepartureBeforeArrival: "Departure recorded before the last arrival",
+  ProcessingWithoutReceipt: "Container processed before a receiving scan"
 };
 
 const accuracyFlagDescriptions: Record<string, string> = {
@@ -167,8 +170,25 @@ const accuracyFlagDescriptions: Record<string, string> = {
   DeviceSequenceGap: "A scanner sequence number is missing from the received history.",
   DeviceSequenceOutOfOrder: "This scan arrived in a different order than the scanner recorded it.",
   DeviceSequenceCollision: "Another scan from this scanner used the same sequence number.",
-  StaleReferenceData: "The location or scanner reference was out of date when this scan arrived."
+  StaleReferenceData: "The location or scanner reference was out of date when this scan arrived.",
+  LocationChangeWithoutDeparture: "The container was scanned at a different site, but no departure scan was recorded first. The arrival is preserved and needs an operator to confirm the missing handoff.",
+  RepeatedDepartureBeforeArrival: "A second departure was recorded before a receiving scan closed the previous movement. Review whether this was a duplicate scan or an unrecorded handoff.",
+  ProcessingWithoutReceipt: "The container was processed at a different site after leaving its prior location, but no receiving scan closed the movement first."
 };
+
+const conflictReasonLabels: Record<string, string> = {
+  ContainerAlreadyLoaded: "Container was already loaded",
+  ContainerAlreadyEmpty: "Container was already empty",
+  CompetingLocationObservations: "Scanners reported different locations at the same time",
+  AccuracyEvidenceRequiresReview: "Scan timing or sequence needs review",
+  LocationChangeWithoutDeparture: "Arrival recorded without a departure scan",
+  RepeatedDepartureBeforeArrival: "Departure recorded before the last arrival",
+  ProcessingWithoutReceipt: "Container processed before a receiving scan"
+};
+
+function conflictReasonLabel(value: string): string {
+  return conflictReasonLabels[value] ?? humanizeCode(value);
+}
 
 function projectionHealthLabel(value: Projection["health"] | null | undefined): string {
   return value ? projectionHealthLabels[value] ?? humanizeCode(value) : "No history";
@@ -179,6 +199,8 @@ function loadStateLabel(value: Projection["loadState"] | null | undefined): stri
 }
 
 function humanizeCode(value: string): string {
+  const friendlyLabel = conflictReasonLabels[value];
+  if (friendlyLabel) return friendlyLabel;
   return value
     .replaceAll("_", " ")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -264,7 +286,7 @@ const pageTitles: Record<Page, { eyebrow: string; title: string; description: st
   settings: {
     eyebrow: "Configuration",
     title: "Settings",
-    description: "Access policies, scanner behavior, and integration boundaries."
+    description: "Manage user access, password security, and rare location changes."
   }
 };
 
@@ -294,9 +316,12 @@ const pagesForRole: Record<AdminPrincipal["role"], readonly Page[]> = {
   // A location manager can run the local operation, but dispatch targets,
   // warehouse forecasting, and organization-wide reports remain corporate
   // responsibilities. The API enforces the same boundary server-side.
-  location_manager: ["dashboard", "inventory", "containers", "locations", "corrections", "activity", "devices"],
-  read_only_reviewer: ["dashboard", "inventory", "containers", "locations", "exceptions", "activity"],
-  support: ["dashboard", "containers", "locations", "activity", "devices"]
+  location_manager: ["dashboard", "inventory", "containers", "locations", "corrections", "activity", "devices", "settings"],
+  // Reviewers need the evidence surfaces that make the role useful for audit,
+  // finance, compliance, leadership, and IT support, while every write-capable
+  // workflow remains unavailable.
+  read_only_reviewer: ["dashboard", "inventory", "containers", "locations", "exceptions", "corrections", "activity", "audit", "reports", "settings"],
+  support: ["dashboard", "containers", "locations", "activity", "devices", "settings"]
 };
 
 function canAccessPage(role: AdminPrincipal["role"], page: Page): boolean {
@@ -526,18 +551,32 @@ function eventNarrative(event: StoredEvent, data: OperationsData) {
   const subject = containerTypeLabel(container?.type);
   const locationFor = (locationId: string | null | undefined) => data.fixtures.locations.find((item) => item.locationId === locationId)?.name;
   const location = locationFor(event.locationId) ?? "an unconfirmed location";
-  if (event.eventType === "load_assigned") return `Load code generated for ${subject} at ${location}.`;
+  if (event.eventType === "load_assigned") {
+    return event.accuracyFlags.includes("LocationChangeWithoutDeparture")
+      ? `${subject} load code generated at ${location}, but no departure scan was recorded from the prior location.`
+      : `Load code generated for ${subject} at ${location}.`;
+  }
   if (event.eventType === "batch_in") {
     const source = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
+    if (event.accuracyFlags.includes("LocationChangeWithoutDeparture")) {
+      return `${subject} arrived at ${location}${source ? ` after leaving ${source}` : ""}, but no departure scan was recorded.`;
+    }
     return `${subject} received at ${location}${source ? ` from ${source}` : ""}.`;
   }
   if (event.eventType === "emptied") {
     const processed = typeof event.payload.processedPercentage === "number" ? ` (${event.payload.processedPercentage}% processed)` : "";
-    return `${subject} marked empty at ${location}${processed}.`;
+    if (event.accuracyFlags.includes("ProcessingWithoutReceipt")) {
+      return `${subject} was processed at ${location}${processed}, but no receiving scan was recorded after its previous departure.`;
+    }
+    return event.accuracyFlags.includes("LocationChangeWithoutDeparture")
+      ? `${subject} marked empty at ${location}${processed}; no departure scan was recorded from the prior location.`
+      : `${subject} marked empty at ${location}${processed}.`;
   }
   if (event.eventType === "batch_out") {
     const origin = locationFor(payloadLocationId(event, "sourceLocationId") ?? priorPhysicalLocationId(event, data));
-    return inTransitEventSummary(subject, origin);
+    return event.accuracyFlags.includes("RepeatedDepartureBeforeArrival")
+      ? `${subject} was sent in transit from ${origin ?? "an unconfirmed location"} again before the prior movement was received.`
+      : inTransitEventSummary(subject, origin);
   }
   return `${subject} observed at ${location}.`;
 }
@@ -813,8 +852,8 @@ function RolePreviewLauncher({ sourceRole, sourceLocationIds, locations, busy, e
       <button type="button" className="role-preview-backdrop" aria-label="Close role preview" onClick={() => setOpen(false)} />
       <div className="role-preview-popover" role="dialog" aria-label="Preview a lower access role" onClick={(event) => event.stopPropagation()}>
       <div className="role-preview-popover__header"><div><span className="eyebrow">Safe read-only preview</span><strong>See the console as another role</strong></div><button className="icon-button icon-button--small" type="button" onClick={() => setOpen(false)} aria-label="Close role preview"><X size={15} /></button></div>
-      <p>Nothing is changed and your Organization Owner/Operations Administrator session stays intact. The API disables all write actions while previewing.</p>
-      <label className="field-label" htmlFor="role-preview-role">Preview role</label>
+       <p>Nothing is changed. Your {roleLabel(sourceRole)} session stays active, and this preview is read-only.</p>
+       <label className="field-label" htmlFor="role-preview-role">View this console as</label>
       <select id="role-preview-role" value={targetRole} onChange={(event) => { setTargetRole(event.target.value as AdminPrincipal["role"]); setLocationIds([]); }}>
         {availableRoles.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
       </select>
@@ -1002,10 +1041,11 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const setPage = (next: Page) => {
+  const setPage = (next: Page, focus?: string) => {
     const target = session && !canAccessPage(session.principal.role, next) ? "dashboard" : next;
-    window.location.hash = `/${target}`;
-    setRoute({ page: target });
+    const query = focus ? `?focus=${encodeURIComponent(focus)}` : "";
+    window.location.hash = `/${target}${query}`;
+    setRoute({ page: target, ...(focus ? { focus } : {}) });
     setDetail(null);
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1339,6 +1379,19 @@ export function App() {
 function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase(); }
 function roleLabel(role: AdminPrincipal["role"]) { return { organization_owner: "Organization Owner", operations_administrator: "Operations Administrator", location_manager: "Location Manager", read_only_reviewer: "Read-only Reviewer", support: "Time-limited Support" }[role]; }
 
+type PasswordStrength = "empty" | "weak" | "fair" | "strong";
+
+function getPasswordStrength(password: string): { level: PasswordStrength; label: string; detail: string; ready: boolean } {
+  if (!password) return { level: "empty", label: "Not checked", detail: "Use at least 12 characters.", ready: false };
+  if (password.length < 12) return { level: "weak", label: "Needs improvement", detail: `${12 - password.length} more character${12 - password.length === 1 ? "" : "s"} needed.`, ready: false };
+  const characterClasses = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z\d\s]/].filter((pattern) => pattern.test(password)).length;
+  const repeated = /(.)\1{4,}/.test(password);
+  const common = ["password", "goodwill", "stacktrack", "qwerty", "123456789012"].some((word) => password.toLowerCase().includes(word));
+  if (repeated || common) return { level: "weak", label: "Needs improvement", detail: "Avoid repeated characters or common words.", ready: false };
+  if (password.length >= 16 || characterClasses >= 3) return { level: "strong", label: "Strong password", detail: "This password is ready to use.", ready: true };
+  return { level: "fair", label: "Add a little more variety", detail: "Use a longer phrase or add a number, capital letter, or symbol.", ready: true };
+}
+
 function SignInDialog({ fullPage = false, sessionNotice, onClose: _onClose, onSuccess }: { fullPage?: boolean; sessionNotice?: string | null; onClose: () => void; onSuccess: (session: AdminSession) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -1397,7 +1450,7 @@ function PageContent({
   data: OperationsData;
   query: string;
   setQuery: (query: string) => void;
-  setPage: (page: Page) => void;
+  setPage: (page: Page, focus?: string) => void;
   openContainers: (movement?: ContainerMovement) => void;
   openLocation: (locationId: string, filter?: LocationInventoryFilter) => void;
   openDetail: OpenDetail;
@@ -2545,7 +2598,7 @@ function ServicePlanPage({ data, openLocation }: { data: OperationsData; openLoc
   </div>;
 }
 
-function Dashboard({ data, setPage, openContainers, openLocation, session }: { data: OperationsData; setPage: (page: Page) => void; openContainers: (movement?: ContainerMovement) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; session: AdminSession }) {
+function Dashboard({ data, setPage, openContainers, openLocation, session }: { data: OperationsData; setPage: (page: Page, focus?: string) => void; openContainers: (movement?: ContainerMovement) => void; openLocation: (locationId: string, filter?: LocationInventoryFilter) => void; session: AdminSession }) {
   const projections = Object.values(data.projections).filter(Boolean) as Projection[];
   const operatingLocations = data.fixtures.locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
   const scoped = isScopedPrincipal(session.principal);
@@ -2626,7 +2679,7 @@ function Dashboard({ data, setPage, openContainers, openLocation, session }: { d
         <div className="dashboard-start__actions">
           {session.principal.role === "organization_owner" && <>
             <DashboardStartAction icon={<AlertTriangle size={16} />} title="Review attention items" detail="History conflicts and approvals" count={attentionCount ? `${attentionCount} open` : "Clear"} tone="blue" onClick={() => setPage("exceptions")} />
-            <DashboardStartAction icon={<Settings size={16} />} title="Manage access" detail="Users, locations, and policies" tone="green" onClick={() => setPage("settings")} />
+            <DashboardStartAction icon={<Settings size={16} />} title="Manage User access" detail="Users, roles, and location scopes" tone="green" onClick={() => setPage("settings", "admin-directory")} />
             <DashboardStartAction icon={<ScrollText size={16} />} title="Audit decisions" detail="Search administrative history" tone="navy" onClick={() => setPage("audit")} />
           </>}
           {session.principal.role === "operations_administrator" && <>
@@ -2695,7 +2748,7 @@ function Dashboard({ data, setPage, openContainers, openLocation, session }: { d
               return (
                 <button className="review-item" key={item.containerId} onClick={() => setPage("exceptions")}>
                   <span className="review-item__icon"><AlertTriangle size={19} /></span>
-                  <span><strong>{c?.label}</strong><small>{item.conflicts[0] ? humanizeCode(item.conflicts[0].reason) : "Review evidence"}</small></span>
+                  <span><strong>{c?.label}</strong><small>{item.conflicts[0] ? conflictReasonLabel(item.conflicts[0].reason) : "Review evidence"}</small></span>
                   <Pill tone="warn">Review</Pill>
                   <ChevronRight size={17} />
                 </button>
@@ -3570,7 +3623,7 @@ function LocationNetworkOverview({ metrics, movingCount, movingReviewCount, rout
     </span>
   </button>;
   return <section className="location-network panel">
-    <div className="location-network__header"><div><span className="eyebrow">Location view option 1 · recommended</span><PanelTitle title="Operational network map" subtitle="Every location is a peer node. The system does not assume a store-to-warehouse path, so multi-hop and rerouted journeys remain honest." /></div><span className="location-network__hint">Best for daily triage: select a node to focus its containers, scanners, and open departures below.</span></div>
+    <div className="location-network__header"><div><span className="eyebrow">Location network</span><PanelTitle title="Operational network" subtitle="Browse every store, Donation Xpress site, and warehouse, then open a location for its current work." /></div><span className="location-network__hint">Select a location to see its containers, scanners, and recent activity.</span></div>
     <div className="location-network__summary"><span><b>{metrics.length}</b><small>operating locations</small></span><span><b>{currentCount}</b><small>containers at sites</small></span><span><b>{movingCount}</b><small>open departures</small></span><span><b>{activeScanners}</b><small>enabled scanners</small></span><span className={attentionCount ? "location-network__summary--warn" : ""}><b>{attentionCount}</b><small>needs review</small></span></div>
     <div className="location-network__nodes">{[...metrics].sort(sortByWork).map(renderLocationNode)}</div>
       <div className="location-network__active"><div className="location-network__active-heading"><div><span className="eyebrow">Live departures</span><h3>{movingCount ? `${movingCount} container${movingCount === 1 ? "" : "s"} in transit` : "No containers are currently in transit"}</h3></div><Pill tone={movingReviewCount ? "warn" : movingCount ? "blue" : "good"}>{movingReviewCount ? `${movingReviewCount} review` : movingCount ? "Moving" : "Clear"}</Pill></div>{activeSegments.length ? <div className="location-network__active-list">{activeSegments.slice(0, 6).map(({ record, segment }) => <button key={segment.segmentId} onClick={() => onOpen(record)}><span className="location-network__active-icon"><Truck size={15} /></span><span><strong>{record.container.label}</strong><small>{inTransitDepartureSummary(segment.origin?.name)}</small></span><span className="location-network__active-age">{relativeTime(segment.departedAt)}</span><ChevronRight size={15} /></button>)}</div> : <p className="location-network__active-empty">A batch-out scan appears here with its confirmed departure location. The next arrival scan records where the container was received.</p>}{activeSegments.length > 6 && <small className="location-network__active-more">+ {activeSegments.length - 6} additional in-transit containers are included in the location directory below.</small>}</div>
@@ -4090,7 +4143,7 @@ function LocationAdministrationPanel({
         <div className="location-dependency-review__headline"><div><span className="eyebrow">Before you retire {selectedRetireLocation.name}</span><strong>Review what will be affected.</strong></div><button className="icon-button" type="button" aria-label="Clear dependency review" onClick={resetRetirement}><X size={16} /></button></div>
          <div className="location-dependency-grid"><div><b>{dependencies.devices.length}</b><span>assigned scanners</span></div><div><b>{dependencies.managers.length}</b><span>scoped administrators</span></div><div><b>{dependencies.currentContainerCount}</b><span>containers last observed here</span></div><div><b>{dependencies.loadCodeCount}</b><span>load codes created here</span></div><div><b>{dependencies.observationCount}</b><span>immutable observations</span></div></div>
         {hasDevices && <div className="location-retire-warning"><AlertTriangle size={18} /><div><strong>Scanners are still assigned to this location.</strong><p>Move them individually from the Devices page when possible. If one cannot be updated, choose a destination below so it remains usable without claiming it is at a closed site.</p><button className="secondary" type="button" onClick={() => setPage("devices")}><Smartphone size={14} /> Open scanner administration</button></div></div>}
-        {hasManagers && <div className="location-retire-warning location-retire-warning--manager"><AlertTriangle size={18} /><div><strong>Location Manager access is still assigned.</strong><p>Update these administrator scopes in Settings before retiring the site. StackTrack will not silently remove a manager’s access or leave a stale assignment behind.</p><ul>{dependencies.managers.map((manager) => <li key={manager.userId}>{manager.displayName} <span>@{manager.username}</span></li>)}</ul><button className="secondary" type="button" onClick={() => setPage("settings")}><UserRound size={14} /> Open administrator access</button></div></div>}
+        {hasManagers && <div className="location-retire-warning location-retire-warning--manager"><AlertTriangle size={18} /><div><strong>Location Manager access is still assigned.</strong><p>Update these user scopes in Settings before retiring the site. StackTrack will not silently remove a manager’s access or leave a stale assignment behind.</p><ul>{dependencies.managers.map((manager) => <li key={manager.userId}>{manager.displayName} <span>@{manager.username}</span></li>)}</ul><button className="secondary" type="button" onClick={() => setPage("settings")}><UserRound size={14} /> Open User access</button></div></div>}
         {!hasDevices && <div className="location-retire-safe"><CheckCircle2 size={17} /><span>No scanners are assigned. Historical container observations and load codes will remain linked to this location name.</span></div>}
         <label className="location-retire-destination"><span>Remaining scanner destination {hasDevices ? "(required)" : "(optional)"}</span><select value={retireTarget} onChange={(event) => setRetireTarget(event.target.value)} disabled={busy}><option value="">Move scanners first (recommended)</option><option value="unknown">Unknown location</option>{activeLocations.filter((location) => location.locationId !== selectedRetireLocation.locationId).map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label>
         <div className="location-retire-history-note"><ScrollText size={16} /><span><strong>History is preserved.</strong> {dependencies.currentContainerCount ? `${dependencies.currentContainerCount} container${dependencies.currentContainerCount === 1 ? " remains" : "s remain"} recorded against this name;` : "No containers are currently observed here;"} the original scan events and load-code origins will not be edited.</span></div>
@@ -4862,6 +4915,67 @@ type ReportsFilterDraft = {
 
 const emptyReportsFilters: ReportsFilterDraft = { search: "", locationIds: [], deviceIds: [], actors: [], eventTypes: [], healthValues: [], from: "", to: "" };
 
+type RelationshipEntityId = "locations" | "scanners" | "observations" | "containers" | "projections" | "load_codes" | "governance";
+
+function DataRelationshipMap({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
+  const [locationId, setLocationId] = useState("all");
+  const [selectedEntity, setSelectedEntity] = useState<RelationshipEntityId | "all">("all");
+  const locationName = (id: string | null | undefined) => data.fixtures.locations.find((location) => location.locationId === id)?.name ?? "Unknown location";
+  const locationOptions = data.fixtures.locations.filter((location) => location.type !== "in_transit").sort((left, right) => left.name.localeCompare(right.name));
+  const scopedEvents = data.events.filter((event) => {
+    if (locationId === "all") return true;
+    return event.locationId === locationId || payloadLocationId(event, "sourceLocationId") === locationId;
+  });
+  const scopedContainerIds = new Set(scopedEvents.map((event) => event.containerId));
+  const scopedContainers = locationId === "all" ? data.fixtures.containers : data.fixtures.containers.filter((container) => scopedContainerIds.has(container.containerId) || data.projections[container.containerId]?.locationId === locationId);
+  const scopedDeviceIds = new Set(scopedEvents.map((event) => event.deviceId));
+  const scopedDevices = locationId === "all" ? data.fixtures.devices : data.fixtures.devices.filter((device) => device.assignedLocationId === locationId || scopedDeviceIds.has(device.deviceId));
+  const scopedProjections = Object.values(data.projections).filter((projection): projection is Projection => {
+    if (!projection) return false;
+    return locationId === "all" || projection.locationId === locationId || scopedContainerIds.has(projection.containerId);
+  });
+  const scopedLoadCodes = new Set(scopedEvents.filter((event) => event.eventType === "load_assigned").map((event) => String(event.payload.displayLoadCode ?? event.loadCodeId ?? "")).filter(Boolean));
+  const scopedGovernance = locationId === "all" ? data.auditEntries.length + data.correctionRequests.length : data.auditEntries.filter((entry) => entry.locationId === locationId || (typeof entry.details.locationId === "string" && entry.details.locationId === locationId)).length + data.correctionRequests.filter((item) => item.proposedCorrection.locationId === locationId).length;
+  const actorCount = new Set(data.auditEntries.map((entry) => entry.actorDisplayName)).size;
+  type RelationshipLayer = "evidence" | "current" | "operations" | "governance";
+  const entities: Array<{ id: RelationshipEntityId; label: string; count: number; description: string; connects: RelationshipEntityId[]; icon: ReactNode; tone: string; layer: RelationshipLayer }> = [
+    { id: "locations", label: "Operating locations", count: locationId === "all" ? locationOptions.length : 1, description: "Stores, Donation Xpress sites, warehouses, and the controlled unknown-location fallback.", connects: ["scanners", "observations", "containers"], icon: <MapPin size={17} />, tone: "location", layer: "evidence" },
+    { id: "scanners", label: "Shared scanners", count: scopedDevices.length, description: "A scanner is assigned to a location and reports observations with its device identity and app version.", connects: ["locations", "observations", "governance"], icon: <Smartphone size={17} />, tone: "scanner", layer: "evidence" },
+    { id: "observations", label: "Immutable observations", count: scopedEvents.length, description: "What a scanner recorded: container, time, location, action, and any data-quality flags.", connects: ["scanners", "locations", "containers", "load_codes"], icon: <Activity size={17} />, tone: "observation", layer: "evidence" },
+    { id: "containers", label: "Tracked containers", count: scopedContainers.length, description: "The reusable bin, cart, or gaylord identified by its label; history is never overwritten.", connects: ["observations", "projections", "load_codes"], icon: <ContainerIcon size={17} />, tone: "container", layer: "current" },
+    { id: "projections", label: "Current projections", count: scopedProjections.length, description: "The latest calculated state used by the console: current location, loaded/empty state, movement, and data health.", connects: ["containers", "observations", "governance"], icon: <Target size={17} />, tone: "projection", layer: "current" },
+    { id: "load_codes", label: "Load-code handoffs", count: scopedLoadCodes.size, description: "A validated handoff reference generated when a container is marked full; it ties the container to its origin and classification.", connects: ["observations", "containers"], icon: <PackageCheck size={17} />, tone: "load", layer: "operations" },
+    { id: "governance", label: "Governance records", count: scopedGovernance, description: "Sign-ins, scanner controls, corrections, approvals, and decisions with an actor and reason where required.", connects: ["scanners", "projections"], icon: <ScrollText size={17} />, tone: "governance", layer: "governance" }
+  ];
+  const selected = selectedEntity === "all" ? null : entities.find((entity) => entity.id === selectedEntity) ?? null;
+  const isRelated = (id: RelationshipEntityId) => !selected || selected.id === id || selected.connects.includes(id) || entities.find((entity) => entity.id === id)?.connects.includes(selected.id) === true;
+  const selectedScope = locationId === "all" ? "All operating locations" : locationName(locationId);
+  const inspectorDetails: Record<RelationshipEntityId, { title: string; summary: string; facts: Array<[string, string]> }> = {
+    locations: { title: "Operating locations", summary: "Locations provide the physical context for scanner observations and current inventory. They do not imply a planned destination for a departing container.", facts: [["In this scope", `${locationId === "all" ? locationOptions.length : 1} location${locationId === "all" && locationOptions.length !== 1 ? "s" : ""}`], ["Used by", "Scanners, observations, projections, service planning"], ["Transit rule", "Departure is known; receiving location is recorded only when another scanner sees the arrival"]] },
+    scanners: { title: "Shared scanners", summary: "Each scanner is tied to one operating location. Its identity lets administrators separate a real observation from a late or conflicting upload.", facts: [["In this scope", `${scopedDevices.length} scanners`], ["Every observation includes", "Scanner identity, sequence, observed time, received time"], ["Admin actions", "Assign location, rename, enable, disable, review version and freshness"]] },
+    observations: { title: "Immutable observations", summary: "Observations are the evidence layer. They remain available even when a later projection or governed correction changes what the console presents as current.", facts: [["In this scope", `${scopedEvents.length} observations`], ["Links", "Container, scanner, location, action, load code when applicable"], ["Quality", "Timestamp, sequence, offline, and device-order flags remain reviewable"]] },
+    containers: { title: "Tracked containers", summary: "A container is the reusable physical asset. Its label is the human-facing identifier; its technical identifier stays available in details for support.", facts: [["In this scope", `${scopedContainers.length} containers`], ["History", "All accepted observations in chronological order"], ["Current view", "Latest projection, movement state, location, and health"]] },
+    projections: { title: "Current projections", summary: "A projection is a calculated operational view, not a replacement for the evidence. It chooses the latest valid state while preserving conflicting events for review.", facts: [["In this scope", `${scopedProjections.length} current projections`], ["Used by", "Overview, containers, locations, service plan, and reports"], ["Can change through", "New observations or an approved correction"]] },
+    load_codes: { title: "Load-code handoffs", summary: "Load codes help production teams recognize a validated full-container handoff. They are linked to the originating observation and container, not a guessed destination.", facts: [["In this scope", `${scopedLoadCodes.size} distinct load codes`], ["Created when", "A scanner marks a container full"], ["Destination", "Not required; the next receiving observation establishes where it arrived"]] },
+    governance: { title: "Governance records", summary: "Governance records explain administrative changes and controlled decisions. They are separate from scanner observations so operational evidence stays distinct from access and approval history.", facts: [["In this scope", `${scopedGovernance} records`], ["Actors", `${actorCount} administrator or system actors in the dataset`], ["Examples", "Sign-in, device control, correction request, approval, account change"]] }
+  };
+  const openMapGuide = () => openDetail({ eyebrow: "Data relationship guide", title: "How StackTrack records fit together", icon: <GitBranch size={18} />, summary: "The map shows references between record types. It is not a physical route map and a line never means that one container is moving to the next.", body: <><p className="detail-lead">The evidence path starts when a scanner records an observation. That observation references a container, scanner, and location. StackTrack calculates a current projection from the accepted history, while load codes and governance records provide operational handoff and accountability around it.</p><DetailFacts items={[["Evidence source", "Immutable scanner observations"], ["Current operational view", "Container projections"], ["Physical movement", "Departure is recorded; arrival location is learned from the next receiving scan"], ["Administrative history", "Separate audit and correction records"], ["Analytical boundary", "Reports read the operational data; they do not rewrite it"]]}/></> });
+  return <section className="panel data-relationship-map" aria-labelledby="data-relationship-map-title">
+    <PanelTitle title="How the records fit together" subtitle="A plain-language map of the relationships behind the operational console." action="Open data guide" onClick={openMapGuide} />
+     <div className="data-relationship-map__intro"><span><GitBranch size={18} /></span><p>Use this map to understand which records reference one another. Select a card to highlight its connections. The links describe data relationships, not a physical route or a planned truck destination.</p></div>
+     <div className="data-relationship-map__legend" aria-label="Data layer legend"><span><i className="data-relationship-map__legend-dot data-relationship-map__legend-dot--evidence" />Evidence recorded by scanners</span><span><i className="data-relationship-map__legend-dot data-relationship-map__legend-dot--current" />Calculated current view</span><span><i className="data-relationship-map__legend-dot data-relationship-map__legend-dot--operations" />Operational handoff reference</span><span><i className="data-relationship-map__legend-dot data-relationship-map__legend-dot--governance" />Administrative accountability</span></div>
+    <div className="data-relationship-map__controls"><label>Location scope<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="all">All operating locations</option>{locationOptions.map((location) => <option key={location.locationId} value={location.locationId}>{location.name}</option>)}</select></label><label>Highlight a record type<select value={selectedEntity} onChange={(event) => setSelectedEntity(event.target.value as RelationshipEntityId | "all")}><option value="all">Show all relationships</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.label}</option>)}</select></label><span className="data-relationship-map__scope">Scope: <strong>{selectedScope}</strong></span></div>
+    <div className="data-relationship-map__canvas">
+      <div className="data-relationship-map__lane-label">Physical operations</div>
+       <div className="data-relationship-map__flow">{entities.slice(0, 5).map((entity, index) => <Fragment key={entity.id}><button type="button" className={`data-map-node data-map-node--${entity.tone}${selectedEntity === entity.id ? " data-map-node--selected" : ""}${!isRelated(entity.id) ? " data-map-node--muted" : ""}`} onClick={() => setSelectedEntity(entity.id)} aria-pressed={selectedEntity === entity.id} title={entity.description}><span className="data-map-node__icon">{entity.icon}</span><span><strong>{entity.label}</strong><small>{entity.count.toLocaleString()} in scope</small></span></button>{index < 4 && <span className="data-map-connector" aria-hidden="true"><span>linked</span><Link2 size={14} /></span>}</Fragment>)}</div>
+      <div className="data-relationship-map__lane-label">Operational handoff and accountability</div>
+       <div className="data-relationship-map__flow data-relationship-map__flow--secondary">{entities.slice(5).map((entity, index) => <Fragment key={entity.id}><button type="button" className={`data-map-node data-map-node--${entity.tone}${selectedEntity === entity.id ? " data-map-node--selected" : ""}${!isRelated(entity.id) ? " data-map-node--muted" : ""}`} onClick={() => setSelectedEntity(entity.id)} aria-pressed={selectedEntity === entity.id} title={entity.description}><span className="data-map-node__icon">{entity.icon}</span><span><strong>{entity.label}</strong><small>{entity.count.toLocaleString()} in scope</small></span></button>{index < 1 && <span className="data-map-connector" aria-hidden="true"><span>linked</span><Link2 size={14} /></span>}</Fragment>)}</div>
+     </div>
+     <div className="data-relationship-map__matrix"><div className="data-relationship-map__matrix-heading"><div><span className="eyebrow">Relationship matrix</span><strong>Which records are connected?</strong></div><span>Linked records show a reference; they do not imply event order or a truck destination.</span></div><div className="data-relationship-map__matrix-wrap"><table><thead><tr><th scope="col">Record type</th>{entities.map((entity) => <th scope="col" key={entity.id}><button type="button" onClick={() => setSelectedEntity(entity.id)}>{entity.label}</button></th>)}</tr></thead><tbody>{entities.map((row) => <tr key={row.id} className={selectedEntity === row.id ? "data-relationship-map__matrix-row--selected" : ""}><th scope="row"><button type="button" onClick={() => setSelectedEntity(row.id)}>{row.label}</button></th>{entities.map((column) => { const linked = row.id !== column.id && (row.connects.includes(column.id) || column.connects.includes(row.id)); return <td key={column.id}>{row.id === column.id ? <span className="data-relationship-map__matrix-self">This record</span> : linked ? <button type="button" className="data-relationship-map__matrix-link" onClick={() => setSelectedEntity(column.id)}>{column.label} linked</button> : <span className="data-relationship-map__matrix-none">None</span>}</td>; })}</tr>)}</tbody></table></div></div>
+    {selected ? <div className="data-relationship-map__inspector"><div><span className="eyebrow">Selected record type</span><h3>{inspectorDetails[selected.id].title}</h3><p>{inspectorDetails[selected.id].summary}</p></div><DetailFacts items={inspectorDetails[selected.id].facts} /></div> : <div className="data-relationship-map__empty"><strong>Select any card to inspect its role.</strong><span>Start with Locations, then follow the evidence to scanners, observations, containers, and the current projection.</span></div>}
+  </section>;
+}
+
 function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: OpenDetail }) {
   const [draft, setDraft] = useState<ReportsFilterDraft>(emptyReportsFilters);
   const [applied, setApplied] = useState<ReportsFilterDraft>(emptyReportsFilters);
@@ -5080,6 +5194,7 @@ function ReportsPage({ data, openDetail }: { data: OperationsData; openDetail: O
       {draftDateError && <p className="report-filter-error">{draftDateError}</p>}
     </section>
     <div className="report-signal-grid"><article><span><Activity size={17} /></span><div><small>Observations in scope</small><strong>{filteredEvents.length}</strong><em>{flaggedEvents.length ? `${flaggedEvents.length} with data flags` : "No data-quality flags"}</em></div></article><article><span><Truck size={17} /></span><div><small>Movement in scope</small><strong>{transitCount}</strong><em>{transitCount ? "Receipt still needed" : "No active transit"}</em></div></article><article><span><AlertTriangle size={17} /></span><div><small>Needs review</small><strong>{reviewCount + warningCount}</strong><em>{reviewCount ? `${reviewCount} require a decision` : "No open projection conflicts"}</em></div></article><article><span><Smartphone size={17} /></span><div><small>Scanner freshness</small><strong>{deviceFreshnessPercent}%</strong><em>{staleDevices.length ? `${staleDevices.length} stale over 24 hours` : "All scanners reported recently"}</em></div></article></div>
+    <DataRelationshipMap data={data} openDetail={openDetail} />
     <div className="report-grid">{reports.map((report) => <article className="report-card report-card--expanded" key={report.title}><div className="report-card__top"><span><report.icon /></span><Pill tone={report.tag === "Ready" ? "good" : "muted"}>{report.tag}</Pill></div><h2>{report.title}</h2><p>{report.text}</p><div className="report-card__count">{report.count === null ? "—" : report.count}<small>{report.id === "movement" ? "events" : report.id === "locations" ? "locations" : report.id === "devices" ? "scanners" : report.id === "transit" ? "containers" : report.id === "routes" ? "route segments" : report.id === "latency" ? "scanner groups" : report.id === "governance" ? "actions" : "rows"} in scope</small></div><button onClick={() => openReport(report)}>{report.tag === "Ready" ? "Download filtered CSV" : "View integration plan"} <ArrowRight size={16} /></button></article>)}</div>
     <section className="panel data-health">
       <PanelTitle title="Data health" subtitle="Evidence quality signals, separated from physical-state decisions." action="How to read this" onClick={openHealthDetail} />
@@ -5355,135 +5470,112 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
   </section>;
 }
 
-function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPasswordChanged }: { data: OperationsData; setPage: (page: Page) => void; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void }) {
-  const settings = [
-    { icon: UserRound, title: "Roles & approvals", text: "Operations Administrators can request corrections; Organization Owners approve them with dual control for material changes." },
-    { icon: Smartphone, title: "Device provisioning", text: "Shared Android scanners receive their assigned operating location and availability from the administration service." },
-    { icon: Cloud, title: "Integrations", text: "Production-system, Entra ID, and analytics connections are managed separately from scanner operations." }
-  ];
-  const actions = [
-    { icon: Smartphone, title: "Manage scanner fleet", text: "Rename scanners, move assignments, review versions, and enable or disable access.", page: "devices" as Page },
-    { icon: MapPin, title: "Manage locations", text: "Rare, high-impact configuration: add sites or retire or restore a site after checking assignments and history.", page: "settings" as Page, anchor: "location-admin-panel" },
-    { icon: AlertTriangle, title: "Review exceptions", text: "Work through containers with missing, conflicting, or late observations.", page: "exceptions" as Page },
-    { icon: FilePenLine, title: "Review corrections", text: "Approve, reject, and document requests to change the official state.", page: "corrections" as Page },
-    { icon: Activity, title: "Follow scanner activity", text: "Trace the physical observations that moved containers through the network.", page: "activity" as Page },
-    { icon: ScrollText, title: "Investigate audit trail", text: "Search administrator actions, device controls, approvals, and sign-ins.", page: "audit" as Page },
-    { icon: BarChart3, title: "Open reports & data", text: "Export operational evidence and monitor data quality across the network.", page: "reports" as Page }
-  ];
-  const openAdminDirectory = () => {
-    if (!session) { onRequestSignIn(); return; }
-    if (session.principal.role !== "organization_owner") return;
-    document.querySelector(".admin-directory")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-  return <>
-    <section className="settings-actions panel">
-      <PanelTitle title="Administrator workspace" subtitle="Direct controls for the work administrators perform every day." />
-      <div className="settings-action-grid">
-        <button className="settings-action-card settings-action-card--access" onClick={openAdminDirectory} disabled={Boolean(session && session.principal.role !== "organization_owner")}><span className="settings-action-card__icon"><UserRound size={19} /></span><span><strong>Manage administrators</strong><small>{session?.principal.role === "organization_owner" ? "Add users, change roles, disable access, reset passwords, or remove accounts." : session ? "Only Organization Owners can manage administrator accounts." : "Sign in to manage administrator accounts."}</small></span><span className="settings-action-card__go">{session?.principal.role === "organization_owner" ? "Manage" : session ? "Owner only" : "Sign in"}<ChevronRight size={15} /></span></button>
-         {actions.map((action) => <button className="settings-action-card" key={action.title} onClick={() => { if (action.anchor) { document.querySelector(`.${action.anchor}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; } setPage(action.page); }}><span className="settings-action-card__icon"><action.icon size={19} /></span><span><strong>{action.title}</strong><small>{action.text}</small></span><span className="settings-action-card__go">Open<ChevronRight size={15} /></span></button>)}
-      </div>
-    </section>
-    <section className="location-governance panel">
-      <PanelTitle title="Location access model" subtitle="A practical boundary between local operations and corporate governance." action="Open corrections" onClick={() => setPage("corrections")} />
-      <div className="location-governance__intro"><span><ShieldCheck size={20} /></span><div><strong>Access levels are enforced by the API.</strong><p>Location Managers keep work moving at assigned sites while Organization Owners retain full governance. Every scope change and password reset is recorded without exposing a stored password.</p></div><Pill tone="good">Available now</Pill></div>
-      <div className="location-governance__roles"><article><span className="location-governance__role-icon"><MapPin size={17} /></span><div><h3>Location Manager</h3><p>Scoped to assigned locations. Can manage local scanners and request a container correction with a reason.</p><small>Cannot add admins, change policy, approve corrections, or edit another location.</small></div><Pill tone="good">Location-scoped</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--admin"><UserRound size={17} /></span><div><h3>Operations Administrator</h3><p>Network-wide operational control. Can manage scanners, triage exceptions, and request corrections across locations.</p><small>Approval and account governance remain with an Organization Owner.</small></div><Pill tone="good">Network operations</Pill></article><article><span className="location-governance__role-icon location-governance__role-icon--owner"><ShieldCheck size={17} /></span><div><h3>Organization Owner</h3><p>Full control across Goodwill: administrator access, locations, devices, corrections, approvals, and settings.</p><small>Keep at least two active owners for continuity and dual control.</small></div><Pill tone="blue">Full control</Pill></article></div>
-      <div className="location-governance__workflow"><span className="eyebrow">Accountable change path</span><div><span><b>1</b><strong>Local manager records what happened</strong><small>Location, scanner, container, and reason.</small></span><ArrowRight size={15} /><span><b>2</b><strong>Corporate queue receives the request</strong><small>Original scan evidence remains unchanged.</small></span><ArrowRight size={15} /><span><b>3</b><strong>Owner approves or rejects</strong><small>A separate decision and reason are audited.</small></span></div></div>
-    </section>
-    <LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} />
-    <section className="settings-reference panel">
-      <PanelTitle title="Operating policies" subtitle="Reference only — these policies are enforced by the service and are not interactive settings." />
-      <div className="settings-reference__grid">{settings.map((setting) => <article className="settings-reference__item" key={setting.title}><span className="settings-reference__icon"><setting.icon size={18} /></span><div><h3>{setting.title}</h3><p>{setting.text}</p></div><Pill tone="muted">Reference</Pill></article>)}</div>
-    </section>
-    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} />}{session?.principal.role === "organization_owner" && <AdminDirectory session={session} locations={data.fixtures.locations} />}</>;
+function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPasswordChanged }: { data: OperationsData; setPage: (page: Page, focus?: string) => void; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void }) {
+  const canManageLocations = session?.principal.role === "organization_owner" || session?.principal.role === "operations_administrator";
+  return <div className="settings-page">
+    {session?.principal.role === "organization_owner" ? <AdminDirectory session={session} locations={data.fixtures.locations} /> : <section className="settings-access panel">
+      <PanelTitle title="User access" subtitle="Organization Owners manage who can sign in and what each person can see or change." />
+      <div className="settings-access__message"><strong>Need an access change?</strong><span>Ask an Organization Owner to add, update, disable, or reset an account. This keeps role changes deliberate and gives every account a clear owner.</span>{!session && <button type="button" className="secondary" onClick={onRequestSignIn}>Sign in to continue</button>}</div>
+    </section>}
+    <SettingsRoleGuide />
+    {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} />}
+    {canManageLocations && <LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} />}
+  </div>;
+}
+
+function SettingsRoleGuide() {
+  return <section className="settings-roles panel" aria-labelledby="settings-roles-title">
+    <PanelTitle title="Access roles" subtitle="Choose the least access needed for each user. These four roles separate governance, daily operations, local work, and review." />
+    <div className="settings-role-grid">
+      <article><Pill tone="blue">Full control</Pill><h3>Organization Owner</h3><p>Small corporate governance group with Goodwill-wide control of users, locations, devices, corrections, approvals, reports, and settings.</p><small>Keep at least two active owners so access is never dependent on one person.</small></article>
+      <article><Pill tone="good">Network operations</Pill><h3>Operations Administrator</h3><p>Corporate operations or IT staff who run day-to-day work across locations: scanners, exceptions, activity, service planning, and correction requests.</p><small>Cannot add users or approve their own material corrections.</small></article>
+      <article><Pill tone="good">Location-scoped</Pill><h3>Location Manager</h3><p>Store, Donation Xpress, or warehouse leaders who need only their assigned site(s) and local operational work.</p><small>Local corrections stay reasoned and reviewable by corporate; no account or policy administration.</small></article>
+      <article><Pill tone="muted">Optional / view only</Pill><h3>Read-only Reviewer</h3><p>For finance, audit, compliance, leadership, or IT support who need evidence and exports but must not change operations, users, devices, or approvals.</p><small>Use it when separation of duties matters. If Goodwill has no non-writing reviewer group, do not create this role during the pilot.</small></article>
+    </div>
+    <div className="settings-access-matrix" aria-label="Role access summary">
+      <div className="settings-access-matrix__heading"><div><span className="eyebrow">At a glance</span><strong>What each role can do</strong></div><span>Location assignments narrow local access; network roles see the full operating view.</span></div>
+      <div className="settings-access-matrix__table-wrap"><table className="settings-access-matrix__table"><thead><tr><th>Capability</th><th>Organization Owner</th><th>Operations Administrator</th><th>Location Manager</th><th>Read-only Reviewer</th></tr></thead><tbody>
+        <tr><th>View operational data</th><td>All locations</td><td>All locations</td><td>Assigned locations</td><td>Assigned locations, or approved network-wide read-only</td></tr>
+        <tr><th>Manage scanners</th><td>All controls</td><td>All operational controls</td><td>View local status</td><td>View only</td></tr>
+        <tr><th>Request or approve corrections</th><td>Approve and govern</td><td>Request; cannot self-approve</td><td>Request for assigned sites</td><td>View decisions</td></tr>
+        <tr><th>Manage users and locations</th><td>Yes</td><td>No</td><td>No</td><td>No</td></tr>
+       <tr><th>Export reports</th><td>Yes</td><td>Yes</td><td>Assigned locations</td><td>Within assigned scope</td></tr>
+       </tbody></table></div>
+     </div>
+      <p className="settings-roles__note"><strong>Why keep four roles?</strong> Owners govern access, Operations Administrators run the network, Location Managers run assigned sites, and Read-only Reviewers provide independent evidence access. Time-limited Support access, if enabled by the service team, is a temporary troubleshooting exception and is not available in Add a user.</p>
+   </section>;
 }
 
 function AccountSecurity({ session, required = false, onPasswordChanged }: { session: AdminSession; required?: boolean; onPasswordChanged: () => void }) {
+  const [open, setOpen] = useState(required);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const passwordLengthOk = newPassword.length >= 12;
+  const passwordsMatch = newPassword.length > 0 && newPassword === confirmPassword;
+  const strength = getPasswordStrength(newPassword);
+  const passwordFormReady = currentPassword.length > 0 && passwordLengthOk && passwordsMatch && strength.ready;
+  const closeForm = () => {
+    if (busy || required) return;
+    setOpen(false);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setError(null);
+    setNotice(null);
+  };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setError(null); setNotice(null);
-    if (newPassword !== confirmPassword) { setError("New-password entries do not match."); return; }
+    if (!passwordLengthOk) { setError("Use at least 12 characters for your new password."); return; }
+    if (!strength.ready) { setError(strength.detail); return; }
+    if (newPassword !== confirmPassword) { setError("The new password and confirmation do not match."); return; }
     setBusy(true);
     try {
       await changeOwnPassword(session, currentPassword, newPassword);
       setCurrentPassword(""); setNewPassword(""); setConfirmPassword("");
-      onPasswordChanged(); setNotice("Password updated. Other browser sessions were revoked.");
+       onPasswordChanged(); setNotice("Password updated. This browser stays signed in; other active browser sessions were signed out for your protection.");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Password could not be changed."); }
     finally { setBusy(false); }
   };
-  return <section className={`account-security ${required ? "account-security--required" : ""}`}><PanelTitle title={required ? "Choose your private password" : "Your account security"} subtitle={required ? "This is the first sign-in for this account. Replace the administrator-issued temporary password before StackTrack shows any operational data." : "Password changes are recorded and revoke your other active browser sessions."} />{required && <div className="account-security__required-note"><ShieldCheck size={20}/><span>This keeps a shared temporary password from becoming ongoing access. Your new password needs at least 12 characters.</span></div>}<div className="account-security__status"><span className="avatar">{initials(session.principal.displayName)}</span><div><strong>{session.principal.displayName}</strong><small>@{session.principal.username} · {roleLabel(session.principal.role)}</small></div><Pill tone={session.principal.mustChangePassword ? "warn" : "good"}>{session.principal.mustChangePassword ? "Password change required" : "Password current"}</Pill></div><form className="account-security__form" onSubmit={(event) => void submit(event)}><label>Current password<input required type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label><label>New password<input required minLength={12} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label><label>Confirm new password<input required minLength={12} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label><button className="primary" disabled={busy}>{busy ? "Updating…" : required ? "Continue to StackTrack" : "Update password"}</button></form>{error && <div className="sign-in-error">{error}</div>}{notice && <div className="device-notice">{notice}</div>}</section>;
-}
-
-function LegacyAdminDirectory({ session }: { session: AdminSession }) {
-  const [users, setUsers] = useState<AdminPrincipal[] | null>(null); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
-  const [displayName, setDisplayName] = useState(""); const [username, setUsername] = useState(""); const [temporaryPassword, setTemporaryPassword] = useState(""); const [role, setRole] = useState<"organization_owner" | "operations_administrator" | "read_only_reviewer">("operations_administrator");
-  const refreshUsers = useCallback(async () => { try { setUsers(await listAdminUsers(session)); setError(null); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load accounts."); } }, [session]);
-  useEffect(() => { void refreshUsers(); }, [refreshUsers]);
-  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); try { await createAdminUser(session, { displayName, username, temporaryPassword, role }); setDisplayName(""); setUsername(""); setTemporaryPassword(""); await refreshUsers(); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); } finally { setBusy(false); } };
-  return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners control who can manage operations." /><div className="admin-directory__users">{users?.map((user) => <article key={user.userId}><span className="avatar">{initials(user.displayName)}</span><div><strong>{user.displayName}</strong><small>@{user.username}</small></div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill></article>) ?? <div className="skeleton"/>}</div><form className="admin-user-form" onSubmit={(event) => void submit(event)}><h3>Add administrator</h3><p>New accounts must change their temporary password before receiving access.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div>{error && <div className="sign-in-error">{error}</div>}<button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form></section>;
-}
-
-function LegacyAdminDirectoryV2({ session }: { session: AdminSession }) {
-  const [users, setUsers] = useState<AdminPrincipal[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [displayName, setDisplayName] = useState("");
-  const [username, setUsername] = useState("");
-  const [temporaryPassword, setTemporaryPassword] = useState("");
-  const [role, setRole] = useState<"organization_owner" | "operations_administrator" | "read_only_reviewer">("operations_administrator");
-  const refreshUsers = useCallback(async () => {
-    try { setUsers(await listAdminUsers(session)); setError(null); }
-    catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load accounts."); }
-  }, [session]);
-  useEffect(() => { void refreshUsers(); }, [refreshUsers]);
-  const addUser = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(null);
-    try {
-      await createAdminUser(session, { displayName, username, temporaryPassword, role });
-      setDisplayName(""); setUsername(""); setTemporaryPassword("");
-      await refreshUsers();
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create account."); }
-    finally { setBusy(false); }
-  };
-  const save = async (userId: string, update: { displayName?: string; role?: "organization_owner" | "operations_administrator" | "read_only_reviewer"; isActive?: boolean }) => {
-    setBusy(true); setError(null);
-    try { await updateAdminUser(session, userId, update); await refreshUsers(); }
-    catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update account."); }
-    finally { setBusy(false); }
-  };
-  const resetPassword = async (userId: string, temporaryPassword: string) => {
-    setBusy(true); setError(null);
-    try { await resetAdminPassword(session, userId, temporaryPassword); await refreshUsers(); }
-    catch (caught) { throw caught instanceof Error ? caught : new Error("Could not reset account password."); }
-    finally { setBusy(false); }
-  };
-  return <section className="admin-directory"><PanelTitle title="Administrator directory" subtitle="Organization Owners govern access. Role changes and disabled accounts immediately invalidate the affected person’s active browser sessions." />
-    <div className="admin-directory__users">{users?.map((user) => <LegacyManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} busy={busy} onSave={save} onReset={resetPassword} />) ?? <div className="skeleton"/>}</div>
-    {error && <div className="sign-in-error">{error}</div>}
-    <form className="admin-user-form" onSubmit={(event) => void addUser(event)}><h3>Add administrator</h3><p>Use an Operations Administrator for normal data and scanner work. Only nominate another Organization Owner when they need full access governance.</p><div><label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div><div><label>Role<select value={role} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>Temporary password<input required minLength={12} type="password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /></label></div><button className="primary" disabled={busy}>{busy ? "Creating…" : "Add administrator"}</button></form>
+  if (!required && !open) {
+    return <section className="account-security account-security--collapsed" data-route-focus="change-password">
+      <button type="button" className="account-security__collapsed-button" onClick={() => setOpen(true)}>
+        <span className="account-security__collapsed-copy"><strong>Change password</strong><small>Enter your current password, choose a new private password with at least 12 characters, and confirm it. Other browser sessions end after a successful change.</small></span>
+        <ChevronRight size={17} aria-hidden="true" />
+      </button>
+    </section>;
+  }
+  return <section className={`account-security ${required ? "account-security--required" : ""}`}>
+    {required ? <PanelTitle title="Choose your private password" subtitle="This is your first sign-in. Replace the one-time password from your administrator before you continue." /> : <div className="account-security__header"><div><span className="eyebrow">Account security</span><h2>Change password</h2><p>Only you should know the password you enter here. Your current password is checked before the new one is saved.</p></div><button type="button" className="icon-button" aria-label="Close change password" onClick={closeForm}><X size={17} /></button></div>}
+    {required && <div className="account-security__required-note"><ShieldCheck size={20} /><span>Your administrator can issue the temporary password, but cannot see what you choose next. Use a new password with at least 12 characters.</span></div>}
+    <div className="account-security__status"><span className="avatar">{initials(session.principal.displayName)}</span><div><strong>{session.principal.displayName}</strong><small>@{session.principal.username} · {roleLabel(session.principal.role)}</small></div><Pill tone={session.principal.mustChangePassword ? "warn" : "good"}>{session.principal.mustChangePassword ? "Password change required" : "Password current"}</Pill></div>
+    <div className="account-security__guidance">
+       <div className="account-security__guidance-heading"><strong>{required ? "Finish setting up your sign-in" : "Three clear steps"}</strong><span>{required ? "The temporary password is used only to get you into this step; it is not your lasting password." : "Your current password is checked before the new one is saved."}</span></div>
+      <div className="account-security__guidance-grid">
+         <div><b>1</b><strong>{required ? "Temporary password" : "Current password"}</strong><small>{required ? "Enter the one-time password your administrator gave you." : "Enter the password you use today."}</small></div>
+         <div><b>2</b><strong>New private password</strong><small>Use at least 12 characters. A memorable phrase is fine; avoid shared or common words.</small></div>
+         <div><b>3</b><strong>Confirm the new password</strong><small>Type it again exactly so we can catch a typo before saving.</small></div>
+      </div>
+       <p>When you save, this browser stays signed in and other active browser sessions end. Do not reuse a shared password or include it in a help request. Administrators can reset access, but they cannot retrieve your password.</p>
+    </div>
+    <form className="account-security__form" onSubmit={(event) => void submit(event)}>
+       <label>{required ? "Temporary password" : "Current password"}<input required type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+       <label>New private password<input required minLength={12} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+       <label>Confirm new private password<input required minLength={12} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>
+      <button className="primary" disabled={busy || !passwordFormReady}>{busy ? "Updating..." : required ? "Continue to StackTrack" : "Update password"}</button>
+    </form>
+    <div className="account-security__password-checks" aria-live="polite">
+      <span className={passwordLengthOk ? "account-security__password-check account-security__password-check--ready" : "account-security__password-check"}><CheckCircle2 size={13} /> At least 12 characters</span>
+      <span className={passwordsMatch ? "account-security__password-check account-security__password-check--ready" : "account-security__password-check"}><CheckCircle2 size={13} /> New passwords match</span>
+      <span className={`account-security__password-check account-security__password-check--${strength.level}`}><ShieldCheck size={13} /> {strength.label}{newPassword && <small>{strength.detail}</small>}</span>
+      <span className="account-security__password-check"><ShieldCheck size={13} /> Only you can see the password you choose</span>
+    </div>
+    {error && <div className="sign-in-error" role="alert">{error}</div>}
+    {notice && <div className="device-notice" role="status">{notice}</div>}
   </section>;
-}
-
-function LegacyManagedAccountRow({ user, currentUserId, busy, onSave, onReset }: { user: AdminPrincipal; currentUserId: string; busy: boolean; onSave: (userId: string, update: { displayName?: string; role?: "organization_owner" | "operations_administrator" | "read_only_reviewer"; isActive?: boolean }) => Promise<void>; onReset: (userId: string, temporaryPassword: string) => Promise<void> }) {
-  const [displayName, setDisplayName] = useState(user.displayName);
-  const [role, setRole] = useState(user.role);
-  const [resetOpen, setResetOpen] = useState(false);
-  const [temporaryPassword, setTemporaryPassword] = useState("");
-  const [resetError, setResetError] = useState<string | null>(null);
-  useEffect(() => { setDisplayName(user.displayName); setRole(user.role); }, [user.displayName, user.role]);
-  const self = user.userId === currentUserId;
-  const changed = displayName.trim() !== user.displayName || role !== user.role;
-  const submitReset = async () => {
-    if (temporaryPassword.length < 12) { setResetError("Use at least 12 characters."); return; }
-    setResetError(null);
-    try { await onReset(user.userId, temporaryPassword); setTemporaryPassword(""); setResetOpen(false); }
-    catch (caught) { setResetError(caught instanceof Error ? caught.message : "Could not reset this password."); }
-  };
-  return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}><span className="avatar">{initials(user.displayName)}</span><div className="admin-account__identity"><strong>{user.displayName}</strong><small>@{user.username}{self ? " · You" : ""}</small><div><Pill tone={user.role === "organization_owner" ? "blue" : user.role === "operations_administrator" ? "good" : "muted"}>{roleLabel(user.role)}</Pill>{!user.isActive && <Pill tone="warn">Disabled</Pill>}{user.mustChangePassword && <Pill tone="warn">Password change pending</Pill>}</div></div>{self ? <small className="admin-account__self">Use another Organization Owner to change your role or disable this account.</small> : <div className="admin-account__controls"><input aria-label={`${user.username} display name`} value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /><select aria-label={`${user.username} role`} value={role} disabled={busy} onChange={(event) => setRole(event.target.value as typeof role)}><option value="operations_administrator">Operations Administrator</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner</option></select><button className="secondary" disabled={busy || !changed || displayName.trim().length < 2} onClick={() => void onSave(user.userId, { ...(displayName.trim() !== user.displayName ? { displayName: displayName.trim() } : {}), ...(role !== user.role ? { role: role as "organization_owner" | "operations_administrator" | "read_only_reviewer" } : {}) })}>Save</button><button className={user.isActive ? "secondary" : "primary"} disabled={busy} onClick={() => void onSave(user.userId, { isActive: !user.isActive })}>{user.isActive ? "Disable" : "Enable"}</button><button className="secondary" disabled={busy || !user.isActive} onClick={() => { setResetError(null); setResetOpen((value) => !value); }}>{resetOpen ? "Cancel reset" : "Reset password"}</button>{resetOpen && <div className="admin-account__reset"><input aria-label={`Temporary password for ${user.username}`} type="password" minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="12+ character temporary password" /><button className="primary" disabled={busy || temporaryPassword.length < 12} onClick={() => void submitReset()}>Issue temporary password</button>{resetError && <small>{resetError}</small>}</div>}</div>}</article>;
 }
 
 type EditableAdminRole = Exclude<ManagedAdminRole, "support">;
@@ -5509,7 +5601,7 @@ function AdminDirectory({ session, locations }: { session: AdminSession; locatio
   const closeAddDialog = () => { if (!busy) { resetAddForm(); setAddOpen(false); } };
   const refreshUsers = useCallback(async () => {
     try { setUsers(await listAdminUsers(session)); setError(null); }
-    catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load administrator accounts."); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load user accounts."); }
   }, [session]);
   useEffect(() => { void refreshUsers(); }, [refreshUsers]);
   useEffect(() => {
@@ -5550,32 +5642,33 @@ function AdminDirectory({ session, locations }: { session: AdminSession; locatio
   const removeUser = async (userId: string, confirmation: string) => {
     setBusy(true); setError(null);
     try { await removeAdminUser(session, userId, confirmation); await refreshUsers(); }
-    catch (caught) { throw caught instanceof Error ? caught : new Error("Could not permanently remove the administrator."); }
+    catch (caught) { throw caught instanceof Error ? caught : new Error("Could not permanently remove the user."); }
     finally { setBusy(false); }
   };
-  return <section className="admin-directory">
-    <PanelTitle title="Administrator directory" subtitle="Organization Owners have full control. Every other account is explicit about its operating scope, and no administrator can view another person’s stored password." />
-    <div className="admin-role-legend">
-      <article><Pill tone="blue">Full control</Pill><strong>Organization Owner</strong><span>Users, locations, devices, corrections, approvals, and settings across Goodwill.</span></article>
-      <article><Pill tone="good">Network operations</Pill><strong>Operations Administrator</strong><span>Daily scanner, exception, correction-request, and data workflows across locations.</span></article>
-      <article><Pill tone="blue">Location-scoped</Pill><strong>Location Manager</strong><span>Only assigned stores, Donation Xpress sites, or warehouses; changes remain reasoned and reviewable.</span></article>
-      <article><Pill tone="muted">View only</Pill><strong>Read-only Reviewer</strong><span>Can investigate evidence and reports without changing operational state.</span></article>
-    </div>
+  return <section className="admin-directory" data-route-focus="admin-directory">
+    <div className="admin-directory__title-override"><PanelTitle title="User access" subtitle="Organization Owners decide who can sign in and what each person can change. Passwords are never visible here." /></div>
     <div className="admin-directory__add-bar">
-      <div><span className="eyebrow">Create access</span><strong>Add an administrator</strong><span>Create a scoped account with a one-time password. The new user changes it privately on first sign-in.</span></div>
-      <button type="button" className="primary admin-directory__add-trigger" onClick={() => { resetAddForm(); setAddOpen(true); }}><Plus size={15} /> Add administrator</button>
+      <div><span className="eyebrow">Create access</span><strong>Add a user</strong><span>Create a scoped account with a one-time password. The new user changes it privately on first sign-in.</span></div>
+      <button type="button" className="primary admin-directory__add-trigger" onClick={() => { resetAddForm(); setAddOpen(true); }}><Plus size={15} /> Add user</button>
     </div>
     <div className="admin-directory__users">{users?.map((user) => <ManagedAccountRow key={user.userId} user={user} currentUserId={session.principal.userId} locations={activeLocations} busy={busy} onSave={save} onReset={resetPassword} onRemove={removeUser} />) ?? <div className="skeleton" />}</div>
     {error && <div className="sign-in-error">{error}</div>}
     {addOpen && <div className="admin-user-dialog__backdrop">
       <section className="admin-user-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-user-dialog-title">
-        <header className="admin-user-dialog__header"><div><span className="eyebrow">Create access</span><h3 id="admin-user-dialog-title">Add an administrator</h3></div><button type="button" className="icon-button" aria-label="Close add administrator dialog" onClick={closeAddDialog}><X size={18} /></button></header>
-        <p className="admin-user-dialog__intro">Give each person the least access needed. The temporary password is never retrievable after this form is cleared; the user replaces it privately on first sign-in.</p>
+        <header className="admin-user-dialog__header"><div><span className="eyebrow">Create user access</span><h3 id="admin-user-dialog-title">Add a user</h3></div><button type="button" className="icon-button" aria-label="Close add user dialog" onClick={closeAddDialog}><X size={18} /></button></header>
+        <p className="admin-user-dialog__intro">Give the person the least access they need. They will replace the one-time temporary password privately when they first sign in.</p>
         <form className="admin-user-dialog__form" onSubmit={(event) => void addUser(event)}>
-          <div className="admin-user-dialog__grid"><label>Display name<input required autoFocus value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label><label>Role<select value={role} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>One-time temporary password<input required minLength={12} type="password" autoComplete="new-password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /><small>12+ characters. It is hashed immediately and cannot be viewed later.</small></label></div>
+          <section className="admin-user-dialog__section" aria-labelledby="admin-user-dialog-details">
+            <div className="admin-user-dialog__section-heading"><strong id="admin-user-dialog-details">Account details</strong><span>Name the person and choose the username they will use to sign in.</span></div>
+            <div className="admin-user-dialog__grid"><label>Display name<input required autoFocus value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Username<input required pattern="[a-z0-9._-]{3,64}" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} /></label></div>
+          </section>
+          <section className="admin-user-dialog__section" aria-labelledby="admin-user-dialog-access">
+            <div className="admin-user-dialog__section-heading"><strong id="admin-user-dialog-access">Access and first sign-in</strong><span>Set the role and give the person a temporary password to replace privately.</span></div>
+            <div className="admin-user-dialog__grid"><label>Role<select value={role} onChange={(event) => { const next = event.target.value as EditableAdminRole; setRole(next); if (next !== "location_manager" && next !== "read_only_reviewer") setLocationIds([]); }}><option value="operations_administrator">Operations Administrator</option><option value="location_manager">Location Manager</option><option value="read_only_reviewer">Read-only Reviewer</option><option value="organization_owner">Organization Owner (full control)</option></select></label><label>One-time temporary password<input required minLength={12} type="password" autoComplete="new-password" value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} /><small>12+ characters. Hashed immediately and never visible to administrators.</small></label></div>
+          </section>
           {(role === "location_manager" || role === "read_only_reviewer") && <LocationScopePicker locations={activeLocations} value={locationIds} onChange={setLocationIds} optional={role === "read_only_reviewer"} />}
           {addError && <div className="sign-in-error admin-user-dialog__error">{addError}</div>}
-          <div className="admin-user-dialog__actions"><button type="button" className="secondary" disabled={busy} onClick={closeAddDialog}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? "Creating…" : "Create administrator"}</button></div>
+          <div className="admin-user-dialog__actions"><button type="button" className="secondary" disabled={busy} onClick={closeAddDialog}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? "Creating..." : "Create user"}</button></div>
         </form>
       </section>
     </div>}
@@ -5593,18 +5686,18 @@ function AdminRemovalDialog({ user, confirmation, error, busy, onChange, onClose
     <section className="admin-remove-dialog" role="alertdialog" aria-modal="true" aria-labelledby={`remove-admin-title-${user.userId}`} aria-describedby={`remove-admin-description-${user.userId}`} onClick={(event) => event.stopPropagation()}>
       <header className="admin-remove-dialog__header">
         <span className="admin-remove-dialog__icon"><AlertTriangle size={20} aria-hidden="true" /></span>
-        <div><span className="eyebrow">Remove administrator</span><h3 id={`remove-admin-title-${user.userId}`}>Remove {user.displayName} permanently?</h3></div>
+        <div><span className="eyebrow">Remove user</span><h3 id={`remove-admin-title-${user.userId}`}>Remove {user.displayName} permanently?</h3></div>
         <button type="button" className="icon-button icon-button--small" aria-label="Close removal dialog" onClick={onClose} disabled={busy}><X size={15} /></button>
       </header>
       <div className="admin-remove-dialog__body">
-        <p id={`remove-admin-description-${user.userId}`}>This removes <strong>@{user.username}</strong> from the administrator directory. Their active sessions end, while operational and audit history stays preserved.</p>
+        <p id={`remove-admin-description-${user.userId}`}>This removes <strong>@{user.username}</strong> from the user directory. Their active sessions end, while operational and audit history stays preserved.</p>
         <div className="admin-remove-dialog__note"><AlertTriangle size={16} aria-hidden="true" /><span><strong>Use this only when access should never be restored.</strong><small>For a temporary absence, disable the account instead. A removed account cannot be re-enabled.</small></span></div>
         <form onSubmit={onSubmit}>
           <div className="admin-remove-dialog__confirm-heading"><strong>Final confirmation</strong><span>Enter the username below to continue.</span></div>
           <label htmlFor={`remove-admin-confirmation-${user.userId}`}>Username to remove: <strong>@{user.username}</strong></label>
           <input id={`remove-admin-confirmation-${user.userId}`} autoFocus autoComplete="off" value={confirmation} onChange={(event) => onChange(event.target.value)} placeholder={user.username} disabled={busy} />
           {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="admin-remove-dialog__actions"><button type="button" className="secondary" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" className="admin-remove-dialog__confirm" disabled={busy || !matches}>{busy ? "Removing…" : "Remove administrator"}</button></div>
+          <div className="admin-remove-dialog__actions"><button type="button" className="secondary" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" className="admin-remove-dialog__confirm" disabled={busy || !matches}>{busy ? "Removing…" : "Remove user"}</button></div>
         </form>
       </div>
     </section>
@@ -5668,7 +5761,7 @@ function ManagedAccountRow({ user, currentUserId, locations, busy, onSave, onRes
       setRemoveOpen(false);
       setRemoveConfirmation("");
     } catch (caught) {
-      setRemoveError(caught instanceof Error ? caught.message : "Could not permanently remove the administrator.");
+      setRemoveError(caught instanceof Error ? caught.message : "Could not permanently remove the user.");
     }
   };
   return <article className={!user.isActive ? "admin-account admin-account--disabled" : "admin-account"}>

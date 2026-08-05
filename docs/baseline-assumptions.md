@@ -18,6 +18,15 @@ These assumptions make it safe to build before Goodwill-specific discovery is co
 4. The raw device timestamp, a server-calculated effective timestamp, and server receipt time are stored separately. Effective time uses the offset measured during the device's last server handshake; offline duration is never mistaken for clock skew.
 5. Measured clock offsets over 10 minutes create a warning. Offsets over 24 hours require administrative review. These thresholds are configurable.
 6. Contradictory events are stored, create a review item, and do not silently replace the last unambiguous state.
+   A physically observed scan at a different site is still retained as the
+   newest location evidence even when the departure was missed; the projection
+   moves to the observed site and marks `LocationChangeWithoutDeparture` so
+   the missing handoff is visible instead of leaving the container stranded at
+   its prior site. A second departure before an arrival is retained and marked
+   `RepeatedDepartureBeforeArrival` for review. If a loaded container is
+   processed at a different site while its departure is still open, the
+   processing scan is retained and marked `ProcessingWithoutReceipt` so the
+   system does not imply that a receiving scan occurred.
 7. Corrections are new audited records. Ledger events are never updated or deleted.
 8. Routine corrections can eventually be delegated to store managers; material corrections require a separate corporate approver. Exact thresholds remain a business decision.
 

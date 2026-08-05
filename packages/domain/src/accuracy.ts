@@ -107,5 +107,11 @@ export function assessSequence(
 }
 
 export function isReviewFlag(flag: AccuracyFlag): boolean {
-  return flag === "ClockSkewReview" || flag === "DeviceSequenceCollision";
+  return (
+    flag === "ClockSkewReview" ||
+    flag === "DeviceSequenceCollision" ||
+    flag === "LocationChangeWithoutDeparture" ||
+    flag === "RepeatedDepartureBeforeArrival" ||
+    flag === "ProcessingWithoutReceipt"
+  );
 }

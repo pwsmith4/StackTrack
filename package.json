@@ -24,6 +24,7 @@
     "db:azure:bootstrap": "powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure/postgres/bootstrap-azure.ps1",
     "db:azure:device-permissions": "powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure/postgres/apply-azure-device-permissions-migration.ps1",
     "db:azure:location-manager": "powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure/postgres/apply-azure-location-manager-migration.ps1",
+    "db:azure:admin-delete-permissions": "powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure/postgres/apply-azure-admin-delete-permissions.ps1",
     "build:admin": "npm run build --workspace @stacktrack/admin",
     "build:mobile": "npm run export:web --workspace @stacktrack/mobile",
     "release:mobile:patch": "npm run release:patch --workspace @stacktrack/mobile",

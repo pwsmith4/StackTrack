@@ -60,6 +60,22 @@ permissions. It does not reset containers, observations, users, or scanner
 assignments. Restart the API after it completes so the next permission request
 uses the persisted role.
 
+If permanently removing an administrator reports `permission denied for table
+admin_sessions` (or `admin_users`), apply the non-destructive permission repair
+below. The removal transaction revokes that user's sessions first and then
+deletes the account; the repair grants the required session/account DELETE and
+assignment UPDATE/DELETE privileges to the existing non-superuser API role. It
+does not seed, reset, or remove any data:
+
+```powershell
+npm.cmd run db:azure:admin-delete-permissions -- -ServerName "testserv5.postgres.database.azure.com" -AdminLogin "theparkersmith"
+```
+
+Enter the Azure PostgreSQL administrator password when prompted. Restart the
+API revision (or wait for its next health check), refresh the admin site, and
+retry the removal. The app role password does not change, and no password is
+written to disk.
+
 `db:seed` deliberately resets this isolated development database, then creates a
 repeatable simulation with 120 containers, 8 locations, 7 shared scanners, four
 goods types, roughly 300 observations, completed movement histories, active

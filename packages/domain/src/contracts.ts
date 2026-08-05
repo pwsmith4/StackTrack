@@ -121,7 +121,19 @@ export const accuracyFlags = [
   "DeviceSequenceGap",
   "DeviceSequenceOutOfOrder",
   "DeviceSequenceCollision",
-  "StaleReferenceData"
+  "StaleReferenceData",
+  // The container was observed at a different physical site without a
+  // preceding departure scan. Keep the observation, but require an operator
+  // to reconcile the missing handoff before treating the route as complete.
+  "LocationChangeWithoutDeparture",
+  // A second departure was recorded before any receiving scan closed the
+  // previous movement. Preserve the newest departure, but require review so
+  // operators can distinguish a duplicate scan from an unrecorded handoff.
+  "RepeatedDepartureBeforeArrival",
+  // A loaded container was processed at a new site after a departure, but no
+  // receiving scan closed the movement first. Keep the processing evidence,
+  // but require reconciliation rather than implying a clean receipt.
+  "ProcessingWithoutReceipt"
 ] as const;
 
 export type AccuracyFlag = (typeof accuracyFlags)[number];

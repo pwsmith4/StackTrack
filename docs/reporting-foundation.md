@@ -53,8 +53,13 @@ containers that StackTrack can guarantee are physically correct.
    sequence, or device-order flags. Use it to find late offline uploads,
    duplicate scans, or device clocks that make a route appear out of order.
 2. **Projection decisions** counts containers whose latest evidence has a
-   warning or unresolved conflict. Use it to prioritize a governed correction;
-   the original events remain visible.
+   warning or unresolved conflict. This includes a later physical scan at a
+    new site without a departure, a repeated departure before an arrival, and
+    a container processed at a new site before its receiving scan was recorded.
+    The last case is reported as **Processing without a receiving scan**: the
+    new physical site and empty state are useful operational evidence, but the
+    missing handoff remains visible for review. Use the signal to prioritize a
+    governed correction; the original events remain visible.
 3. **Scanner freshness** is the share of matching scanners that reported in the
    last 24 hours. Use it before treating a quiet location as proof that no
    movement occurred.
