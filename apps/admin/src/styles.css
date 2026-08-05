@@ -528,10 +528,6 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .pill--muted { background: #edf0f2; color: #69737d; }
 .toolbar { padding: 13px 16px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .containers-panel { overflow: hidden; }
-.container-admin-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; padding: 13px 16px; border: 1px solid #cfe5ef; background: #f2fbfe; }
-.container-admin-toolbar strong, .container-admin-toolbar span { display: block; }
-.container-admin-toolbar strong { color: #2a4e61; font-size: 11px; }
-.container-admin-toolbar span { margin-top: 3px; color: #6c818c; font-size: 9px; }
 .container-import-panel { margin-bottom: 12px; padding: 18px; }
 .container-import-panel__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }
 .container-import-panel__header h2 { margin: 0; color: var(--ink); font: 800 16px/1.2 Manrope, sans-serif; }
@@ -787,7 +783,9 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .location-create-form label span, .location-retire-form label span { text-transform: uppercase; letter-spacing: .05em; }
 .location-create-form input, .location-create-form select, .location-retire-form select, .location-retire-form input { width: 100%; min-height: 36px; padding: 0 9px; border: 1px solid #c2d1d9; border-radius: 3px; background: white; color: var(--ink); font: inherit; font-size: 10px; }
 .location-admin-panel__body { display: grid; grid-template-columns: repeat(2, minmax(150px, .6fr)) minmax(260px, 1.8fr); gap: 10px; margin-top: 15px; }
-.location-type-admin, .location-directory-editor { margin-top: 16px; border: 1px solid #d9e7ec; background: #fbfdfe; }
+.location-type-admin, .location-directory-editor, .settings-bulk-import { margin-top: 16px; border: 1px solid #d9e7ec; background: #fbfdfe; }
+.settings-bulk-import { margin-top: 0; }
+.settings-bulk-import > .container-import-panel { margin: 0; border: 0; border-top: 1px solid #e2edf1; box-shadow: none; }
 .location-admin-disclosure > summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 15px; cursor: pointer; list-style: none; }
 .location-admin-disclosure > summary::-webkit-details-marker { display: none; }
 .location-admin-disclosure > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
@@ -1612,7 +1610,7 @@ footer > span:first-child { display: none; }
 @media (max-width: 900px) { .settings-role-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .settings-role-grid { grid-template-columns: 1fr; } .settings-access__message { grid-template-columns: 1fr; align-items: start; } .settings-access__message .secondary { justify-self: start; } .account-security__guidance-grid { grid-template-columns: 1fr; } .settings-access-matrix { margin-inline: 12px; } .settings-access-matrix__heading { align-items: start; flex-direction: column; } .settings-access-matrix__heading > span { text-align: left; } }
 @media (max-width: 850px) { .location-create-form, .location-type-create { grid-template-columns: repeat(2, minmax(0, 1fr)); } .location-type-create > button, .location-create-form > button { justify-self: start; } .location-type-row, .location-directory-editor__row { grid-template-columns: 31px minmax(0, 1fr) minmax(145px, 1fr) auto; } .location-type-row__field:nth-of-type(2), .location-directory-editor__row label:nth-of-type(2) { grid-column: 2 / 4; } }
-@media (max-width: 600px) { .container-admin-toolbar, .container-import-panel__footer { align-items: flex-start; flex-direction: column; } .container-import-panel__footer > div { width: 100%; } .container-import-panel__footer button { flex: 1; } .location-create-form, .location-type-create { grid-template-columns: 1fr; } .location-type-row, .location-directory-editor__row { grid-template-columns: 31px minmax(0, 1fr); } .location-type-row__field, .location-directory-editor__row label, .location-type-row__actions, .location-directory-editor__row > button { grid-column: 2; } .location-type-row__readonly, .location-directory-editor__readonly { grid-column: 2; } }
+@media (max-width: 600px) { .container-import-panel__footer { align-items: flex-start; flex-direction: column; } .container-import-panel__footer > div { width: 100%; } .container-import-panel__footer button { flex: 1; } .location-create-form, .location-type-create { grid-template-columns: 1fr; } .location-type-row, .location-directory-editor__row { grid-template-columns: 31px minmax(0, 1fr); } .location-type-row__field, .location-directory-editor__row label, .location-type-row__actions, .location-directory-editor__row > button { grid-column: 2; } .location-type-row__readonly, .location-directory-editor__readonly { grid-column: 2; } }
 
 /* Administrator directory: keep lifecycle actions calm and make account creation a focused task. */
 .admin-role-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 16px 0 22px; border: 1px solid var(--line); background: var(--line); }

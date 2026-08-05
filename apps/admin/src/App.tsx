@@ -37,7 +37,6 @@ import {
   Smartphone,
   Truck,
   UserRound,
-  Upload,
   Waypoints,
   Store,
   Target,
@@ -1481,7 +1480,7 @@ function PageContent({
   if (page === "inventory") return <InventoryPage data={data} setPage={setPage} openLocation={openLocation} session={session!} />;
   if (page === "service") return <ServicePlanPage data={data} openLocation={openLocation} />;
   if (page === "forecast") return <WarehouseForecastPage data={data} openLocation={openLocation} />;
-  if (page === "containers") return <ContainersPage data={data} query={query} {...(containerMovement ? { initialMovement: containerMovement } : {})} openDetail={openDetail} openLocation={openLocation} setPage={setPage} session={session!} refresh={refresh} />;
+  if (page === "containers") return <ContainersPage data={data} query={query} {...(containerMovement ? { initialMovement: containerMovement } : {})} openDetail={openDetail} openLocation={openLocation} setPage={setPage} session={session!} />;
   if (page === "loads") return <LoadsPage data={data} query={query} openDetail={openDetail} />;
   if (page === "locations") return <LocationsPage data={data} {...(locationId ? { focusedLocationId: locationId } : {})} {...(locationFilter ? { focusedLocationFilter: locationFilter } : {})} openContainers={openContainers} openLocation={openLocation} openDetail={openDetail} setPage={setPage} refresh={refresh} session={session} />;
   if (page === "exceptions") return <ExceptionsPage data={data} openDetail={openDetail} session={session!} refresh={refresh} />;
@@ -3337,7 +3336,7 @@ function ContainerImportPanel({ data, session, refresh, onClose }: { data: Opera
   </section>;
 }
 
-function ContainersPage({ data, query, initialMovement, openDetail, openLocation, setPage, session, refresh }: { data: OperationsData; query: string; initialMovement?: ContainerMovement; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void; session: AdminSession; refresh: () => Promise<void> }) {
+function ContainersPage({ data, query, initialMovement, openDetail, openLocation, setPage, session }: { data: OperationsData; query: string; initialMovement?: ContainerMovement; openDetail: OpenDetail; openLocation: (locationId: string) => void; setPage: (page: Page) => void; session: AdminSession }) {
   const routeFilters = initialMovement ? { ...emptyContainerFilters, movement: [initialMovement] as ContainerMovement[] } : emptyContainerFilters;
   const [draft, setDraft] = useState<ContainerFilters>(routeFilters);
   const [applied, setApplied] = useState<ContainerFilters>(routeFilters);
@@ -3349,8 +3348,6 @@ function ContainersPage({ data, query, initialMovement, openDetail, openLocation
   }, [initialMovement]);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  const [importOpen, setImportOpen] = useState(false);
-  const canImport = session.principal.role === "organization_owner" || session.principal.role === "operations_administrator";
   useEffect(() => setPageIndex(0), [query, applied]);
 
   const locationName = (id: string | null | undefined) => data.fixtures.locations.find((item) => item.locationId === id)?.name ?? "Not yet observed";
@@ -3470,8 +3467,6 @@ function ContainersPage({ data, query, initialMovement, openDetail, openLocation
   return (
     <>
     <RoleScopeNotice principal={session.principal} pageLabel="Containers" />
-    {canImport && <div className="container-admin-toolbar"><div><strong>Container administration</strong><span>Add many new container records with a reviewed CSV.</span></div><button className="primary" type="button" onClick={() => setImportOpen((value) => !value)}>{importOpen ? <X size={15} /> : <Upload size={15} />}{importOpen ? "Close import" : "Import containers"}</button></div>}
-    {importOpen && canImport && <ContainerImportPanel data={data} session={session} refresh={refresh} onClose={() => setImportOpen(false)} />}
     <section className="panel containers-panel">
       <div className="container-filter-panel" data-route-focus="container-filters"><div className="container-filter-panel__header"><div><span className="eyebrow">Detailed container filters</span><h2>Find the exact assets to review</h2><p>Each filter updates immediately.</p></div><div className="container-filter-panel__actions"><button className="secondary" onClick={exportRows} disabled={!filteredRows.length}><Download size={15} /> Export filtered CSV</button><span>{filteredRows.length} matching</span><button className="secondary" onClick={clearFilters} disabled={!activeFilterCount}>Clear filters</button></div></div><div className="container-filter-grid">
         <AuditMultiSelect stacked label="Current state" options={[{ value: "loaded", label: "Loaded" }, { value: "empty", label: "Empty" }, { value: "unknown", label: "Not observed" }]} selected={draft.states} onToggle={(value) => toggleContainerFilter("states", value)} onClear={() => setDraft((current) => ({ ...current, states: [] }))} emptyLabel="All states" />
@@ -5700,6 +5695,7 @@ function AuditTrailPage({ data, session, openDetail }: { data: OperationsData; s
 
 function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPasswordChanged }: { data: OperationsData; setPage: (page: Page, focus?: string) => void; refresh: () => Promise<void>; session: AdminSession | null; onRequestSignIn: () => void; onPasswordChanged: () => void }) {
   const canManageLocations = session?.principal.role === "organization_owner" || session?.principal.role === "operations_administrator";
+  const [importOpen, setImportOpen] = useState(false);
   return <div className="settings-page">
     {session?.principal.role === "organization_owner" ? <AdminDirectory session={session} locations={data.fixtures.locations} /> : <section className="settings-access panel">
       <PanelTitle title="User access" subtitle="Organization Owners manage who can sign in and what each person can see or change." />
@@ -5708,6 +5704,10 @@ function SettingsPage({ data, setPage, refresh, session, onRequestSignIn, onPass
     <SettingsRoleGuide />
     {session && <AccountSecurity session={session} onPasswordChanged={onPasswordChanged} />}
     {canManageLocations && <LocationAdministrationPanel data={data} session={session} refresh={refresh} setPage={setPage} />}
+    {canManageLocations && <details className="settings-bulk-import location-admin-disclosure" open={importOpen} onToggle={(event) => setImportOpen(event.currentTarget.open)}>
+      <summary className="location-admin-disclosure__summary"><span className="location-admin-disclosure__summary-copy"><span className="eyebrow">Rare setup task</span><strong>Bulk container import</strong><small>Add many new container records from a reviewed two-column CSV. Open this section only when you need to perform a bulk setup or expansion.</small></span><ChevronDown className="location-admin-disclosure__chevron" size={17} /></summary>
+      {importOpen && <ContainerImportPanel data={data} session={session} refresh={refresh} onClose={() => setImportOpen(false)} />}
+    </details>}
   </div>;
 }
 
