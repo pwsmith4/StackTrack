@@ -90,8 +90,8 @@ export async function seedPostgres(
         await client.query(
           `INSERT INTO locations
              (tenant_id, location_id, location_name, location_type, location_type_key)
-           VALUES ($1,$2,$3,$4,$4)`,
-          [TENANT_ID, locationId(index + 1), name, type]
+           VALUES ($1,$2,$3,$4::stacktrack_location_type,$5)`,
+          [TENANT_ID, locationId(index + 1), name, type, type]
         );
       }
 
