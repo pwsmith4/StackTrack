@@ -168,6 +168,10 @@ function assertIconKey(value: string): asserts value is LocationIconKey {
   }
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "23505");
+}
+
 function locationRecord(row: {
   location_id: string;
   location_name: string;
@@ -360,20 +364,37 @@ export class PostgresLocationAdministration implements LocationAdministration {
         throw new Error("Choose an active, non-system location type.");
       }
 
-      const result = await client.query<{
-        location_id: string;
-        location_name: string;
-        location_type: LocationRecord["type"];
-        location_type_key: string;
-        display_name: string;
-        icon_key: LocationIconKey;
-        is_active: boolean;
-      }>(
-        `INSERT INTO locations (tenant_id, location_name, location_type, location_type_key)
-         VALUES ($1, $2, $3, $4)
-         RETURNING location_id, location_name, location_type, location_type_key, is_active`,
-        [tenantId, name, type.category, input.type]
+      const duplicate = await client.query<{ location_name: string }>(
+        `SELECT location_name
+           FROM locations
+          WHERE tenant_id = $1 AND lower(location_name) = lower($2)
+          LIMIT 1`,
+        [tenantId, name]
       );
+      if (duplicate.rows[0]) {
+        throw new Error(`A location named “${duplicate.rows[0].location_name}” already exists. Choose a different name.`);
+      }
+
+      let result;
+      try {
+        result = await client.query<{
+          location_id: string;
+          location_name: string;
+          location_type: LocationRecord["type"];
+          location_type_key: string;
+          display_name: string;
+          icon_key: LocationIconKey;
+          is_active: boolean;
+        }>(
+          `INSERT INTO locations (tenant_id, location_name, location_type, location_type_key)
+           VALUES ($1, $2, $3, $4)
+           RETURNING location_id, location_name, location_type, location_type_key, is_active`,
+          [tenantId, name, type.category, input.type]
+        );
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new Error("That location name was just used by another administrator. Choose a different name.");
+        throw error;
+      }
       const row = result.rows[0]!;
       const catalog = await client.query<{ display_name: string; icon_key: LocationIconKey }>(
         `SELECT display_name, icon_key FROM location_types WHERE tenant_id = $1 AND type_key = $2`,
@@ -451,21 +472,38 @@ export class PostgresLocationAdministration implements LocationAdministration {
         throw new Error("Choose an active, non-system location type.");
       }
 
-      const updated = await client.query<{
-        location_id: string;
-        location_name: string;
-        location_type: LocationRecord["type"];
-        location_type_key: string;
-        is_active: boolean;
-      }>(
-        `UPDATE locations
-            SET location_name = $3,
-                location_type = $4,
-                location_type_key = $5
-          WHERE tenant_id = $1 AND location_id = $2
-        RETURNING location_id, location_name, location_type, location_type_key, is_active`,
-        [tenantId, locationId, name, type.category, input.type]
+      const duplicate = await client.query<{ location_name: string }>(
+        `SELECT location_name
+           FROM locations
+          WHERE tenant_id = $1 AND lower(location_name) = lower($2) AND location_id <> $3
+          LIMIT 1`,
+        [tenantId, name, locationId]
       );
+      if (duplicate.rows[0]) {
+        throw new Error(`A location named “${duplicate.rows[0].location_name}” already exists. Choose a different name.`);
+      }
+
+      let updated;
+      try {
+        updated = await client.query<{
+          location_id: string;
+          location_name: string;
+          location_type: LocationRecord["type"];
+          location_type_key: string;
+          is_active: boolean;
+        }>(
+          `UPDATE locations
+              SET location_name = $3,
+                  location_type = $4,
+                  location_type_key = $5
+            WHERE tenant_id = $1 AND location_id = $2
+          RETURNING location_id, location_name, location_type, location_type_key, is_active`,
+          [tenantId, locationId, name, type.category, input.type]
+        );
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new Error("That location name was just used by another administrator. Choose a different name.");
+        throw error;
+      }
       const row = updated.rows[0]!;
       const catalog = await client.query<{ display_name: string; icon_key: LocationIconKey }>(
         `SELECT display_name, icon_key FROM location_types WHERE tenant_id = $1 AND type_key = $2`,
@@ -506,20 +544,37 @@ export class PostgresLocationAdministration implements LocationAdministration {
       const typeKey = slugifyTypeName(name);
       if (!typeKey) throw new Error("Location type name must contain letters or numbers.");
 
-      const result = await client.query<{
-        type_key: string;
-        display_name: string;
-        category: LocationTypeCategory;
-        icon_key: LocationIconKey;
-        is_system: boolean;
-        is_active: boolean;
-      }>(
-        `INSERT INTO location_types
-          (tenant_id, type_key, display_name, category, icon_key, is_system)
-         VALUES ($1, $2, $3, $4, $5, FALSE)
-         RETURNING type_key, display_name, category, icon_key, is_system, is_active`,
-        [tenantId, typeKey, name, input.category, input.iconKey]
+      const duplicate = await client.query<{ type_key: string; display_name: string }>(
+        `SELECT type_key, display_name
+           FROM location_types
+          WHERE tenant_id = $1 AND (type_key = $2 OR lower(display_name) = lower($3))
+          LIMIT 1`,
+        [tenantId, typeKey, name]
       );
+      if (duplicate.rows[0]) {
+        throw new Error(`A location type named “${duplicate.rows[0].display_name}” already exists. Choose a different name.`);
+      }
+
+      let result;
+      try {
+        result = await client.query<{
+          type_key: string;
+          display_name: string;
+          category: LocationTypeCategory;
+          icon_key: LocationIconKey;
+          is_system: boolean;
+          is_active: boolean;
+        }>(
+          `INSERT INTO location_types
+            (tenant_id, type_key, display_name, category, icon_key, is_system)
+           VALUES ($1, $2, $3, $4, $5, FALSE)
+           RETURNING type_key, display_name, category, icon_key, is_system, is_active`,
+          [tenantId, typeKey, name, input.category, input.iconKey]
+        );
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new Error("That location type was just added by another administrator. Choose a different name.");
+        throw error;
+      }
       const row = result.rows[0]!;
       await client.query(
         `INSERT INTO audit_log
@@ -559,20 +614,37 @@ export class PostgresLocationAdministration implements LocationAdministration {
       );
       const before = current.rows[0];
       if (!before || !before.is_active) throw new Error("Location type was not found.");
-      const updated = await client.query<{
-        type_key: string;
-        display_name: string;
-        category: LocationTypeCategory;
-        icon_key: LocationIconKey;
-        is_system: boolean;
-        is_active: boolean;
-      }>(
-        `UPDATE location_types
-            SET display_name = $3, icon_key = $4, updated_at = clock_timestamp()
-          WHERE tenant_id = $1 AND type_key = $2
-        RETURNING type_key, display_name, category, icon_key, is_system, is_active`,
-        [tenantId, typeKey, name, input.iconKey]
+      const duplicate = await client.query<{ display_name: string }>(
+        `SELECT display_name
+           FROM location_types
+          WHERE tenant_id = $1 AND lower(display_name) = lower($2) AND type_key <> $3
+          LIMIT 1`,
+        [tenantId, name, typeKey]
       );
+      if (duplicate.rows[0]) {
+        throw new Error(`A location type named “${duplicate.rows[0].display_name}” already exists. Choose a different name.`);
+      }
+
+      let updated;
+      try {
+        updated = await client.query<{
+          type_key: string;
+          display_name: string;
+          category: LocationTypeCategory;
+          icon_key: LocationIconKey;
+          is_system: boolean;
+          is_active: boolean;
+        }>(
+          `UPDATE location_types
+              SET display_name = $3, icon_key = $4, updated_at = clock_timestamp()
+            WHERE tenant_id = $1 AND type_key = $2
+          RETURNING type_key, display_name, category, icon_key, is_system, is_active`,
+          [tenantId, typeKey, name, input.iconKey]
+        );
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new Error("That location type was just renamed by another administrator. Choose a different name.");
+        throw error;
+      }
       const row = updated.rows[0]!;
       await client.query(
         `INSERT INTO audit_log
