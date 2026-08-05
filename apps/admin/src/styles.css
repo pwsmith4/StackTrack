@@ -787,7 +787,19 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .location-create-form label span, .location-retire-form label span { text-transform: uppercase; letter-spacing: .05em; }
 .location-create-form input, .location-create-form select, .location-retire-form select, .location-retire-form input { width: 100%; min-height: 36px; padding: 0 9px; border: 1px solid #c2d1d9; border-radius: 3px; background: white; color: var(--ink); font: inherit; font-size: 10px; }
 .location-admin-panel__body { display: grid; grid-template-columns: repeat(2, minmax(150px, .6fr)) minmax(260px, 1.8fr); gap: 10px; margin-top: 15px; }
-.location-type-admin, .location-directory-editor { margin-top: 16px; padding: 15px; border: 1px solid #d9e7ec; background: #fbfdfe; }
+.location-type-admin, .location-directory-editor { margin-top: 16px; border: 1px solid #d9e7ec; background: #fbfdfe; }
+.location-admin-disclosure > summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 15px; cursor: pointer; list-style: none; }
+.location-admin-disclosure > summary::-webkit-details-marker { display: none; }
+.location-admin-disclosure > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+.location-admin-disclosure__summary-copy { display: block; min-width: 0; flex: 1; }
+.location-admin-disclosure__summary-copy strong, .location-admin-disclosure__summary-copy small { display: block; }
+.location-admin-disclosure__summary-copy strong { color: #2b4656; font-size: 11px; }
+.location-admin-disclosure__summary-copy small { max-width: 680px; margin-top: 4px; color: #718692; font-size: 8.5px; line-height: 1.45; }
+.location-admin-disclosure__chevron { flex: none; margin-top: 4px; color: var(--blue-800); transition: transform .18s ease; }
+.location-admin-disclosure[open] > summary .location-admin-disclosure__chevron { transform: rotate(180deg); }
+.location-admin-disclosure__content { padding: 0 15px 15px; border-top: 1px solid #e2edf1; }
+.location-admin-disclosure__actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; color: #718692; font-size: 8.5px; line-height: 1.4; }
+.location-admin-disclosure__actions span { min-width: 0; }
 .location-type-admin__header, .location-directory-editor__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .location-type-admin__header strong, .location-type-admin__header small, .location-directory-editor__header strong, .location-directory-editor__header small { display: block; }
 .location-type-admin__header strong, .location-directory-editor__header strong { color: #2b4656; font-size: 11px; }
