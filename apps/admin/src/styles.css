@@ -816,6 +816,9 @@ td small { display: block; color: #929ba4; font-size: 8.5px; margin-top: 3px; te
 .location-type-row__identity small, .location-directory-editor__record small { margin-top: 2px; color: #83929b; font-size: 8px; }
 .location-type-row__readonly, .location-directory-editor__readonly { color: #768892; font-size: 9px; }
 .location-directory-editor__row { display: grid; grid-template-columns: 31px minmax(155px, 1fr) minmax(170px, 1.2fr) minmax(145px, 1fr) auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid #e2ebee; background: #fff; }
+.location-type-row--saved, .location-directory-editor__row--saved { border-color: #82cda3; background: #effaf3; box-shadow: 0 0 0 1px rgba(65, 157, 105, .08); }
+.location-type-row--saved .location-type-row__icon, .location-directory-editor__row--saved .location-directory-editor__icon { color: #287b53; background: #d9f3e3; }
+.location-type-row--saved button, .location-directory-editor__row--saved button { border-color: #76be96; background: #dff5e8; color: #26734f; }
 .location-directory-editor__record { min-width: 0; }
 .location-admin-stat { display: flex; align-items: center; gap: 9px; padding: 11px; border: 1px solid #e2e9ed; background: #fbfcfd; }
 .location-admin-stat > span { width: 30px; height: 30px; display: grid; place-items: center; flex: none; color: var(--blue-800); background: #e8f4fb; }

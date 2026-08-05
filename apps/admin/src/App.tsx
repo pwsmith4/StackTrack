@@ -4115,14 +4115,28 @@ function LocationTypeAdministration({ types, session, refresh, canManage, onNoti
   const [iconKey, setIconKey] = useState("map-pin");
   const [drafts, setDrafts] = useState<Record<string, { name: string; iconKey: string }>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [savedKey, setSavedKey] = useState<string | null>(null);
+  const typeOrder = useRef<string[]>([]);
+  const orderedTypes = useMemo(() => {
+    const visibleKeys = new Set(types.map((type) => type.typeKey));
+    const nextOrder = typeOrder.current.filter((key) => visibleKeys.has(key));
+    for (const type of types) {
+      if (!nextOrder.includes(type.typeKey)) nextOrder.push(type.typeKey);
+    }
+    typeOrder.current = nextOrder;
+    const positions = new Map(nextOrder.map((key, index) => [key, index]));
+    return [...types].sort((left, right) => (positions.get(left.typeKey) ?? 0) - (positions.get(right.typeKey) ?? 0));
+  }, [types]);
   useEffect(() => setDrafts(Object.fromEntries(types.map((type) => [type.typeKey, { name: type.name, iconKey: type.iconKey }]))), [types]);
   if (!types.length) return <details className="location-type-admin location-admin-disclosure"><summary className="location-admin-disclosure__summary"><span className="location-admin-disclosure__summary-copy"><span className="eyebrow">Location types</span><strong>No location types are available yet.</strong><small>Apply the location catalog database migration before adding locations.</small></span><ChevronDown className="location-admin-disclosure__chevron" size={17} /></summary></details>;
   const saveType = async (type: LocationType) => {
     const draft = drafts[type.typeKey];
     if (!session || !canManage || !draft || !draft.name.trim()) return;
     setBusyKey(type.typeKey);
+    setSavedKey(null);
     try {
       await updateLocationType(session, type.typeKey, { name: draft.name.trim(), iconKey: draft.iconKey });
+      setSavedKey(type.typeKey);
       await refresh();
       onNotice(`Location type “${draft.name.trim()}” updated. Existing locations now use the new name and icon.`);
     } catch (caught) {
@@ -4155,23 +4169,37 @@ function LocationTypeAdministration({ types, session, refresh, canManage, onNoti
     <div className="location-admin-disclosure__content">
     {canManage && <div className="location-admin-disclosure__actions"><span>Changes update directory display while preserving historical scans.</span><button className="secondary" type="button" onClick={() => setCreateOpen((value) => !value)}>{createOpen ? <X size={14} /> : <Plus size={14} />}{createOpen ? "Close" : "Add type"}</button></div>}
     {createOpen && canManage && <form className="location-type-create" onSubmit={(event) => void createType(event)}><label><span>New type name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Example: Outlet" maxLength={80} autoFocus /></label><label><span>Operational category</span><select value={category} onChange={(event) => setCategory(event.target.value as Exclude<LocationTypeCategory, "in_transit">)}><option value="other">Other operating site</option><option value="store_backroom">Store-like</option><option value="donation_express">Donation Xpress-like</option><option value="warehouse">Warehouse-like</option></select></label><label><span>Starting icon</span><select value={iconKey} onChange={(event) => setIconKey(event.target.value)}>{locationIconOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select><small>New types start with Map pin. You can change this icon now or later.</small></label><button className="primary" type="submit" disabled={busyKey === "new" || name.trim().length < 2}>{busyKey === "new" ? "Adding…" : "Add location type"}</button></form>}
-    <div className="location-type-list">{types.map((type) => { const draft = drafts[type.typeKey] ?? { name: type.name, iconKey: type.iconKey }; return <div className="location-type-row" key={type.typeKey}><span className="location-type-row__icon"><LocationTypeIcon location={locationTypeIconRecord({ ...type, ...draft })} size={17} /></span><div className="location-type-row__identity"><strong>{type.name}</strong><small>{type.isSystem ? "System type" : `Custom type · ${type.category === "other" ? "Other" : locationTypeLabel(type.category)}`}</small></div>{canManage ? <><label className="location-type-row__field"><span className="sr-only">Name for {type.name}</span><input value={draft.name} onChange={(event) => setDrafts((current) => ({ ...current, [type.typeKey]: { ...draft, name: event.target.value } }))} maxLength={80} /></label><label className="location-type-row__field"><span className="sr-only">Icon for {type.name}</span><select value={draft.iconKey} onChange={(event) => setDrafts((current) => ({ ...current, [type.typeKey]: { ...draft, iconKey: event.target.value } }))}>{locationIconOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label><button className="secondary" type="button" disabled={busyKey !== null || draft.name.trim().length < 2} onClick={() => void saveType(type)}>Save</button></> : <span className="location-type-row__readonly">{type.name}</span>}</div>; })}</div>
+    <div className="location-type-list">{orderedTypes.map((type) => { const draft = drafts[type.typeKey] ?? { name: type.name, iconKey: type.iconKey }; const saved = savedKey === type.typeKey; return <div className={`location-type-row${saved ? " location-type-row--saved" : ""}`} key={type.typeKey}><span className="location-type-row__icon"><LocationTypeIcon location={locationTypeIconRecord({ ...type, ...draft })} size={17} /></span><div className="location-type-row__identity"><strong>{saved ? draft.name : type.name}</strong><small>{type.isSystem ? "System type" : `Custom type · ${type.category === "other" ? "Other" : locationTypeLabel(type.category)}`}</small></div>{canManage ? <><label className="location-type-row__field"><span className="sr-only">Name for {type.name}</span><input value={draft.name} onChange={(event) => { setSavedKey((current) => current === type.typeKey ? null : current); setDrafts((current) => ({ ...current, [type.typeKey]: { ...draft, name: event.target.value } })); }} maxLength={80} /></label><label className="location-type-row__field"><span className="sr-only">Icon for {type.name}</span><select value={draft.iconKey} onChange={(event) => { setSavedKey((current) => current === type.typeKey ? null : current); setDrafts((current) => ({ ...current, [type.typeKey]: { ...draft, iconKey: event.target.value } })); }}>{locationIconOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label><button className="secondary" type="button" disabled={busyKey !== null || saved || draft.name.trim().length < 2} onClick={() => void saveType(type)}>{saved ? <><CheckCircle2 size={14} /> Saved</> : "Save"}</button></> : <span className="location-type-row__readonly">{type.name}</span>}</div>; })}</div>
     </div>
   </details>;
 }
 
 function LocationDirectoryEditor({ locations, types, session, refresh, canManage, onNotice, onError }: { locations: Location[]; types: LocationType[]; session: AdminSession | null; refresh: () => Promise<void>; canManage: boolean; onNotice: (message: string) => void; onError: (message: string) => void }) {
-  const active = locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
+  const locationOrder = useRef<string[]>([]);
+  const active = useMemo(() => {
+    const visible = locations.filter((location) => location.type !== "in_transit" && location.isActive !== false && !isUnknownLocation(location));
+    const visibleIds = new Set(visible.map((location) => location.locationId));
+    const nextOrder = locationOrder.current.filter((locationId) => visibleIds.has(locationId));
+    for (const location of visible) {
+      if (!nextOrder.includes(location.locationId)) nextOrder.push(location.locationId);
+    }
+    locationOrder.current = nextOrder;
+    const positions = new Map(nextOrder.map((locationId, index) => [locationId, index]));
+    return [...visible].sort((left, right) => (positions.get(left.locationId) ?? 0) - (positions.get(right.locationId) ?? 0));
+  }, [locations]);
   const availableTypes = types.filter((type) => type.category !== "in_transit" && type.isActive);
   const [drafts, setDrafts] = useState<Record<string, { name: string; type: string }>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
   useEffect(() => setDrafts(Object.fromEntries(active.map((location) => [location.locationId, { name: location.name, type: location.typeKey ?? location.type }]))), [locations]);
   const save = async (location: Location) => {
     const draft = drafts[location.locationId];
     if (!session || !canManage || !draft) return;
     setBusyId(location.locationId);
+    setSavedId(null);
     try {
       await updateLocation(session, location.locationId, { name: draft.name.trim(), type: draft.type });
+      setSavedId(location.locationId);
       await refresh();
       onNotice(`“${draft.name.trim()}” updated. Historical scans remain attached to the same location record.`);
     } catch (caught) {
@@ -4182,7 +4210,7 @@ function LocationDirectoryEditor({ locations, types, session, refresh, canManage
   };
   return <details className="location-directory-editor location-admin-disclosure">
     <summary className="location-admin-disclosure__summary"><span className="location-admin-disclosure__summary-copy"><span className="eyebrow">Current locations</span><strong>Edit a location name or assign another active type.</strong><small>{active.length} active location{active.length === 1 ? "" : "s"}. Each edit keeps the same location ID, so history and scanner relationships stay connected.</small></span><ChevronDown className="location-admin-disclosure__chevron" size={17} /></summary>
-    <div className="location-admin-disclosure__content"><div className="location-directory-editor__list">{active.map((location) => { const draft = drafts[location.locationId] ?? { name: location.name, type: location.typeKey ?? location.type }; const type = types.find((item) => item.typeKey === draft.type) ?? types.find((item) => item.category === location.type); return <div className="location-directory-editor__row" key={location.locationId}><span className="location-directory-editor__icon"><LocationTypeIcon location={type ? locationTypeIconRecord({ ...type, name: type.name }) : location} size={17} /></span><div className="location-directory-editor__record"><strong>{location.name}</strong><small>{locationTypeLabel(location)}{location.isActive === false ? " · Inactive" : ""}</small></div>{canManage ? <><label><span className="sr-only">Name for {location.name}</span><input value={draft.name} onChange={(event) => setDrafts((current) => ({ ...current, [location.locationId]: { ...draft, name: event.target.value } }))} maxLength={120} /></label><label><span className="sr-only">Type for {location.name}</span><select value={draft.type} onChange={(event) => setDrafts((current) => ({ ...current, [location.locationId]: { ...draft, type: event.target.value } }))}>{availableTypes.map((item) => <option value={item.typeKey} key={item.typeKey}>{item.name}</option>)}</select></label><button className="secondary" type="button" disabled={busyId !== null || draft.name.trim().length < 2} onClick={() => void save(location)}>Save</button></> : <span className="location-directory-editor__readonly">{locationTypeLabel(location)}</span>}</div>; })}</div></div>
+    <div className="location-admin-disclosure__content"><div className="location-directory-editor__list">{active.map((location) => { const draft = drafts[location.locationId] ?? { name: location.name, type: location.typeKey ?? location.type }; const type = types.find((item) => item.typeKey === draft.type) ?? types.find((item) => item.category === location.type); const saved = savedId === location.locationId; return <div className={`location-directory-editor__row${saved ? " location-directory-editor__row--saved" : ""}`} key={location.locationId}><span className="location-directory-editor__icon"><LocationTypeIcon location={type ? locationTypeIconRecord({ ...type, name: type.name }) : location} size={17} /></span><div className="location-directory-editor__record"><strong>{saved ? draft.name : location.name}</strong><small>{saved && type ? type.name : locationTypeLabel(location)}{location.isActive === false ? " · Inactive" : ""}</small></div>{canManage ? <><label><span className="sr-only">Name for {location.name}</span><input value={draft.name} onChange={(event) => { setSavedId((current) => current === location.locationId ? null : current); setDrafts((current) => ({ ...current, [location.locationId]: { ...draft, name: event.target.value } })); }} maxLength={120} /></label><label><span className="sr-only">Type for {location.name}</span><select value={draft.type} onChange={(event) => { setSavedId((current) => current === location.locationId ? null : current); setDrafts((current) => ({ ...current, [location.locationId]: { ...draft, type: event.target.value } })); }}>{availableTypes.map((item) => <option value={item.typeKey} key={item.typeKey}>{item.name}</option>)}</select></label><button className="secondary" type="button" disabled={busyId !== null || saved || draft.name.trim().length < 2} onClick={() => void save(location)}>{saved ? <><CheckCircle2 size={14} /> Saved</> : "Save"}</button></> : <span className="location-directory-editor__readonly">{locationTypeLabel(location)}</span>}</div>; })}</div></div>
   </details>;
 }
 
