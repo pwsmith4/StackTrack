@@ -21,6 +21,7 @@ $locationManagerMigrationPath = Join-Path $PSScriptRoot "migrations\004_location
 $processedLoadsMigrationPath = Join-Path $PSScriptRoot "migrations\005_processed_loads.sql"
 $devicePermissionsMigrationPath = Join-Path $PSScriptRoot "migrations\006_device_permissions.sql"
 $adminDeletePermissionsMigrationPath = Join-Path $PSScriptRoot "migrations\007_admin_delete_permissions.sql"
+$locationCatalogMigrationPath = Join-Path $PSScriptRoot "migrations\008_location_catalog.sql"
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 if (-not (Test-Path -LiteralPath $psql)) {
@@ -75,6 +76,8 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'stacktrack')
   if ($LASTEXITCODE -ne 0) { throw "Azure device-permissions migration failed." }
   & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$adminDeletePermissionsMigrationPath
   if ($LASTEXITCODE -ne 0) { throw "Azure administrator-delete permissions migration failed." }
+  & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$locationCatalogMigrationPath
+  if ($LASTEXITCODE -ne 0) { throw "Azure location catalog migration failed." }
 
   # Create a separate, non-admin login for the API. Password is passed as a psql
   # variable and quoted as a SQL literal, so punctuation in the password is safe.
@@ -86,7 +89,8 @@ ALTER ROLE stacktrack_app WITH LOGIN PASSWORD :'app_password';
 GRANT CONNECT ON DATABASE stacktrack TO stacktrack_app;
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
-GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack_app;
+GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack_app;
+GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack_app;
 GRANT UPDATE (device_label, assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack_app;
 GRANT UPDATE (required_app_version) ON devices TO stacktrack_app;
 GRANT UPDATE (last_reported_at, reported_app_version, pending_offline_scan_count) ON device_installations TO stacktrack_app;

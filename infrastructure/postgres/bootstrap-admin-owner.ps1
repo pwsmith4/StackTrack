@@ -16,6 +16,7 @@ $psql = Join-Path $postgresBin "psql.exe"
 $migrationPath = Join-Path $PSScriptRoot "migrations\003_admin_access.sql"
 $locationManagerMigrationPath = Join-Path $PSScriptRoot "migrations\004_location_manager_access.sql"
 $adminDeletePermissionsMigrationPath = Join-Path $PSScriptRoot "migrations\007_admin_delete_permissions.sql"
+$locationCatalogMigrationPath = Join-Path $PSScriptRoot "migrations\008_location_catalog.sql"
 
 function Read-PlainSecret([string]$Prompt) {
   $secure = Read-Host -AsSecureString $Prompt
@@ -62,10 +63,13 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack location manager migration failed." }
   & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$adminDeletePermissionsMigrationPath
   if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack administrator-delete permissions migration failed." }
+  & $psql --host=$ServerName --port=5432 --username=$AdminLogin --dbname=stacktrack --set=ON_ERROR_STOP=1 --file=$locationCatalogMigrationPath
+  if ($LASTEXITCODE -ne 0) { throw "Applying StackTrack location catalog migration failed." }
   $sql = if ($ResetExisting) { @"
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
-GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack_app;
+GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack_app;
+GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_sessions TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_user_locations TO stacktrack_app;
@@ -83,7 +87,8 @@ ON CONFLICT (tenant_id, username) DO UPDATE
 "@ } else { @"
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
-GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack_app;
+GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack_app;
+GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_sessions TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_user_locations TO stacktrack_app;

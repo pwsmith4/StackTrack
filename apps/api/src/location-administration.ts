@@ -2,19 +2,56 @@ import type { Pool, PoolClient } from "pg";
 
 export type ManagedLocationType = "donation_express" | "store_backroom" | "warehouse";
 
+export type LocationTypeCategory = ManagedLocationType | "other" | "in_transit";
+export const locationIconKeys = [
+  "store",
+  "warehouse",
+  "hand-heart",
+  "building-2",
+  "map-pin",
+  "boxes",
+  "truck",
+  "package-check"
+] as const;
+export type LocationIconKey = (typeof locationIconKeys)[number];
+
 export interface LocationAdministrationActor {
   readonly userId: string;
 }
 
 export interface NewLocation {
   readonly name: string;
-  readonly type: ManagedLocationType;
+  /** Catalog key, not the operational category. */
+  readonly type: string;
+}
+
+export interface NewLocationType {
+  readonly name: string;
+  readonly category: Exclude<LocationTypeCategory, "in_transit">;
+  readonly iconKey: LocationIconKey;
+}
+
+export interface UpdateLocationType {
+  readonly name: string;
+  readonly iconKey: LocationIconKey;
+}
+
+export interface LocationTypeRecord {
+  readonly typeKey: string;
+  readonly name: string;
+  readonly category: LocationTypeCategory;
+  readonly iconKey: LocationIconKey;
+  readonly isSystem: boolean;
+  readonly isActive: boolean;
 }
 
 export interface LocationRecord {
   readonly locationId: string;
   readonly name: string;
-  readonly type: ManagedLocationType | "in_transit";
+  readonly type: LocationTypeCategory;
+  readonly typeKey?: string;
+  readonly typeName?: string;
+  readonly iconKey?: LocationIconKey;
   readonly isActive: boolean;
 }
 
@@ -58,6 +95,11 @@ export interface LocationRetireResult {
   readonly dependencies: LocationDependencySummary;
 }
 
+export interface UpdateLocation {
+  readonly name: string;
+  readonly type: string;
+}
+
 export interface LocationAdministration {
   dependencies(tenantId: string, locationId: string): Promise<LocationDependencySummary | null>;
   create(
@@ -65,6 +107,23 @@ export interface LocationAdministration {
     actor: LocationAdministrationActor,
     input: NewLocation
   ): Promise<LocationRecord>;
+  update?(
+    tenantId: string,
+    actor: LocationAdministrationActor,
+    locationId: string,
+    input: UpdateLocation
+  ): Promise<LocationRecord>;
+  createType?(
+    tenantId: string,
+    actor: LocationAdministrationActor,
+    input: NewLocationType
+  ): Promise<LocationTypeRecord>;
+  updateType?(
+    tenantId: string,
+    actor: LocationAdministrationActor,
+    typeKey: string,
+    input: UpdateLocationType
+  ): Promise<LocationTypeRecord>;
   retire(
     tenantId: string,
     actor: LocationAdministrationActor,
@@ -91,16 +150,58 @@ function isReservedLocationName(name: string): boolean {
   return ["unknown location", "in transit"].includes(name.trim().toLowerCase());
 }
 
+function normalizeTypeName(value: string): string {
+  return normalizeName(value);
+}
+
+function slugifyTypeName(value: string): string {
+  return normalizeTypeName(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function assertIconKey(value: string): asserts value is LocationIconKey {
+  if (!locationIconKeys.includes(value as LocationIconKey)) {
+    throw new Error("Choose one of the available location icons.");
+  }
+}
+
 function locationRecord(row: {
   location_id: string;
   location_name: string;
   location_type: LocationRecord["type"];
+  location_type_key?: string;
+  display_name?: string;
+  icon_key?: LocationIconKey;
   is_active: boolean;
 }): LocationRecord {
   return {
     locationId: row.location_id,
     name: row.location_name,
     type: row.location_type,
+    ...(row.location_type_key ? { typeKey: row.location_type_key } : {}),
+    ...(row.display_name ? { typeName: row.display_name } : {}),
+    ...(row.icon_key ? { iconKey: row.icon_key } : {}),
+    isActive: row.is_active
+  };
+}
+
+function locationTypeRecord(row: {
+  type_key: string;
+  display_name: string;
+  category: LocationTypeCategory;
+  icon_key: LocationIconKey;
+  is_system: boolean;
+  is_active: boolean;
+}): LocationTypeRecord {
+  return {
+    typeKey: row.type_key,
+    name: row.display_name,
+    category: row.category,
+    iconKey: row.icon_key,
+    isSystem: row.is_system,
     isActive: row.is_active
   };
 }
@@ -136,11 +237,17 @@ export class PostgresLocationAdministration implements LocationAdministration {
       location_id: string;
       location_name: string;
       location_type: LocationRecord["type"];
+      location_type_key: string;
+      display_name: string;
+      icon_key: LocationIconKey;
       is_active: boolean;
     }>(
-      `SELECT location_id, location_name, location_type, is_active
-         FROM locations
-        WHERE tenant_id = $1 AND location_id = $2`,
+      `SELECT l.location_id, l.location_name, l.location_type,
+              l.location_type_key, lt.display_name, lt.icon_key, l.is_active
+         FROM locations l
+         JOIN location_types lt
+           ON lt.tenant_id = l.tenant_id AND lt.type_key = l.location_type_key
+        WHERE l.tenant_id = $1 AND l.location_id = $2`,
       [tenantId, locationId]
     );
     const location = locationResult.rows[0];
@@ -239,18 +346,40 @@ export class PostgresLocationAdministration implements LocationAdministration {
         throw new Error("Unknown location and In transit are system locations and cannot be created here.");
       }
 
+      const typeResult = await client.query<{
+        type_key: string;
+        category: LocationRecord["type"];
+      }>(
+        `SELECT type_key, category
+           FROM location_types
+          WHERE tenant_id = $1 AND type_key = $2 AND is_active`,
+        [tenantId, input.type]
+      );
+      const type = typeResult.rows[0];
+      if (!type || type.category === "in_transit") {
+        throw new Error("Choose an active, non-system location type.");
+      }
+
       const result = await client.query<{
         location_id: string;
         location_name: string;
         location_type: LocationRecord["type"];
+        location_type_key: string;
+        display_name: string;
+        icon_key: LocationIconKey;
         is_active: boolean;
       }>(
-        `INSERT INTO locations (tenant_id, location_name, location_type)
-         VALUES ($1, $2, $3)
-         RETURNING location_id, location_name, location_type, is_active`,
-        [tenantId, name, input.type]
+        `INSERT INTO locations (tenant_id, location_name, location_type, location_type_key)
+         VALUES ($1, $2, $3, $4)
+         RETURNING location_id, location_name, location_type, location_type_key, is_active`,
+        [tenantId, name, type.category, input.type]
       );
       const row = result.rows[0]!;
+      const catalog = await client.query<{ display_name: string; icon_key: LocationIconKey }>(
+        `SELECT display_name, icon_key FROM location_types WHERE tenant_id = $1 AND type_key = $2`,
+        [tenantId, row.location_type_key]
+      );
+      Object.assign(row, catalog.rows[0]);
       await client.query(
         `INSERT INTO audit_log
           (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
@@ -262,11 +391,205 @@ export class PostgresLocationAdministration implements LocationAdministration {
           JSON.stringify({
             locationName: row.location_name,
             locationType: row.location_type,
+            locationTypeKey: row.location_type_key,
             source: "pilot_admin_console"
           })
         ]
       );
       return locationRecord(row);
+    });
+  }
+
+  public async update(
+    tenantId: string,
+    actor: LocationAdministrationActor,
+    locationId: string,
+    input: UpdateLocation
+  ): Promise<LocationRecord> {
+    return this.tenantTransaction(tenantId, async (client) => {
+      const name = normalizeName(input.name);
+      if (name.length < 2 || name.length > 120) {
+        throw new Error("Location name must contain 2-120 characters.");
+      }
+      if (isReservedLocationName(name)) {
+        throw new Error("Unknown location and In transit are system locations and cannot be renamed.");
+      }
+
+      const locked = await client.query<{
+        location_id: string;
+        location_name: string;
+        location_type: LocationRecord["type"];
+        location_type_key: string;
+        is_active: boolean;
+      }>(
+        `SELECT location_id, location_name, location_type, location_type_key, is_active
+           FROM locations
+          WHERE tenant_id = $1 AND location_id = $2
+          FOR UPDATE`,
+        [tenantId, locationId]
+      );
+      const current = locked.rows[0];
+      if (!current) throw new Error("Location was not found.");
+      if (!current.is_active || current.location_type === "in_transit") {
+        throw new Error("Only active operating locations can be edited.");
+      }
+      if (isReservedLocationName(current.location_name)) {
+        throw new Error("System locations cannot be edited.");
+      }
+
+      const typeResult = await client.query<{
+        type_key: string;
+        category: LocationRecord["type"];
+      }>(
+        `SELECT type_key, category
+           FROM location_types
+          WHERE tenant_id = $1 AND type_key = $2 AND is_active`,
+        [tenantId, input.type]
+      );
+      const type = typeResult.rows[0];
+      if (!type || type.category === "in_transit") {
+        throw new Error("Choose an active, non-system location type.");
+      }
+
+      const updated = await client.query<{
+        location_id: string;
+        location_name: string;
+        location_type: LocationRecord["type"];
+        location_type_key: string;
+        is_active: boolean;
+      }>(
+        `UPDATE locations
+            SET location_name = $3,
+                location_type = $4,
+                location_type_key = $5
+          WHERE tenant_id = $1 AND location_id = $2
+        RETURNING location_id, location_name, location_type, location_type_key, is_active`,
+        [tenantId, locationId, name, type.category, input.type]
+      );
+      const row = updated.rows[0]!;
+      const catalog = await client.query<{ display_name: string; icon_key: LocationIconKey }>(
+        `SELECT display_name, icon_key FROM location_types WHERE tenant_id = $1 AND type_key = $2`,
+        [tenantId, row.location_type_key]
+      );
+      Object.assign(row, catalog.rows[0]);
+      await client.query(
+        `INSERT INTO audit_log
+          (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
+         VALUES ($1, 'user', $2, 'location.updated', 'location', $3, $4::jsonb)`,
+        [
+          tenantId,
+          actor.userId,
+          locationId,
+          JSON.stringify({
+            before: { name: current.location_name, typeKey: current.location_type_key },
+            after: { name: row.location_name, typeKey: row.location_type_key },
+            historyPreserved: true,
+            source: "pilot_admin_console"
+          })
+        ]
+      );
+      return locationRecord(row);
+    });
+  }
+
+  public async createType(
+    tenantId: string,
+    actor: LocationAdministrationActor,
+    input: NewLocationType
+  ): Promise<LocationTypeRecord> {
+    return this.tenantTransaction(tenantId, async (client) => {
+      const name = normalizeTypeName(input.name);
+      if (name.length < 2 || name.length > 80) {
+        throw new Error("Location type name must contain 2-80 characters.");
+      }
+      assertIconKey(input.iconKey);
+      const typeKey = slugifyTypeName(name);
+      if (!typeKey) throw new Error("Location type name must contain letters or numbers.");
+
+      const result = await client.query<{
+        type_key: string;
+        display_name: string;
+        category: LocationTypeCategory;
+        icon_key: LocationIconKey;
+        is_system: boolean;
+        is_active: boolean;
+      }>(
+        `INSERT INTO location_types
+          (tenant_id, type_key, display_name, category, icon_key, is_system)
+         VALUES ($1, $2, $3, $4, $5, FALSE)
+         RETURNING type_key, display_name, category, icon_key, is_system, is_active`,
+        [tenantId, typeKey, name, input.category, input.iconKey]
+      );
+      const row = result.rows[0]!;
+      await client.query(
+        `INSERT INTO audit_log
+          (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
+         VALUES ($1, 'user', $2, 'location_type.created', 'location_type', NULL, $3::jsonb)`,
+        [tenantId, actor.userId, JSON.stringify({ typeKey, name, category: input.category, iconKey: input.iconKey, source: "pilot_admin_console" })]
+      );
+      return locationTypeRecord(row);
+    });
+  }
+
+  public async updateType(
+    tenantId: string,
+    actor: LocationAdministrationActor,
+    typeKey: string,
+    input: UpdateLocationType
+  ): Promise<LocationTypeRecord> {
+    return this.tenantTransaction(tenantId, async (client) => {
+      const name = normalizeTypeName(input.name);
+      if (name.length < 2 || name.length > 80) {
+        throw new Error("Location type name must contain 2-80 characters.");
+      }
+      assertIconKey(input.iconKey);
+      const current = await client.query<{
+        type_key: string;
+        display_name: string;
+        category: LocationTypeCategory;
+        icon_key: LocationIconKey;
+        is_system: boolean;
+        is_active: boolean;
+      }>(
+        `SELECT type_key, display_name, category, icon_key, is_system, is_active
+           FROM location_types
+          WHERE tenant_id = $1 AND type_key = $2
+          FOR UPDATE`,
+        [tenantId, typeKey]
+      );
+      const before = current.rows[0];
+      if (!before || !before.is_active) throw new Error("Location type was not found.");
+      const updated = await client.query<{
+        type_key: string;
+        display_name: string;
+        category: LocationTypeCategory;
+        icon_key: LocationIconKey;
+        is_system: boolean;
+        is_active: boolean;
+      }>(
+        `UPDATE location_types
+            SET display_name = $3, icon_key = $4, updated_at = clock_timestamp()
+          WHERE tenant_id = $1 AND type_key = $2
+        RETURNING type_key, display_name, category, icon_key, is_system, is_active`,
+        [tenantId, typeKey, name, input.iconKey]
+      );
+      const row = updated.rows[0]!;
+      await client.query(
+        `INSERT INTO audit_log
+          (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
+         VALUES ($1, 'user', $2, 'location_type.updated', 'location_type', NULL, $3::jsonb)`,
+        [
+          tenantId,
+          actor.userId,
+          JSON.stringify({
+            typeKey,
+            before: { name: before.display_name, iconKey: before.icon_key },
+            after: { name: row.display_name, iconKey: row.icon_key },
+            source: "pilot_admin_console"
+          })
+        ]
+      );
+      return locationTypeRecord(row);
     });
   }
 
@@ -344,8 +667,8 @@ export class PostgresLocationAdministration implements LocationAdministration {
         const unknown = await client.query<{
           location_id: string;
         }>(
-          `INSERT INTO locations (tenant_id, location_name, location_type, is_active)
-           VALUES ($1, 'Unknown location', 'store_backroom', TRUE)
+          `INSERT INTO locations (tenant_id, location_name, location_type, location_type_key, is_active)
+           VALUES ($1, 'Unknown location', 'store_backroom', 'store_backroom', TRUE)
            ON CONFLICT (tenant_id, location_name)
            DO UPDATE SET is_active = TRUE
            RETURNING location_id`,

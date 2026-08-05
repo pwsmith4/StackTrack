@@ -16,6 +16,7 @@ $locationManagerMigrationPath = Join-Path $PSScriptRoot "migrations\004_location
 $processedLoadsMigrationPath = Join-Path $PSScriptRoot "migrations\005_processed_loads.sql"
 $devicePermissionsMigrationPath = Join-Path $PSScriptRoot "migrations\006_device_permissions.sql"
 $adminDeletePermissionsMigrationPath = Join-Path $PSScriptRoot "migrations\007_admin_delete_permissions.sql"
+$locationCatalogMigrationPath = Join-Path $PSScriptRoot "migrations\008_location_catalog.sql"
 $port = if ($env:STACKTRACK_POSTGRES_PORT) {
   [int]$env:STACKTRACK_POSTGRES_PORT
 } else {
@@ -174,11 +175,23 @@ if ($LASTEXITCODE -ne 0) {
   throw "The StackTrack administrator-delete permissions migration failed."
 }
 
+& $psql `
+  --host=127.0.0.1 `
+  --port=$port `
+  --username=postgres `
+  --dbname=stacktrack `
+  --set=ON_ERROR_STOP=1 `
+  --file=$locationCatalogMigrationPath
+if ($LASTEXITCODE -ne 0) {
+  throw "The StackTrack location catalog migration failed."
+}
+
 $grantSql = @"
 GRANT CONNECT ON DATABASE stacktrack TO stacktrack;
 GRANT USAGE ON SCHEMA public TO stacktrack;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack;
-GRANT UPDATE (location_name, location_type, is_active) ON locations TO stacktrack;
+GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack;
+GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack;
 GRANT UPDATE (device_label, assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack;
 GRANT UPDATE (required_app_version) ON devices TO stacktrack;
 GRANT UPDATE (last_reported_at, reported_app_version, pending_offline_scan_count) ON device_installations TO stacktrack;

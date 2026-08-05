@@ -6,6 +6,7 @@ import { PostgresAdminAccess } from "./admin-access.js";
 import { PostgresReviewAdministration } from "./review-administration.js";
 import { PostgresCorrectionAdministration } from "./correction-administration.js";
 import { PostgresLocationAdministration } from "./location-administration.js";
+import { PostgresContainerAdministration } from "./container-administration.js";
 
 const { Pool } = pg;
 
@@ -32,6 +33,7 @@ const app = await createApp({
   // never fall back to an implicit permission when an adapter is missing.
   strictDevicePermissions: true,
   locationAdministration: new PostgresLocationAdministration(pool),
+  containerAdministration: new PostgresContainerAdministration(pool),
   adminAccess: new PostgresAdminAccess(pool, tenantId),
   reviewAdministration: new PostgresReviewAdministration(pool),
   correctionAdministration: new PostgresCorrectionAdministration(pool)

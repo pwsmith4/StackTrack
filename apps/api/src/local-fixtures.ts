@@ -5,8 +5,21 @@ export interface LocalLocation {
     | "donation_express"
     | "store_backroom"
     | "warehouse"
+    | "other"
     | "in_transit";
+  readonly typeKey?: string;
+  readonly typeName?: string;
+  readonly iconKey?: string;
   readonly isActive?: boolean;
+}
+
+export interface LocalLocationType {
+  readonly typeKey: string;
+  readonly name: string;
+  readonly category: LocalLocation["type"];
+  readonly iconKey: string;
+  readonly isSystem: boolean;
+  readonly isActive: boolean;
 }
 
 export interface LocalDevice {
@@ -34,15 +47,17 @@ export interface LocalDeviceAssignment {
 export interface LocalContainer {
   readonly containerId: string;
   readonly label: string;
-  readonly type: "bin" | "cart" | "gaylord";
+  readonly type: string;
 }
 
 export interface LocalFixtures {
   readonly tenant: { readonly tenantId: string; readonly name: string };
   readonly locations: readonly LocalLocation[];
+  readonly locationTypes?: readonly LocalLocationType[];
   readonly devices: readonly LocalDevice[];
   readonly deviceAssignments: readonly LocalDeviceAssignment[];
   readonly containers: readonly LocalContainer[];
+  readonly containerTypes?: readonly string[];
   readonly goodsTypes: readonly {
     readonly name: string;
     readonly secondaryLabel: string;
@@ -87,6 +102,12 @@ export const localFixtures = {
       isActive: true
     }
   ] satisfies readonly LocalLocation[],
+  locationTypes: [
+    { typeKey: "donation_express", name: "Donation Xpress", category: "donation_express", iconKey: "hand-heart", isSystem: true, isActive: true },
+    { typeKey: "store_backroom", name: "Store", category: "store_backroom", iconKey: "store", isSystem: true, isActive: true },
+    { typeKey: "warehouse", name: "Warehouse", category: "warehouse", iconKey: "warehouse", isSystem: true, isActive: true },
+    { typeKey: "in_transit", name: "In transit", category: "in_transit", iconKey: "truck", isSystem: true, isActive: true }
+  ] satisfies readonly LocalLocationType[],
   devices: [
     {
       deviceId: "30000000-0000-4000-8000-000000000001",
@@ -164,6 +185,7 @@ export const localFixtures = {
     label,
     type
   })) as readonly LocalContainer[],
+  containerTypes: ["bin", "cart", "gaylord"] as readonly string[],
   goodsTypes: [
     { name: "Soft", secondaryLabel: "Quality Type", options: ["Raw", "Pre-Sort", "Salvage"] },
     { name: "Hard", secondaryLabel: "Quality Type", options: ["Raw", "Pre-Sort", "Salvage"] },

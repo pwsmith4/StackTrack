@@ -49,7 +49,7 @@ export async function checkForNewBuild(): Promise<SiteBuildInfo | null> {
 export const TENANT_ID = "10000000-0000-4000-8000-000000000001";
 
 export class ApiRequestError extends Error {
-  public constructor(readonly status: number, readonly path: string, message: string) {
+  public constructor(readonly status: number, readonly path: string, message: string, readonly details?: unknown) {
     super(message);
     this.name = "ApiRequestError";
   }
@@ -58,11 +58,25 @@ export class ApiRequestError extends Error {
 export interface Location {
   locationId: string;
   name: string;
-  type: "donation_express" | "store_backroom" | "warehouse" | "in_transit";
+  type: "donation_express" | "store_backroom" | "warehouse" | "other" | "in_transit";
+  typeKey?: string;
+  typeName?: string;
+  iconKey?: string;
   isActive?: boolean;
 }
 
 export type ManagedLocationType = Exclude<Location["type"], "in_transit">;
+
+export type LocationTypeCategory = Location["type"];
+
+export interface LocationType {
+  typeKey: string;
+  name: string;
+  category: LocationTypeCategory;
+  iconKey: string;
+  isSystem: boolean;
+  isActive: boolean;
+}
 
 export interface LocationDependencyDevice {
   deviceId: string;
@@ -161,15 +175,17 @@ export interface OperationsWarning { endpoint: string; status: number | null; me
 export interface Container {
   containerId: string;
   label: string;
-  type: "bin" | "cart" | "gaylord";
+  type: string;
 }
 
 export interface Fixtures {
   tenant: { tenantId: string; name: string };
   locations: Location[];
+  locationTypes?: LocationType[];
   devices: Device[];
   deviceAssignments: DeviceAssignment[];
   containers: Container[];
+  containerTypes?: string[];
   goodsTypes: { name: string; secondaryLabel: string; options: string[] }[];
 }
 
@@ -248,7 +264,8 @@ async function getJson<T>(path: string, session: AdminSession): Promise<T> {
     throw new ApiRequestError(
       response.status,
       path,
-      `GET ${path} failed (${response.status}): ${detail?.message ?? response.statusText}`
+      `GET ${path} failed (${response.status}): ${detail?.message ?? response.statusText}`,
+      detail
     );
   }
   return response.json() as Promise<T>;
@@ -293,7 +310,7 @@ export async function getLocationDependencies(
 
 export async function createLocation(
   session: AdminSession,
-  input: { name: string; type: ManagedLocationType }
+  input: { name: string; type: string }
 ): Promise<Location> {
   const response = await postJson<{ location: Location }>(
     "/api/v1/local/locations",
@@ -329,6 +346,66 @@ export async function signIn(username: string, password: string): Promise<AdminS
     throw new Error(detail?.message ?? "Sign-in failed.");
   }
   return response.json() as Promise<AdminSession>;
+}
+
+export async function updateLocation(
+  session: AdminSession,
+  locationId: string,
+  input: { name: string; type: string }
+): Promise<Location> {
+  const response = await patchJson<{ location: Location }>(
+    `/api/v1/local/locations/${locationId}`,
+    input,
+    session
+  );
+  return response.location;
+}
+
+export async function createLocationType(
+  session: AdminSession,
+  input: { name: string; category: Exclude<LocationTypeCategory, "in_transit">; iconKey: string }
+): Promise<LocationType> {
+  const response = await postJson<{ locationType: LocationType }>(
+    "/api/v1/local/location-types",
+    input,
+    session
+  );
+  return response.locationType;
+}
+
+export async function updateLocationType(
+  session: AdminSession,
+  typeKey: string,
+  input: { name: string; iconKey: string }
+): Promise<LocationType> {
+  const response = await patchJson<{ locationType: LocationType }>(
+    `/api/v1/local/location-types/${encodeURIComponent(typeKey)}`,
+    input,
+    session
+  );
+  return response.locationType;
+}
+
+export interface ContainerImportRow {
+  label: string;
+  type: string;
+}
+
+export interface ContainerImportResult {
+  importedCount: number;
+  containers: Container[];
+}
+
+export async function importContainers(
+  session: AdminSession,
+  rows: ContainerImportRow[]
+): Promise<ContainerImportResult> {
+  const response = await postJson<ContainerImportResult>(
+    "/api/v1/local/containers/import",
+    { rows },
+    session
+  );
+  return response;
 }
 
 export async function startRolePreview(
@@ -367,7 +444,8 @@ async function postJson<T>(path: string, body: unknown, session: AdminSession): 
     throw new ApiRequestError(
       response.status,
       path,
-      `POST ${path} failed (${response.status}): ${detail?.message ?? response.statusText}`
+      `POST ${path} failed (${response.status}): ${detail?.message ?? response.statusText}`,
+      detail
     );
   }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;

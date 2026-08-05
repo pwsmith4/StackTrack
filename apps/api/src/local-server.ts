@@ -10,6 +10,7 @@ import { PostgresAdminAccess } from "./admin-access.js";
 import { PostgresReviewAdministration } from "./review-administration.js";
 import { PostgresCorrectionAdministration } from "./correction-administration.js";
 import { PostgresLocationAdministration } from "./location-administration.js";
+import { PostgresContainerAdministration } from "./container-administration.js";
 import { seedPostgres } from "./postgres-seed.js";
 
 const { Pool } = pg;
@@ -28,6 +29,7 @@ let referenceData:
 let closeDatabase: (() => Promise<void>) | undefined;
 let deviceAdministration: DeviceAdministration | undefined;
 let locationAdministration: PostgresLocationAdministration | undefined;
+let containerAdministration: PostgresContainerAdministration | undefined;
 let adminAccess: PostgresAdminAccess | undefined;
 let reviewAdministration: PostgresReviewAdministration | undefined;
 let correctionAdministration: PostgresCorrectionAdministration | undefined;
@@ -45,6 +47,7 @@ try {
   referenceData = (tenantId) => postgresLedger.referenceData(tenantId);
   deviceAdministration = new PostgresDeviceAdministration(pool);
   locationAdministration = new PostgresLocationAdministration(pool);
+  containerAdministration = new PostgresContainerAdministration(pool);
   adminAccess = new PostgresAdminAccess(pool, localFixtures.tenant.tenantId);
   reviewAdministration = new PostgresReviewAdministration(pool);
   correctionAdministration = new PostgresCorrectionAdministration(pool);
@@ -69,6 +72,7 @@ const app = await createApp({
   ...(referenceData ? { referenceData } : {}),
   ...(deviceAdministration ? { deviceAdministration } : {}),
   ...(locationAdministration ? { locationAdministration } : {}),
+  ...(containerAdministration ? { containerAdministration } : {}),
   ...(adminAccess ? { adminAccess } : {}),
   ...(reviewAdministration ? { reviewAdministration } : {}),
   ...(correctionAdministration ? { correctionAdministration } : {})

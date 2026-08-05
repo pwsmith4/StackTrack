@@ -15,7 +15,8 @@ import type {
   LocalDeviceAssignment,
   LocalDevice,
   LocalFixtures,
-  LocalLocation
+  LocalLocation,
+  LocalLocationType
 } from "./local-fixtures.js";
 
 interface EventRow extends QueryResultRow {
@@ -318,12 +319,26 @@ export class PostgresEventLedger implements EventLedger {
       );
       if (!tenant.rows[0]) return null;
 
-      const [locations, devices, deviceAssignments, containers, goodsTypes] = await Promise.all([
+      const [locations, locationTypes, devices, deviceAssignments, containers, containerTypes, goodsTypes] = await Promise.all([
         client.query<LocalLocation>(
-          `SELECT location_id AS "locationId", location_name AS name,
-                  location_type AS type, is_active AS "isActive"
-             FROM locations WHERE tenant_id = $1
-             ORDER BY is_active DESC, location_type, location_name`,
+          `SELECT l.location_id AS "locationId", l.location_name AS name,
+                  l.location_type AS type, l.location_type_key AS "typeKey",
+                  lt.display_name AS "typeName", lt.icon_key AS "iconKey",
+                  l.is_active AS "isActive"
+             FROM locations l
+             JOIN location_types lt
+               ON lt.tenant_id = l.tenant_id AND lt.type_key = l.location_type_key
+            WHERE l.tenant_id = $1
+            ORDER BY l.is_active DESC, lt.display_name, l.location_name`,
+          [tenantId]
+        ),
+        client.query<LocalLocationType>(
+          `SELECT type_key AS "typeKey", display_name AS name,
+                  category, icon_key AS "iconKey", is_system AS "isSystem",
+                  is_active AS "isActive"
+             FROM location_types
+            WHERE tenant_id = $1 AND is_active
+            ORDER BY is_system DESC, display_name`,
           [tenantId]
         ),
         client.query<LocalDevice>(
@@ -367,6 +382,13 @@ export class PostgresEventLedger implements EventLedger {
             ORDER BY c.container_label`,
           [tenantId]
         ),
+        client.query<{ type: string }>(
+          `SELECT type_name AS type
+             FROM container_types
+            WHERE tenant_id = $1 AND is_active
+            ORDER BY type_name`,
+          [tenantId]
+        ),
         client.query<{
           name: string;
           secondaryLabel: string;
@@ -391,9 +413,11 @@ export class PostgresEventLedger implements EventLedger {
           name: tenant.rows[0].tenant_name
         },
         locations: locations.rows,
+        locationTypes: locationTypes.rows,
         devices: devices.rows,
         deviceAssignments: deviceAssignments.rows,
         containers: containers.rows,
+        containerTypes: containerTypes.rows.map((row) => row.type),
         goodsTypes: goodsTypes.rows
       };
     });

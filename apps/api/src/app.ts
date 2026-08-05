@@ -21,8 +21,12 @@ import type {
   LocationAdministration,
   LocationRetireConflict,
   NewLocation,
-  RetireLocationInput
+  RetireLocationInput,
+  UpdateLocation,
+  NewLocationType,
+  UpdateLocationType
 } from "./location-administration.js";
+import type { ContainerAdministration, ContainerImportRejected } from "./container-administration.js";
 import type {
   IdentityProvider,
   NotificationProvider,
@@ -38,6 +42,7 @@ export interface AppDependencies {
   ) => LocalFixtures | null | Promise<LocalFixtures | null>;
   readonly deviceAdministration?: DeviceAdministration;
   readonly locationAdministration?: LocationAdministration;
+  readonly containerAdministration?: ContainerAdministration;
   readonly adminAccess?: PostgresAdminAccess;
   readonly reviewAdministration?: PostgresReviewAdministration;
   readonly correctionAdministration?: CorrectionAdministration;
@@ -1339,9 +1344,10 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
           typeof input.name !== "string" ||
           input.name.trim().length < 2 ||
           input.name.trim().length > 120 ||
-          !["donation_express", "store_backroom", "warehouse"].includes(input.type)
+          typeof input.type !== "string" ||
+          !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(input.type)
         ) {
-          return reply.code(400).send({ error: "InvalidLocation", message: "Provide a name and an operating location type." });
+          return reply.code(400).send({ error: "InvalidLocation", message: "Provide a name and an active location type from Settings." });
         }
         try {
           return reply.code(201).send({
@@ -1356,6 +1362,101 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
             error: "LocationCreateRejected",
             message: error instanceof Error ? error.message : "Location could not be created."
           });
+        }
+      }
+    );
+
+    app.patch<{ Params: { locationId: string }; Body: UpdateLocation }>(
+      "/api/v1/local/locations/:locationId",
+      { config: { rateLimit: { max: 60, timeWindow: "15 minutes" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+          return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners and Operations Administrators can edit locations." });
+        }
+        if (!dependencies.locationAdministration?.update) return reply.code(501).send({ error: "LocationAdministrationUnavailable" });
+        if (!requestContextSchema.shape.deviceId.safeParse(request.params.locationId).success) {
+          return reply.code(400).send({ error: "InvalidLocationId" });
+        }
+        const input = request.body;
+        if (!input || typeof input.name !== "string" || input.name.trim().length < 2 || input.name.trim().length > 120 || typeof input.type !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(input.type)) {
+          return reply.code(400).send({ error: "InvalidLocation", message: "Provide a name and an active location type from Settings." });
+        }
+        try {
+          return reply.send({ location: await dependencies.locationAdministration.update(principal.tenantId, { userId: principal.userId }, request.params.locationId, input) });
+        } catch (error) {
+          return reply.code(400).send({ error: "LocationUpdateRejected", message: error instanceof Error ? error.message : "Location could not be updated." });
+        }
+      }
+    );
+
+    app.post<{ Body: NewLocationType }>(
+      "/api/v1/local/location-types",
+      { config: { rateLimit: { max: 30, timeWindow: "15 minutes" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+          return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners and Operations Administrators can add location types." });
+        }
+        if (!dependencies.locationAdministration?.createType) return reply.code(501).send({ error: "LocationAdministrationUnavailable" });
+        const input = request.body;
+        if (!input || typeof input.name !== "string" || input.name.trim().length < 2 || input.name.trim().length > 80 || typeof input.category !== "string" || !["donation_express", "store_backroom", "warehouse", "other"].includes(input.category) || typeof input.iconKey !== "string" || input.iconKey.length > 40) {
+          return reply.code(400).send({ error: "InvalidLocationType", message: "Provide a name, an operating category, and a valid location icon." });
+        }
+        try {
+          return reply.code(201).send({ locationType: await dependencies.locationAdministration.createType(principal.tenantId, { userId: principal.userId }, input) });
+        } catch (error) {
+          return reply.code(400).send({ error: "LocationTypeCreateRejected", message: error instanceof Error ? error.message : "Location type could not be created." });
+        }
+      }
+    );
+
+    app.patch<{ Params: { typeKey: string }; Body: UpdateLocationType }>(
+      "/api/v1/local/location-types/:typeKey",
+      { config: { rateLimit: { max: 60, timeWindow: "15 minutes" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+          return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners and Operations Administrators can edit location types." });
+        }
+        if (!dependencies.locationAdministration?.updateType) return reply.code(501).send({ error: "LocationAdministrationUnavailable" });
+        const input = request.body;
+        if (!input || typeof input.name !== "string" || input.name.trim().length < 2 || input.name.trim().length > 80 || typeof input.iconKey !== "string" || input.iconKey.length > 40) {
+          return reply.code(400).send({ error: "InvalidLocationType", message: "Provide a type name and a valid location icon." });
+        }
+        try {
+          return reply.send({ locationType: await dependencies.locationAdministration.updateType(principal.tenantId, { userId: principal.userId }, request.params.typeKey, input) });
+        } catch (error) {
+          return reply.code(400).send({ error: "LocationTypeUpdateRejected", message: error instanceof Error ? error.message : "Location type could not be updated." });
+        }
+      }
+    );
+
+    app.post<{ Body: { rows: Array<{ label: string; type: string }> } }>(
+      "/api/v1/local/containers/import",
+      { bodyLimit: 4 * 1024 * 1024, config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+          return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners and Operations Administrators can import containers." });
+        }
+        if (!dependencies.containerAdministration) return reply.code(501).send({ error: "ContainerAdministrationUnavailable" });
+        const body = request.body;
+        if (!body || !Array.isArray(body.rows) || body.rows.some((row) => !row || typeof row !== "object" || typeof row.label !== "string" || typeof row.type !== "string")) {
+          return reply.code(400).send({ error: "InvalidContainerImport", message: "Send rows with exactly a label and container type for each CSV data row." });
+        }
+        try {
+          return reply.code(201).send(await dependencies.containerAdministration.import(principal.tenantId, { userId: principal.userId }, body.rows));
+        } catch (error) {
+          const rejected = error as ContainerImportRejected;
+          if (rejected?.name === "ContainerImportRejected") {
+            return reply.code(400).send({ error: "ContainerImportRejected", message: rejected.message, rowErrors: rejected.rowErrors });
+          }
+          return reply.code(400).send({ error: "ContainerImportRejected", message: error instanceof Error ? error.message : "The container import was rejected." });
         }
       }
     );

@@ -71,11 +71,26 @@ export async function seedPostgres(
         [TENANT_ID]
       );
 
+      const locationTypes = [
+        ["donation_express", "Donation Xpress", "donation_express", "hand-heart", true],
+        ["store_backroom", "Store", "store_backroom", "store", true],
+        ["warehouse", "Warehouse", "warehouse", "warehouse", true],
+        ["in_transit", "In transit", "in_transit", "truck", true]
+      ] as const;
+      for (const [typeKey, name, category, iconKey, isSystem] of locationTypes) {
+        await client.query(
+          `INSERT INTO location_types
+             (tenant_id, type_key, display_name, category, icon_key, is_system)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [TENANT_ID, typeKey, name, category, iconKey, isSystem]
+        );
+      }
+
       for (const [index, [name, type]] of locations.entries()) {
         await client.query(
           `INSERT INTO locations
-             (tenant_id, location_id, location_name, location_type)
-           VALUES ($1,$2,$3,$4)`,
+             (tenant_id, location_id, location_name, location_type, location_type_key)
+           VALUES ($1,$2,$3,$4,$4)`,
           [TENANT_ID, locationId(index + 1), name, type]
         );
       }
