@@ -85,11 +85,11 @@ $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stacktrack_app') THEN
-    EXECUTE 'GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack_app';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON location_types TO stacktrack_app';
     EXECUTE 'GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack_app';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stacktrack') THEN
-    EXECUTE 'GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON location_types TO stacktrack';
     EXECUTE 'GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack';
   END IF;
 END;

@@ -1435,6 +1435,28 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
       }
     );
 
+    app.delete<{ Params: { typeKey: string } }>(
+      "/api/v1/local/location-types/:typeKey",
+      { config: { rateLimit: { max: 30, timeWindow: "15 minutes" } } },
+      async (request, reply) => {
+        const principal = await requireAdmin(request, reply);
+        if (!principal) return;
+        if (principal.role !== "organization_owner" && principal.role !== "operations_administrator") {
+          return reply.code(403).send({ error: "InsufficientRole", message: "Only Organization Owners and Operations Administrators can delete location types." });
+        }
+        if (!dependencies.locationAdministration?.deleteType) return reply.code(501).send({ error: "LocationAdministrationUnavailable" });
+        if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(request.params.typeKey)) {
+          return reply.code(400).send({ error: "InvalidLocationType", message: "Provide a valid location type key." });
+        }
+        try {
+          await dependencies.locationAdministration.deleteType(principal.tenantId, { userId: principal.userId }, request.params.typeKey);
+          return reply.send({ deleted: true, typeKey: request.params.typeKey });
+        } catch (error) {
+          return reply.code(400).send({ error: "LocationTypeDeleteRejected", message: error instanceof Error ? error.message : "Location type could not be deleted." });
+        }
+      }
+    );
+
     app.post<{ Body: { rows: Array<{ label: string; type: string }> } }>(
       "/api/v1/local/containers/import",
       { bodyLimit: 4 * 1024 * 1024, config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } },

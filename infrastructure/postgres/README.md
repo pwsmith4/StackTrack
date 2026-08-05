@@ -50,8 +50,9 @@ The location administration and container import screens require migration
 `008_location_catalog.sql`. If the API was already deployed before those
 screens were added, apply the non-destructive location-catalog repair below.
 It creates the editable type catalog, backfills existing locations, grants
-only the required application-role permissions, and does not seed, reset, or
-overwrite operational data:
+only the required application-role permissions (including deleting unused
+custom location types), and does not seed, reset, or overwrite operational
+data:
 
 ```powershell
 npm.cmd run db:azure:location-catalog -- -ServerName "testserv5.postgres.database.azure.com" -AdminLogin "theparkersmith"

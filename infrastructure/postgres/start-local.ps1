@@ -191,7 +191,7 @@ GRANT CONNECT ON DATABASE stacktrack TO stacktrack;
 GRANT USAGE ON SCHEMA public TO stacktrack;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack;
 GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack;
-GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack;
+GRANT SELECT, INSERT, UPDATE, DELETE ON location_types TO stacktrack;
 GRANT UPDATE (device_label, assigned_location_id, is_active, deactivated_at) ON devices TO stacktrack;
 GRANT UPDATE (required_app_version) ON devices TO stacktrack;
 GRANT UPDATE (last_reported_at, reported_app_version, pending_offline_scan_count) ON device_installations TO stacktrack;

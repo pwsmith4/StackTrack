@@ -124,6 +124,11 @@ export interface LocationAdministration {
     typeKey: string,
     input: UpdateLocationType
   ): Promise<LocationTypeRecord>;
+  deleteType?(
+    tenantId: string,
+    actor: LocationAdministrationActor,
+    typeKey: string
+  ): Promise<void>;
   retire(
     tenantId: string,
     actor: LocationAdministrationActor,
@@ -170,6 +175,10 @@ function assertIconKey(value: string): asserts value is LocationIconKey {
 
 function isUniqueViolation(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "23505");
+}
+
+function isForeignKeyViolation(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "23503");
 }
 
 function locationRecord(row: {
@@ -662,6 +671,63 @@ export class PostgresLocationAdministration implements LocationAdministration {
         ]
       );
       return locationTypeRecord(row);
+    });
+  }
+
+  public async deleteType(
+    tenantId: string,
+    actor: LocationAdministrationActor,
+    typeKey: string
+  ): Promise<void> {
+    return this.tenantTransaction(tenantId, async (client) => {
+      const current = await client.query<{
+        type_key: string;
+        display_name: string;
+        category: LocationTypeCategory;
+        icon_key: LocationIconKey;
+        is_system: boolean;
+        is_active: boolean;
+      }>(
+        `SELECT type_key, display_name, category, icon_key, is_system, is_active
+           FROM location_types
+          WHERE tenant_id = $1 AND type_key = $2
+          FOR UPDATE`,
+        [tenantId, typeKey]
+      );
+      const before = current.rows[0];
+      if (!before || !before.is_active) throw new Error("Location type was not found.");
+      if (before.is_system) throw new Error("System location types cannot be deleted.");
+
+      const usage = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM locations
+          WHERE tenant_id = $1 AND location_type_key = $2`,
+        [tenantId, typeKey]
+      );
+      const locationCount = Number(usage.rows[0]?.count ?? 0);
+      if (locationCount > 0) {
+        throw new Error(`This location type is still used by ${locationCount} location record${locationCount === 1 ? "" : "s"}. Change those locations to another type first; historical location links are preserved.`);
+      }
+
+      try {
+        await client.query(
+          `DELETE FROM location_types
+            WHERE tenant_id = $1 AND type_key = $2`,
+          [tenantId, typeKey]
+        );
+      } catch (error) {
+        if (isForeignKeyViolation(error)) {
+          throw new Error("This location type is still connected to location history. Change those locations to another type first; historical location links are preserved.");
+        }
+        throw error;
+      }
+
+      await client.query(
+        `INSERT INTO audit_log
+          (tenant_id, actor_type, actor_id, action, target_type, target_id, details)
+         VALUES ($1, 'user', $2, 'location_type.deleted', 'location_type', NULL, $3::jsonb)`,
+        [tenantId, actor.userId, JSON.stringify({ typeKey, name: before.display_name, category: before.category, iconKey: before.icon_key, source: "pilot_admin_console" })]
+      );
     });
   }
 

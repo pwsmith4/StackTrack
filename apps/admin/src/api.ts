@@ -284,6 +284,18 @@ async function patchJson<T>(path: string, body: unknown, session?: AdminSession 
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
+async function deleteJson<T>(path: string, session: AdminSession): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "DELETE",
+    headers: { ...headers, ...adminHeaders(session) }
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? `${response.status} ${response.statusText}`);
+  }
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+}
+
 export async function updateDevice(
   deviceId: string,
   update: {
@@ -384,6 +396,13 @@ export async function updateLocationType(
     session
   );
   return response.locationType;
+}
+
+export async function deleteLocationType(session: AdminSession, typeKey: string): Promise<void> {
+  await deleteJson<{ deleted: boolean }>(
+    `/api/v1/local/location-types/${encodeURIComponent(typeKey)}`,
+    session
+  );
 }
 
 export interface ContainerImportRow {

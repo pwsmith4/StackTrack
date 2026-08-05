@@ -60,6 +60,7 @@ import {
   createLocationType,
   createCorrectionRequest,
   createAdminUser,
+  deleteLocationType,
   getLocationDependencies,
   importContainers,
   listAdminUsers,
@@ -4145,6 +4146,20 @@ function LocationTypeAdministration({ types, session, refresh, canManage, onNoti
       setBusyKey(null);
     }
   };
+  const removeType = async (type: LocationType) => {
+    if (!session || !canManage || type.isSystem || !window.confirm(`Delete the “${type.name}” location type? This cannot be undone.`)) return;
+    setBusyKey(`delete:${type.typeKey}`);
+    setSavedKey(null);
+    try {
+      await deleteLocationType(session, type.typeKey);
+      await refresh();
+      onNotice(`Location type “${type.name}” was deleted. It will no longer be available for new locations.`);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : "Location type could not be deleted.");
+    } finally {
+      setBusyKey(null);
+    }
+  };
   const createType = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!session || !canManage) return;
@@ -4169,7 +4184,7 @@ function LocationTypeAdministration({ types, session, refresh, canManage, onNoti
     <div className="location-admin-disclosure__content">
     {canManage && <div className="location-admin-disclosure__actions"><span>Changes update directory display while preserving historical scans.</span><button className="secondary" type="button" onClick={() => setCreateOpen((value) => !value)}>{createOpen ? <X size={14} /> : <Plus size={14} />}{createOpen ? "Close" : "Add type"}</button></div>}
     {createOpen && canManage && <form className="location-type-create" onSubmit={(event) => void createType(event)}><label><span>New type name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Example: Outlet" maxLength={80} autoFocus /></label><label><span>Operational category</span><select value={category} onChange={(event) => setCategory(event.target.value as Exclude<LocationTypeCategory, "in_transit">)}><option value="other">Other operating site</option><option value="store_backroom">Store-like</option><option value="donation_express">Donation Xpress-like</option><option value="warehouse">Warehouse-like</option></select></label><label><span>Starting icon</span><select value={iconKey} onChange={(event) => setIconKey(event.target.value)}>{locationIconOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select><small>New types start with Map pin. You can change this icon now or later.</small></label><button className="primary" type="submit" disabled={busyKey === "new" || name.trim().length < 2}>{busyKey === "new" ? "Adding…" : "Add location type"}</button></form>}
-    <div className="location-type-list">{orderedTypes.map((type) => { const draft = drafts[type.typeKey] ?? { name: type.name, iconKey: type.iconKey }; const saved = savedKey === type.typeKey; return <div className={`location-type-row${saved ? " location-type-row--saved" : ""}`} key={type.typeKey}><span className="location-type-row__icon"><LocationTypeIcon location={locationTypeIconRecord({ ...type, ...draft })} size={17} /></span><div className="location-type-row__identity"><strong>{saved ? draft.name : type.name}</strong><small>{type.isSystem ? "System type" : `Custom type · ${type.category === "other" ? "Other" : locationTypeLabel(type.category)}`}</small></div>{canManage ? <><label className="location-type-row__field"><span className="sr-only">Name for {type.name}</span><input value={draft.name} onChange={(event) => { setSavedKey((current) => current === type.typeKey ? null : current); setDrafts((current) => ({ ...current, [type.typeKey]: { ...draft, name: event.target.value } })); }} maxLength={80} /></label><label className="location-type-row__field"><span className="sr-only">Icon for {type.name}</span><select value={draft.iconKey} onChange={(event) => { setSavedKey((current) => current === type.typeKey ? null : current); setDrafts((current) => ({ ...current, [type.typeKey]: { ...draft, iconKey: event.target.value } })); }}>{locationIconOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label><button className="secondary" type="button" disabled={busyKey !== null || saved || draft.name.trim().length < 2} onClick={() => void saveType(type)}>{saved ? <><CheckCircle2 size={14} /> Saved</> : "Save"}</button></> : <span className="location-type-row__readonly">{type.name}</span>}</div>; })}</div>
+    <div className="location-type-list">{orderedTypes.map((type) => { const draft = drafts[type.typeKey] ?? { name: type.name, iconKey: type.iconKey }; const saved = savedKey === type.typeKey; return <div className={`location-type-row${saved ? " location-type-row--saved" : ""}`} key={type.typeKey}><span className="location-type-row__icon"><LocationTypeIcon location={locationTypeIconRecord({ ...type, ...draft })} size={17} /></span><div className="location-type-row__identity"><strong>{saved ? draft.name : type.name}</strong><small>{type.isSystem ? "System type" : `Custom type · ${type.category === "other" ? "Other" : locationTypeLabel(type.category)}`}</small></div>{canManage ? <><label className="location-type-row__field"><span className="sr-only">Name for {type.name}</span><input value={draft.name} onChange={(event) => { setSavedKey((current) => current === type.typeKey ? null : current); setDrafts((current) => ({ ...current, [type.typeKey]: { ...draft, name: event.target.value } })); }} maxLength={80} /></label><label className="location-type-row__field"><span className="sr-only">Icon for {type.name}</span><select value={draft.iconKey} onChange={(event) => { setSavedKey((current) => current === type.typeKey ? null : current); setDrafts((current) => ({ ...current, [type.typeKey]: { ...draft, iconKey: event.target.value } })); }}>{locationIconOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label><span className="location-type-row__actions"><button className="secondary" type="button" disabled={busyKey !== null || saved || draft.name.trim().length < 2} onClick={() => void saveType(type)}>{saved ? <><CheckCircle2 size={14} /> Saved</> : "Save"}</button>{!type.isSystem && <button className="secondary location-type-row__delete" type="button" disabled={busyKey !== null} onClick={() => void removeType(type)}>Delete</button>}</span></> : <span className="location-type-row__readonly">{type.name}</span>}</div>; })}</div>
     </div>
   </details>;
 }

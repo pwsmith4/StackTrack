@@ -84,7 +84,7 @@ try {
   # A grant made before a table was created does not cover that new table.
   # Keep the API role non-superuser; RLS remains responsible for tenant scope.
   $grantSql = @"
-GRANT SELECT, INSERT, UPDATE ON TABLE location_types TO "$ApplicationRole";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE location_types TO "$ApplicationRole";
 GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO "$ApplicationRole";
 "@
   $grantSql | & $psql @baseArgs
@@ -92,7 +92,7 @@ GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON loc
     throw "Granting application access to the location catalog failed."
   }
 
-  $verified = & $psql @baseArgs --tuples-only --no-align --command="SELECT to_regclass('public.location_types') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'locations' AND column_name = 'location_type_key') AND has_table_privilege('$ApplicationRole', 'public.location_types', 'SELECT') AND has_table_privilege('$ApplicationRole', 'public.location_types', 'INSERT') AND has_table_privilege('$ApplicationRole', 'public.location_types', 'UPDATE') AND has_column_privilege('$ApplicationRole', 'public.locations', 'location_type_key', 'UPDATE');"
+  $verified = & $psql @baseArgs --tuples-only --no-align --command="SELECT to_regclass('public.location_types') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'locations' AND column_name = 'location_type_key') AND has_table_privilege('$ApplicationRole', 'public.location_types', 'SELECT') AND has_table_privilege('$ApplicationRole', 'public.location_types', 'INSERT') AND has_table_privilege('$ApplicationRole', 'public.location_types', 'UPDATE') AND has_table_privilege('$ApplicationRole', 'public.location_types', 'DELETE') AND has_column_privilege('$ApplicationRole', 'public.locations', 'location_type_key', 'UPDATE');"
   if ($LASTEXITCODE -ne 0 -or $verified.Trim() -ne "t") {
     throw "The location catalog exists, but application permissions could not be verified."
   }

@@ -69,7 +69,7 @@ try {
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
 GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack_app;
-GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON location_types TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_sessions TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_user_locations TO stacktrack_app;
@@ -88,7 +88,7 @@ ON CONFLICT (tenant_id, username) DO UPDATE
 GRANT USAGE ON SCHEMA public TO stacktrack_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO stacktrack_app;
 GRANT UPDATE (location_name, location_type, location_type_key, is_active) ON locations TO stacktrack_app;
-GRANT SELECT, INSERT, UPDATE ON location_types TO stacktrack_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON location_types TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_users TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_sessions TO stacktrack_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_user_locations TO stacktrack_app;
