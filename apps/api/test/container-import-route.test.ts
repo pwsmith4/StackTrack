@@ -62,4 +62,26 @@ describe("container import administration route", () => {
     expect(response.statusCode).toBe(403);
     expect(administration.import).not.toHaveBeenCalled();
   });
+
+  it("rejects rows that contain fields outside the two-column import contract", async () => {
+    const administration: ContainerAdministration = { import: vi.fn() };
+    app = await createApp({
+      localMode: true,
+      adminAccess: { authenticate: vi.fn().mockResolvedValue(owner) } as unknown as PostgresAdminAccess,
+      containerAdministration: administration
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/local/containers/import",
+      headers: { authorization: `Bearer ${"x".repeat(32)}` },
+      payload: { rows: [{ label: "B4001", type: "bin", location: "Folsom Store" }] }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: "InvalidContainerImport",
+      message: "Each imported row must contain exactly two fields: label and type. Remove any extra fields and try again."
+    });
+    expect(administration.import).not.toHaveBeenCalled();
+  });
 });

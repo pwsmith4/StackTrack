@@ -1446,8 +1446,12 @@ export async function createApp(dependencies: AppDependencies = {}): Promise<Fas
         }
         if (!dependencies.containerAdministration) return reply.code(501).send({ error: "ContainerAdministrationUnavailable" });
         const body = request.body;
-        if (!body || !Array.isArray(body.rows) || body.rows.some((row) => !row || typeof row !== "object" || typeof row.label !== "string" || typeof row.type !== "string")) {
-          return reply.code(400).send({ error: "InvalidContainerImport", message: "Send rows with exactly a label and container type for each CSV data row." });
+        if (!body || !Array.isArray(body.rows) || body.rows.some((row) => {
+          if (!row || typeof row !== "object" || typeof row.label !== "string" || typeof row.type !== "string") return true;
+          const keys = Object.keys(row).sort();
+          return keys.length !== 2 || keys[0] !== "label" || keys[1] !== "type";
+        })) {
+          return reply.code(400).send({ error: "InvalidContainerImport", message: "Each imported row must contain exactly two fields: label and type. Remove any extra fields and try again." });
         }
         try {
           return reply.code(201).send(await dependencies.containerAdministration.import(principal.tenantId, { userId: principal.userId }, body.rows));

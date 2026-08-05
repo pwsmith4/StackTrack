@@ -46,6 +46,21 @@ revision (or wait for the next revision health check) and refresh the admin
 site. The full bootstrap remains the right command for a brand-new database;
 the repair command is safer for an existing pilot database.
 
+The location administration and container import screens require migration
+`008_location_catalog.sql`. If the API was already deployed before those
+screens were added, apply the non-destructive location-catalog repair below.
+It creates the editable type catalog, backfills existing locations, grants
+only the required application-role permissions, and does not seed, reset, or
+overwrite operational data:
+
+```powershell
+npm.cmd run db:azure:location-catalog -- -ServerName "testserv5.postgres.database.azure.com" -AdminLogin "theparkersmith"
+```
+
+Enter the Azure PostgreSQL administrator password when prompted. Restart the
+test API revision (or wait for its next health check), then refresh the
+testing admin site. The application role remains a non-superuser.
+
 If the mobile API reports a 500 from `/api/v1/mobile/permissions` or
 `/api/v1/mobile/reference-data` because the named scanner-role tables are
 missing, apply migration `006` without reseeding the database:

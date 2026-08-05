@@ -128,7 +128,7 @@ export class PostgresContainerAdministration implements ContainerAdministration 
         const existing = await client.query<{ label: string }>(
           `SELECT container_label AS label
              FROM containers
-            WHERE tenant_id = $1 AND is_active AND lower(container_label) = ANY($2::text[])`,
+            WHERE tenant_id = $1 AND lower(container_label) = ANY($2::text[])`,
           [tenantId, [...seenLabels.keys()]]
         );
         for (const item of existing.rows) {
